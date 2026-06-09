@@ -12,7 +12,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write   # used by magic-nix-cache
 
 jobs:
   compile:
@@ -24,7 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: cargo build
         run: nix develop --command cargo build --locked --all-targets
 
@@ -37,7 +35,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: cargo test
         run: nix develop --command cargo test --locked
 
@@ -50,6 +47,5 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: cargo clippy
         run: nix develop --command cargo clippy --locked --all-targets -- -D warnings
