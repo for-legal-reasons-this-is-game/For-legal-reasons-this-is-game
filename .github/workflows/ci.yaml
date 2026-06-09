@@ -19,11 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dir: [backend, tradingengine]
+        dir: [backend, tradingengine] 
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
       - name: cargo build
+        working-directory: ${{ matrix.dir }}
         run: nix develop --command cargo build --locked --all-targets
 
   test:
@@ -36,6 +37,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
       - name: cargo test
+        working-directory: ${{ matrix.dir }}
         run: nix develop --command cargo test --locked
 
   clippy:
@@ -48,4 +50,5 @@ jobs:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
       - name: cargo clippy
+        working-directory: ${{ matrix.dir }}
         run: nix develop --command cargo clippy --locked --all-targets -- -D warnings
