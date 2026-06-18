@@ -75,11 +75,11 @@ All team members are currently **Developers** (responsibilities will be refined 
 - **alvcampo** 
     - Project Manager Scrum Master
     - Developer  
-  Responsibilities: TBD
+  Responsibilities: Back-End
 - **jel-ghna** — Developer  
-  Responsibilities: TBD
+  Responsibilities: Trading Enginge
 - **megardes** — Developer  
-  Responsibilities: TBD
+  Responsibilities: Front-End Trading Engine
 
 ---
 
