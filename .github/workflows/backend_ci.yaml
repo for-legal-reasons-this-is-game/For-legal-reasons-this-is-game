@@ -1,0 +1,54 @@
+name: backend_ci
+
+on:
+  pull_request:
+    branches: [backend_staging]
+  push:
+    branches: [backend_staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: compile
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [backend ]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: cargo build
+        working-directory: ${{ matrix.dir }}
+        run: nix develop --command cargo build --locked --all-targets
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [backend]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: cargo test
+        working-directory: ${{ matrix.dir }}
+        run: nix develop --command cargo test --locked
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [backend]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: cargo clippy
+        working-directory: ${{ matrix.dir }}
+        run: nix develop --command cargo clippy --locked --all-targets -- -D warnings
