@@ -5,6 +5,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use tokio;
+pub mod hmac_utils;
 pub mod v1;
 
 // how to stricture api /api/{version: String}/*
