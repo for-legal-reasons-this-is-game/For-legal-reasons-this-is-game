@@ -6,7 +6,6 @@ use hmac::Hmac;
 use hmac::KeyInit;
 use hmac::Mac;
 use sha2::Sha256;
-use uuid::Timestamp;
 
 /* how does the thing work
 * client hashes the http method, uripath, timestamp and body of request with the API_KEY provided
