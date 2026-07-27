@@ -1,8 +1,6 @@
 use axum::{
     Router,
-    extract::{Json, Path},
-    http::{Response, StatusCode},
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
 };
 use tokio;
 pub mod hmac_utils;
@@ -27,6 +25,5 @@ async fn main() {
         .route("/instruments", delete(v1::delete_instrument))
         .route("/instruments/{symbol}", get(v1::list_instruments));
 
-    let router = Router::<()>::new().nest("/api/v1", v1);
-    todo!();
+    let _router = Router::<()>::new().nest("/api/v1", v1);
 }
