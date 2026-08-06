@@ -1,0 +1,21 @@
+# Rust build output. Unanchored so it matches every crate in the repo
+# (backend/, frontend/, tradingengine/) rather than one at a time.
+target/
+
+# Nix build results and the direnv cache
+result
+result-*
+.direnv/
+
+# Environment and secrets. This repo signs requests with HMAC keys wrapped by a
+# master key (see backend/how_to_manage_keys), so a leaked .env is a real
+# incident, not an inconvenience.
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
