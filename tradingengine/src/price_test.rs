@@ -1,4 +1,5 @@
 use super::*;
+use crate::ONE;
 
 #[test]
 fn rejects_zero() {
@@ -54,6 +55,12 @@ fn prices_sort_themselves_in_a_btreemap() {
     assert_eq!(ascending, vec![29_000, 29_001, 29_002]);
 
     // asks read best-first from the front, bids best-first from the back
-    assert_eq!(levels.keys().next().copied(), Price::from_minor_units(29_000 * ONE).ok());
-    assert_eq!(levels.keys().next_back().copied(), Price::from_minor_units(29_002 * ONE).ok());
+    assert_eq!(
+        levels.keys().next().copied(),
+        Price::from_minor_units(29_000 * ONE).ok()
+    );
+    assert_eq!(
+        levels.keys().next_back().copied(),
+        Price::from_minor_units(29_002 * ONE).ok()
+    );
 }
