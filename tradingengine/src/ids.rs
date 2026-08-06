@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OrderId(u64);
 
 impl OrderId {
@@ -10,7 +10,7 @@ impl OrderId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradeId(u64);
 
 impl TradeId {
@@ -22,7 +22,7 @@ impl TradeId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SeqNo(u64);
 
 impl SeqNo {
@@ -34,7 +34,7 @@ impl SeqNo {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CoinId(u32);
 
 impl CoinId {
@@ -48,7 +48,7 @@ impl CoinId {
 
 // Holds a UUID's 128 bits, so the backend can pass one through with
 // `Uuid::as_u128()` without the engine depending on `uuid`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UserId(u128);
 
 impl UserId {
@@ -61,7 +61,6 @@ impl UserId {
     }
 }
 
-// Client-supplied, so it needs a validating constructor. Not `Copy`: a
-// String owns a heap allocation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+// Client-supplied, so it needs a validating constructor.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IdempotencyKey(String);
