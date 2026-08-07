@@ -3,6 +3,7 @@ pub mod ids;
 pub mod order;
 pub mod price;
 pub mod quantity;
+pub mod resting_order;
 
 pub const SCALE: u32 = 8;
 

@@ -4,6 +4,7 @@ pub enum EngineError {
     QuantityNotPositive,
     QuantityNegative,
     IdempotencyKeyInvalid,
+    FillExceedsRemaining,
     Overflow,
 }
 
@@ -20,6 +21,9 @@ impl std::fmt::Display for EngineError {
                 "idempotency key must be 1 to {} characters of [A-Za-z0-9_-]",
                 crate::ids::IdempotencyKey::MAX_LEN
             ),
+            Self::FillExceedsRemaining => {
+                write!(f, "fill quantity must not exceed remaining quantity")
+            }
             Self::Overflow => write!(f, "arithmetic overflow"),
         }
     }

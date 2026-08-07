@@ -25,6 +25,8 @@ on.
 | `PriceNotPositive` | `Price::from_minor_units` | price must be greater than zero |
 | `QuantityNegative` | `Quantity::from_minor_units`, `checked_sub` | quantity must be greater or equal to zero |
 | `QuantityNotPositive` | `Quantity::require_positive` | quantity must be greater than zero |
+| `IdempotencyKeyInvalid` | `IdempotencyKey::new` | idempotency key must satisfy its length and charset rules |
+| `FillExceedsRemaining` | `RestingOrder::fill` | fill quantity must not exceed remaining quantity |
 | `Overflow` | `Quantity::checked_add` | arithmetic overflow |
 
 **Why quantity needs two variants.** `Quantity` allows zero but rejects negatives, so

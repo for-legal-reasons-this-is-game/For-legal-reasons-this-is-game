@@ -44,7 +44,3 @@ impl Quantity {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "quantity_test.rs"]
-mod quantity_test;

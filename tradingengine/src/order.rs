@@ -46,7 +46,3 @@ impl OrderStatus {
         matches!(self, Self::Filled | Self::Cancelled | Self::Rejected)
     }
 }
-
-#[cfg(test)]
-#[path = "order_test.rs"]
-mod order_test;

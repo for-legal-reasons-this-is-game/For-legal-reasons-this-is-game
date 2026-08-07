@@ -60,7 +60,7 @@ would sit alongside it if one is ever needed.
 **`Ord` is what makes the order book work.** The book is a `BTreeMap` keyed by `Price`,
 and `BTreeMap` requires `Ord` to keep its keys sorted. Price-time priority then falls
 out of the data structure rather than being coded: the lowest key is the best ask, the
-highest is the best bid. `price_test.rs` pins this down by inserting three prices out of
+highest is the best bid. `tests/price.rs` pins this down by inserting three prices out of
 order and reading them back sorted.
 
 **`Price` must never derive `Default`.** It would hand out `Price(0)` — an invalid price

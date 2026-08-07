@@ -89,7 +89,3 @@ impl IdempotencyKey {
         &self.0
     }
 }
-
-#[cfg(test)]
-#[path = "ids_test.rs"]
-mod ids_test;

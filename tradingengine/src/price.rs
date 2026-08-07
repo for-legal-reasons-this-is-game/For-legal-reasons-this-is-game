@@ -16,7 +16,3 @@ impl Price {
         self.0
     }
 }
-
-#[cfg(test)]
-#[path = "price_test.rs"]
-mod price_test;

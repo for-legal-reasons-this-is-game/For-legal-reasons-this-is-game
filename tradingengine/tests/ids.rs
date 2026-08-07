@@ -1,4 +1,5 @@
-use super::*;
+use tradingengine::error::EngineError;
+use tradingengine::ids::IdempotencyKey;
 
 // only IdempotencyKey has logic worth testing; the numeric ids are pure wrappers
 
