@@ -4,7 +4,6 @@ use crate::error::{EngineError, Result};
 pub struct Price(i64);
 
 impl Price {
-    // Minor units at crate `SCALE`. Rejects anything not strictly positive.
     pub fn from_minor_units(minor_units: i64) -> Result<Self> {
         if minor_units > 0 {
             Ok(Price(minor_units))

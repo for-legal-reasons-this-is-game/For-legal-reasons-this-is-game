@@ -6,7 +6,6 @@ pub struct Quantity(i64);
 impl Quantity {
     pub const ZERO: Self = Self(0);
 
-    // Minor units at crate `SCALE`. Rejects negatives; zero is allowed.
     pub fn from_minor_units(minor_units: i64) -> Result<Self> {
         if minor_units < 0 {
             Err(EngineError::QuantityNegative)
@@ -23,7 +22,6 @@ impl Quantity {
         self == Self::ZERO
     }
 
-    // Errors if the quantity is zero.
     pub fn require_positive(self) -> Result<Self> {
         if self.is_zero() {
             Err(EngineError::QuantityNotPositive)
