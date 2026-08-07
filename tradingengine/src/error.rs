@@ -3,6 +3,7 @@ pub enum EngineError {
     PriceNotPositive,
     QuantityNotPositive,
     QuantityNegative,
+    IdempotencyKeyInvalid,
     Overflow,
 }
 
@@ -14,6 +15,11 @@ impl std::fmt::Display for EngineError {
             Self::PriceNotPositive => write!(f, "price must be greater than zero"),
             Self::QuantityNegative => write!(f, "quantity must be greater or equal to zero"),
             Self::QuantityNotPositive => write!(f, "quantity must be greater than zero"),
+            Self::IdempotencyKeyInvalid => write!(
+                f,
+                "idempotency key must be 1 to {} characters of [A-Za-z0-9_-]",
+                crate::ids::IdempotencyKey::MAX_LEN
+            ),
             Self::Overflow => write!(f, "arithmetic overflow"),
         }
     }
