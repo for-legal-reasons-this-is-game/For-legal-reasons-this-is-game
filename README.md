@@ -94,6 +94,8 @@ We organize work using:
 ### Tools
 - **GitHub Issues**: task tracking, assignment, progress, technical discussion
 - **Discord**: communication, quick syncs, decisions
+- **Trello**: daily task tracking, scrum.
+- **SonarQube** for code analysis 
 
 ---
 
@@ -105,7 +107,7 @@ We organize work using:
 
 ### Backend / API
 - **Rust**
-- Framework: **TBD** (Axum / Actix / Rocket are candidates)
+- Framework: **Axum**
 - **REST API** planned (OpenAPI/Swagger planned once endpoints stabilize)
 
 ### Trading Engine
