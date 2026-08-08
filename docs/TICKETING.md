@@ -35,6 +35,7 @@ Please, only use these classifiers; if we need more contact me first, simply to 
 - BE -> back end
 - TE -> trading engine
 - FE -> Front end
+- DO -> DevOps
 - UK -> unknown
 
 Only use UK if it’s relevant; id rather you ask me for a new classifier than using that a lot.
