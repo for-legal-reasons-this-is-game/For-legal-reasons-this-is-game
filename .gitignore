@@ -1,0 +1,6 @@
+# Rust build artifacts (backend, frontend, tradingengine, tradingengine/tradingengine, ...)
+**/target/
+
+# Nix
+result
+result-*
