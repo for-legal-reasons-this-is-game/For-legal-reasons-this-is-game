@@ -1,0 +1,39 @@
+name: SonarQube
+
+on:
+  push:
+    branches: [main, backend_staging]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      # Sonar's Rust analyzer shells out to `cargo`/`clippy` directly, so they
+      # need to be on PATH for the scan step below, so we pull them out of each
+      # crate's nix devShell.
+      - name: Expose nix devShell toolchains on PATH
+        run: |
+          for dir in backend tradingengine; do
+            (cd "$dir" && nix develop --command bash -c 'echo "$PATH"') | tr ':' '\n' >> "$GITHUB_PATH"
+          done
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
