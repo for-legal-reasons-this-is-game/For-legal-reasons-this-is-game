@@ -26,7 +26,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserPayload>,
 ) -> Result<(StatusCode, Json<User>), StatusCode> {
-    sqlx::query_as::<_, User>("INSERT INTO users name VALUES $1 RETURNING * ")
+    sqlx::query_as::<_, User>("INSERT INTO users (name) VALUES ($1) RETURNING * ")
         .bind(payload.name)
         .fetch_one(&state.pg_connections)
         .await
@@ -34,6 +34,14 @@ pub async fn create_user(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+//look at users
+pub async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>, StatusCode> {
+    sqlx::query_as::<_, User>("SELECT * FROM users")
+        .fetch_all(&state.pg_connections)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
 //create account with unique ID and write it to database
 pub async fn create_account(
     State(_state): State<AppState>,
