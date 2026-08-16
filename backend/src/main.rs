@@ -26,6 +26,7 @@ async fn main() {
 
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
+        .route("/users", get(v1::list_users))
         .route("/users/{user_id}/accounts", post(v1::create_account))
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/accounts/{account_id}", get(v1::fetch_account))

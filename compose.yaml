@@ -1,13 +1,21 @@
 services:
+  backend:
+    container_name: backend
+    build: ./backend/
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://myuser:mypassword@db:5432/mydb
   postgres:
     image: postgres:16-alpine
+    container_name: db
     restart: unless-stopped
     environment:
       POSTGRES_USER: myuser
       POSTGRES_PASSWORD: mypassword
       POSTGRES_DB: mydb
     ports:
-      - "54321:54321"
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
