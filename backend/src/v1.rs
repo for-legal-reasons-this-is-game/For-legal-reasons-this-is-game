@@ -14,9 +14,17 @@ pub struct UserPayload {
 
 #[derive(Serialize, FromRow)]
 pub struct User {
-    id: i32,
-    name: String,
+    user_id: Uuid,
+    user_name: String,
 }
+
+// #[derive(Serialize, FromRow)]
+// pub struct Account {
+//     id: i32,
+//     name: String,
+//     user_id: i32,
+// }
+
 #[derive(Clone)]
 pub struct AppState {
     pub pg_connections: PgPool,
@@ -26,7 +34,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserPayload>,
 ) -> Result<(StatusCode, Json<User>), StatusCode> {
-    sqlx::query_as::<_, User>("INSERT INTO users (name) VALUES ($1) RETURNING * ")
+    sqlx::query_as::<_, User>("INSERT INTO users (user_name) VALUES ($1) RETURNING * ")
         .bind(payload.name)
         .fetch_one(&state.pg_connections)
         .await
@@ -51,8 +59,20 @@ pub async fn create_account(
 }
 
 //returns with information about the user
-pub async fn fetch_user(Path(_user_id): Path<Uuid>) -> Result<Response<String>, StatusCode> {
-    todo!();
+pub async fn fetch_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<User>, StatusCode> {
+    sqlx::query_as::<_, User>("SELECT * FROM users WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(&state.pg_connections)
+        .await
+        .map(Json)
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            sqlx::Error::InvalidArgument(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })
 }
 
 //returns with information about the account
