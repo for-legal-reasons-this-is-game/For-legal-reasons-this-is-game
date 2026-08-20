@@ -41,10 +41,11 @@ fn an_empty_book_has_no_top_of_book() {
 #[test]
 fn insert_puts_an_order_where_get_can_find_it() {
     let mut book = Book::new();
-    assert_eq!(book.insert(order(1, Side::Buy, 29_000)), Ok(()));
+    book.insert(order(1, Side::Buy, 29_000))
+        .expect("valid insert");
 
     let found = book
-        .get(OrderId::new(1))
+        .get_by_id(OrderId::new(1))
         .expect("the order was just inserted");
     assert_eq!(found.id(), OrderId::new(1));
     assert_eq!(found.price(), price(29_000));
@@ -55,7 +56,7 @@ fn insert_puts_an_order_where_get_can_find_it() {
 #[test]
 fn get_returns_nothing_for_an_unknown_id() {
     let book = Book::new();
-    assert!(book.get(OrderId::new(99)).is_none());
+    assert!(book.get_by_id(OrderId::new(99)).is_none());
 }
 
 #[test]
@@ -131,15 +132,16 @@ fn time_priority_holds_across_price_levels() {
 }
 
 #[test]
-fn the_two_sides_are_independent_at_the_same_price() {
+fn the_two_sides_hold_the_same_price_only_when_it_does_not_cross() {
     let mut book = Book::new();
+    // a bid below every ask: the two sides coexist because nothing crosses
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
-    book.insert(order(2, Side::Sell, 29_000))
+    book.insert(order(2, Side::Sell, 29_001))
         .expect("valid insert");
 
     assert_eq!(book.best_bid(), Some(price(29_000)));
-    assert_eq!(book.best_ask(), Some(price(29_000)));
+    assert_eq!(book.best_ask(), Some(price(29_001)));
     assert_eq!(book.bids().count(), 1);
     assert_eq!(book.asks().count(), 1);
     assert_eq!(book.len(), 2);
@@ -158,7 +160,7 @@ fn remove_returns_the_order_and_takes_it_out() {
     assert_eq!(removed.id(), OrderId::new(1));
     assert!(book.is_empty());
     assert_eq!(book.best_bid(), None);
-    assert!(book.get(OrderId::new(1)).is_none());
+    assert!(book.get_by_id(OrderId::new(1)).is_none());
 }
 
 #[test]
@@ -255,12 +257,12 @@ fn amend_replaces_the_order_and_returns_the_old_one() {
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
 
-    let replaced = book
+    let (replaced, _) = book
         .amend(OrderId::new(1), order(2, Side::Buy, 29_000))
         .expect("the order is in the book");
 
     assert_eq!(replaced.id(), OrderId::new(1));
-    assert!(book.get(OrderId::new(1)).is_none());
+    assert!(book.get_by_id(OrderId::new(1)).is_none());
     assert_eq!(ids(book.bids()), vec![2]);
     assert_eq!(book.len(), 1);
 }
@@ -339,4 +341,216 @@ fn amend_rejects_a_replacement_id_already_in_the_book() {
         Err(EngineError::DuplicateOrderId)
     );
     assert_eq!(book, before);
+}
+
+// ---- matching ----
+
+fn sized(id: u64, side: Side, whole_price: i64, quantity: i64) -> RestingOrder {
+    RestingOrder::new(
+        OrderId::new(id),
+        UserId::new(u128::from(id)),
+        side,
+        Price::from_minor_units(whole_price * ONE).expect("valid price"),
+        Quantity::from_minor_units(quantity).expect("valid quantity"),
+        SeqNo::new(id),
+        IdempotencyKey::new(format!("order-{id}")).expect("valid idempotency key"),
+    )
+    .expect("valid resting order")
+}
+
+fn qty(minor_units: i64) -> Quantity {
+    Quantity::from_minor_units(minor_units).expect("valid quantity")
+}
+
+#[test]
+fn an_order_that_does_not_cross_just_rests() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_010, 10))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_000, 10))
+        .expect("valid insert");
+
+    assert!(execution.fills().is_empty());
+    assert_eq!(execution.resting(), Some(OrderId::new(2)));
+    assert_eq!(book.len(), 2);
+}
+
+#[test]
+fn a_crossing_order_trades_instead_of_resting() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_000, 10))
+        .expect("valid insert");
+
+    assert_eq!(execution.fills().len(), 1);
+    assert_eq!(execution.resting(), None);
+    assert_eq!(execution.filled(), Ok(qty(10)));
+    // both sides traded out completely, so the book is empty again
+    assert!(book.is_empty());
+}
+
+#[test]
+fn a_fill_happens_at_the_makers_price() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+
+    // buyer would have paid 29_005; the resting seller's price is what stands,
+    // so the price improvement goes to the taker
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_005, 10))
+        .expect("valid insert");
+
+    assert_eq!(execution.fills()[0].price(), price(29_000));
+    assert_eq!(execution.fills()[0].maker(), OrderId::new(1));
+    assert_eq!(execution.fills()[0].taker(), OrderId::new(2));
+}
+
+#[test]
+fn a_partial_fill_leaves_the_remainder_resting() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 4))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_000, 10))
+        .expect("valid insert");
+
+    assert_eq!(execution.filled(), Ok(qty(4)));
+    assert_eq!(execution.resting(), Some(OrderId::new(2)));
+
+    let rested = book
+        .get_by_id(OrderId::new(2))
+        .expect("the remainder rests");
+    assert_eq!(rested.qty_remaining(), qty(6));
+    assert_eq!(rested.status(), OrderStatus::PartiallyFilled);
+    // the maker was consumed and is gone
+    assert!(book.get_by_id(OrderId::new(1)).is_none());
+    assert_eq!(book.best_ask(), None);
+}
+
+#[test]
+fn a_maker_that_is_not_exhausted_stays_with_less_left() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_000, 4))
+        .expect("valid insert");
+
+    assert_eq!(execution.resting(), None);
+
+    let maker = book.get_by_id(OrderId::new(1)).expect("the maker remains");
+    assert_eq!(maker.qty_remaining(), qty(6));
+    assert_eq!(maker.status(), OrderStatus::PartiallyFilled);
+    assert_eq!(book.len(), 1);
+}
+
+#[test]
+fn a_taker_walks_levels_cheapest_first() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_002, 5))
+        .expect("valid insert");
+    book.insert(sized(2, Side::Sell, 29_000, 5))
+        .expect("valid insert");
+    book.insert(sized(3, Side::Sell, 29_001, 5))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(4, Side::Buy, 29_002, 15))
+        .expect("valid insert");
+
+    let prices: Vec<i64> = execution
+        .fills()
+        .iter()
+        .map(|fill| fill.price().minor_units() / ONE)
+        .collect();
+    assert_eq!(prices, vec![29_000, 29_001, 29_002]);
+    assert!(book.is_empty());
+}
+
+#[test]
+fn a_taker_stops_at_the_limit_price() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 5))
+        .expect("valid insert");
+    book.insert(sized(2, Side::Sell, 29_005, 5))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(3, Side::Buy, 29_000, 10))
+        .expect("valid insert");
+
+    // only the 29_000 ask is acceptable; the rest of the buy rests
+    assert_eq!(execution.filled(), Ok(qty(5)));
+    assert_eq!(execution.resting(), Some(OrderId::new(3)));
+    assert_eq!(book.best_bid(), Some(price(29_000)));
+    assert_eq!(book.best_ask(), Some(price(29_005)));
+}
+
+#[test]
+fn fills_take_the_oldest_order_at_a_price_first() {
+    let mut book = Book::new();
+    for id in [1, 2, 3] {
+        book.insert(sized(id, Side::Sell, 29_000, 5))
+            .expect("valid insert");
+    }
+
+    let execution = book
+        .insert(sized(4, Side::Buy, 29_000, 10))
+        .expect("valid insert");
+
+    let makers: Vec<u64> = execution
+        .fills()
+        .iter()
+        .map(|fill| fill.maker().value())
+        .collect();
+    assert_eq!(makers, vec![1, 2]);
+    assert_eq!(ids(book.asks()), vec![3]);
+}
+
+#[test]
+fn a_selling_taker_walks_the_bids_highest_first() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Buy, 29_000, 5))
+        .expect("valid insert");
+    book.insert(sized(2, Side::Buy, 29_002, 5))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(3, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+
+    let prices: Vec<i64> = execution
+        .fills()
+        .iter()
+        .map(|fill| fill.price().minor_units() / ONE)
+        .collect();
+    assert_eq!(prices, vec![29_002, 29_000]);
+    assert!(book.is_empty());
+}
+
+#[test]
+fn an_amended_order_matches_like_a_new_arrival() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+    book.insert(sized(2, Side::Buy, 28_000, 10))
+        .expect("valid insert");
+
+    // repricing the bid up to the ask makes it cross
+    let (replaced, execution) = book
+        .amend(OrderId::new(2), sized(3, Side::Buy, 29_000, 10))
+        .expect("the order is in the book");
+
+    assert_eq!(replaced.id(), OrderId::new(2));
+    assert_eq!(execution.filled(), Ok(qty(10)));
+    assert_eq!(execution.resting(), None);
+    assert!(book.is_empty());
 }

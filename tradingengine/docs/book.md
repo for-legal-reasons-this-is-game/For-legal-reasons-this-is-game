@@ -1,7 +1,8 @@
 # `src/book.rs`
 
-The order book for one coin: two price-ordered sides, plus an index that finds an order
-from nothing but its id.
+The order book for one coin: two price-ordered sides, an index that finds an order from
+nothing but its id, and the matching that crosses an arriving order against the opposite
+side before resting whatever is left.
 
 ```rust
 bids:   BTreeMap<Price, VecDeque<RestingOrder>>
@@ -37,6 +38,61 @@ Cancelling from the *middle* of a level is O(n) in either structure, because the
 has to be found first. That is acceptable: cancels are frequent but levels are short, and
 the alternative — an intrusive linked list with a node handle per order — buys speed with
 a large amount of unsafe bookkeeping.
+
+## Matching on arrival
+
+`insert` is not a plain container operation. An arriving order is crossed against the
+opposite side for as long as the prices agree, and only the remainder rests:
+
+```rust
+pub fn insert(&mut self, order: RestingOrder) -> Result<Execution>
+
+pub struct Execution { fills: Vec<Fill>, resting: Option<OrderId> }
+pub struct Fill { maker: OrderId, taker: OrderId, price: Price, quantity: Quantity }
+```
+
+`resting()` is `Some(id)` when part of the order is now live on the book and `None` when
+it traded out completely, so a caller can tell "still working" from "done" without a
+second lookup.
+
+### The loop decides nothing
+
+Matching walks the opposite side in exactly the order the containers already hold: best
+price first from the map, oldest first from the deque. Price-time priority is not
+re-implemented here, it is read off the structure. Take `Ord` off `Price`, or swap the
+`VecDeque` for a `Vec`, and matching changes behaviour without a line of it being edited.
+
+A buy stops when the best ask is above its limit; a sell stops when the best bid is below
+it. That comparison is the only place the two sides differ.
+
+### The price is the maker's
+
+A buy at 29,005 meeting a resting ask at 29,000 trades at **29,000**. The resting order
+set the terms and the arriving one accepted them, so the price improvement goes to the
+taker.
+
+That is the convention on essentially every venue, and it matters for more than fairness.
+If the taker's price were used, two orders crossing by a wide margin would print a trade
+at a price nobody was offering — and the printed price is what every client reads as "the
+market".
+
+### Fills carry no `TradeId`
+
+`Fill` names the two orders, the price and the quantity, and stops. It does not identify
+the trade.
+
+Ids here are deterministic counters stamped at one defined ingress point (`DATA_MODEL.md`,
+and [ids.md](ids.md)), because replaying a command log has to produce identical ids. The
+book holds no counter and must not grow one. The command layer turns each `Fill` into a
+`Trade` with an id and a `SeqNo`.
+
+### Both orders move together
+
+Each fill applies the same quantity to the maker and the taker through
+`RestingOrder::fill`, which moves `qty_remaining` and `status` as one step and cannot
+leave either half-applied. A maker that reaches zero is popped from the front of its level
+and cleared from the index in the same breath. A maker with quantity left keeps its place
+at the front of the queue — it was there first, and it still is.
 
 ## The order index
 
@@ -83,9 +139,14 @@ about the order:
 | `OrderNotFound` | the id is not in the index | nothing to remove; the lookup itself failed |
 
 Neither is a judgement about whether the order *should* be here. That question — is it
-live, does the user have the balance, is this a self-trade — belongs to the command layer
-above, which has the context to answer it and pays the cost once rather than per book
-operation.
+live, does the user have the balance, is the account permitted to trade this coin —
+belongs to the command layer above, which has the context to answer it and pays the cost
+once rather than per book operation.
+
+Self-trade prevention is the exception, and it is now this file's problem rather than the
+command layer's: it is a decision *per fill*, about which resting order the taker is
+about to hit, so nothing above the matching loop is in a position to make it. See "Not
+here yet" — it is unimplemented, and that is a live gap.
 
 An earlier version of `insert` also rejected an order whose status was terminal. It came
 out. Nothing in the crate can currently produce such an order before an insert:
@@ -93,17 +154,18 @@ out. Nothing in the crate can currently produce such an order before an insert:
 and `Rejected` has no code path at all. The check defended a state that could not be
 reached, on the hot path, forever.
 
-## One hash lookup, not two
+## Lookup counts
 
-`insert` and `remove` each touch the hash map **once**.
+`remove` touches the hash map **once**. `HashMap::remove` returns the `(Side, Price)` it
+needs *and* clears the entry in the same pass, rather than `get` followed by `remove`.
+What remains per removal is one hash lookup, one B-tree descent, one scan of a single
+price level, one deque removal. The scan dominates, and levels are short.
 
-`insert` claims the index slot through `Entry::Vacant` — the same lookup that detects a
-duplicate also writes the entry, instead of `contains_key` followed by `insert`. `remove`
-uses `HashMap::remove`, which returns the `(Side, Price)` it needs *and* clears the entry
-in one pass, instead of `get` followed by `remove`.
-
-What remains per removal: one hash lookup, one B-tree descent, one scan of a single price
-level, one deque removal. The scan dominates and levels are short.
+`insert` costs one lookup when the order fills completely and two when it rests. The
+duplicate check has to happen *before* matching — a rejected order must not have traded on
+its way to being rejected — but whether there is anything to index is only known after.
+An earlier version claimed the slot up front with `Entry::Vacant` and did it in one; that
+is no longer possible, and it no longer matters, because matching dominates both.
 
 ## Removal does not set the status
 
@@ -126,8 +188,18 @@ records the contract so it is not mistaken for an oversight.
 ## `amend`
 
 Issue #7 settled that an amendment loses its place in the queue. `amend(id, replacement)`
-takes the old order out, puts the replacement in at the **back** of its level, and returns
-what it displaced.
+takes the old order out, submits the replacement, and returns both the displaced order and
+the replacement's `Execution`:
+
+```rust
+pub fn amend(&mut self, id: OrderId, replacement: RestingOrder)
+    -> Result<(RestingOrder, Execution)>
+```
+
+The replacement goes through `insert`, so it is treated as a **new arrival and matches
+before resting**. Repricing a bid up onto a resting ask trades immediately rather than
+sitting at the back of a level it should never have reached — which is why the `Execution`
+comes back rather than being discarded.
 
 The naming matters here. `insert` and `remove` say what they do to the container and
 nothing about why; `amend` is the one operation named for an intention, because it is the
@@ -178,17 +250,32 @@ the aliases private means the layout can change without breaking a caller.
 
 ## Not here yet
 
-- **No matching.** The book stores and orders; it does not cross a bid with an ask. That
-  is step 8, along with commands and events.
-- **No mutable access to resting orders.** Matching has to fill the order at the front of
-  a level, which needs `front_mut` or `pop_front`. That path is deliberately absent until
-  step 8 defines what shape matching actually wants, rather than guessing now.
+- **SELF-TRADE PREVENTION IS MISSING, AND IT IS LIVE.** Issue #7 settled that a user's own
+  buy must not match their own sell. Matching does not check, so **today a user will trade
+  with themselves.** `RestingOrder` carries `user_id`, so the book already holds
+  everything the check needs — what is missing is the *policy*, and the three usual
+  answers behave differently:
+
+  | policy | what happens |
+  |---|---|
+  | skip the maker | pass over it and match the next order at that price; the resting order stays |
+  | cancel the maker | pull the resting order out, then carry on matching |
+  | reject the taker | refuse the incoming order outright |
+
+  Skipping is the least surprising and the cheapest, but it lets a user hold a resting
+  order that silently blocks nothing while their own flow walks past it. Cancelling the
+  maker is what most venues do. Rejecting the taker is the strictest and the most annoying
+  for anyone running two strategies on one account. Take it back to issue #7 before
+  picking, and note that whichever wins has to be recorded on the ticket, not just here.
+- **No `TimeInForce` handling.** Only a limit order that may rest can be expressed, so
+  `Market`, `ImmediateOrCancel` and `FillOrKill` have no entry point — `RestingOrder`
+  carries neither `OrderKind` nor `TimeInForce`. IOC is the remainder being dropped rather
+  than rested; FOK needs the whole quantity checked as available *before* any fill is
+  applied, which the current one-pass loop cannot do — it fills as it walks. Issue #7 also
+  settled that a market order short of liquidity fills what it can and errors on the rest.
 - **Seen idempotency keys.** `DATA_MODEL.md` layer 3 lists the dedupe set as a gap. It
   grows without bound, so it needs an eviction policy before it can be added — see the
   same note in [ids.md](ids.md).
-- **Self-trade prevention.** Motheraudio's answer on issue #7 is that a user's own buy
-  should not match their own sell. `RestingOrder` carries `user_id`, so the book already
-  holds what the check needs, but the rule itself belongs in matching.
 - **A quantity *decrease* should keep its place in the queue.** `amend` currently sends
   every change to the back, which is what issue #7 settled, but it is stricter than real
   venues. The usual rule is:
