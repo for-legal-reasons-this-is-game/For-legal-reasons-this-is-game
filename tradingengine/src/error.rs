@@ -5,6 +5,9 @@ pub enum EngineError {
     QuantityNegative,
     IdempotencyKeyInvalid,
     FillExceedsRemaining,
+    DuplicateOrderId,
+    OrderNotFound,
+    OrderNotLive,
     Overflow,
 }
 
@@ -24,6 +27,9 @@ impl std::fmt::Display for EngineError {
             Self::FillExceedsRemaining => {
                 write!(f, "fill quantity must not exceed remaining quantity")
             }
+            Self::DuplicateOrderId => write!(f, "an order with this id is already in the book"),
+            Self::OrderNotFound => write!(f, "no order with this id is in the book"),
+            Self::OrderNotLive => write!(f, "the order is already in a terminal state"),
             Self::Overflow => write!(f, "arithmetic overflow"),
         }
     }

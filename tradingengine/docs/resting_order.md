@@ -41,6 +41,28 @@ returns `FillExceedsRemaining`. Both leave the order unchanged.
 There are no independent setters for `qty_remaining` and `status`; exposing either one
 would allow the cross-field invariant to be broken between calls.
 
+## Cancelling
+
+`cancel() -> Result<()>` sets `status` to `Cancelled` and changes nothing else. A
+partially filled order keeps whatever quantity it had left, which is correct: the
+remaining quantity records what never traded, and cancelling does not retroactively fill
+it.
+
+It refuses to act on an order that is already terminal, returning `OrderNotLive`. Without
+that guard, cancelling a filled order would overwrite `Filled` with `Cancelled` and
+destroy the record of an execution that really happened.
+
+This lives here rather than on the book for the same reason `fill` does. `status` is this
+type's field, so every transition into it belongs to this type. `Cancelled` and `Rejected`
+were declared in `order.rs` from the start but had no code path that could produce them —
+this closes half of that gap, and `Rejected` stays unreachable until commands exist to
+reject.
+
+**`Book::remove` does not call this.** It removes the order and hands it back untouched,
+because removal from a container and cancellation are different facts — a fully matched
+order leaves by the same route and is `Filled`. The command layer calls this method on
+the returned order when the reason really was a cancellation. See [book.md](book.md).
+
 ## Ownership and derives
 
 The struct derives `Debug`, `Clone`, `PartialEq`, and `Eq`. It cannot be `Copy` because
@@ -52,8 +74,10 @@ reference so reading it does not allocate or clone its string.
 
 ## Not here yet
 
-- Cancellation and removal from the book belong to the book operation that updates its
-  price level and cancel index together.
+- Removal from the book belongs to the book operation that updates its price level and
+  cancel index together. This type only records that the order was cancelled.
+- `Rejected` has no code path. It needs a command layer that can refuse an order before
+  it ever rests.
 - Snapshot restoration may eventually need a separate validated constructor for a
   partially filled order. The public constructor should not be weakened for that case.
 - A filled order is transiently represented after `fill`; the book must remove it before

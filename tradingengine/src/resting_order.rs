@@ -60,6 +60,15 @@ impl RestingOrder {
         Ok(())
     }
 
+    pub fn cancel(&mut self) -> Result<()> {
+        if self.status.is_terminal() {
+            return Err(EngineError::OrderNotLive);
+        }
+
+        self.status = OrderStatus::Cancelled;
+        Ok(())
+    }
+
     pub const fn id(&self) -> OrderId {
         self.id
     }

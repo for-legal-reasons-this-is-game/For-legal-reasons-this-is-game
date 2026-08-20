@@ -98,6 +98,44 @@ fn rejects_zero_fill_without_changing_the_order() {
 }
 
 #[test]
+fn cancel_moves_an_open_order_to_cancelled() {
+    let mut order = order(qty(10));
+
+    assert_eq!(order.cancel(), Ok(()));
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+}
+
+#[test]
+fn cancel_keeps_the_quantity_a_partially_filled_order_had_left() {
+    let mut order = order(qty(10));
+    order.fill(qty(4)).expect("valid partial fill");
+
+    assert_eq!(order.cancel(), Ok(()));
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+    assert_eq!(order.qty_remaining(), qty(6));
+    assert_eq!(order.qty_original(), qty(10));
+}
+
+#[test]
+fn cancel_rejects_a_filled_order_without_changing_it() {
+    let mut order = order(qty(10));
+    order.fill(qty(10)).expect("valid final fill");
+    let before = order.clone();
+
+    assert_eq!(order.cancel(), Err(EngineError::OrderNotLive));
+    assert_eq!(order, before);
+}
+
+#[test]
+fn cancel_twice_rejects_the_second_time() {
+    let mut order = order(qty(10));
+    order.cancel().expect("the order is open");
+
+    assert_eq!(order.cancel(), Err(EngineError::OrderNotLive));
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+}
+
+#[test]
 fn rejects_overfill_without_changing_the_order() {
     let mut order = order(qty(10));
     let before = order.clone();
