@@ -38,7 +38,62 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - name: cargo test
         working-directory: ${{ matrix.dir }}
-        run: nix develop --command cargo test --locked
+        run: nix develop --command cargo test --locked --bins
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: backend
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/backend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: build backend
+        working-directory: backend
+        run: nix develop --command cargo build --locked
+
+      - name: start backend
+        working-directory: backend
+        run: nohup nix develop --command cargo run --locked > server.log 2>&1 &
+
+      - name: wait for backend to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/v1/users > /dev/null; then
+              echo "backend is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "backend did not become ready in time"
+          cat backend/server.log
+          exit 1
+
+      - name: run integration tests
+        working-directory: backend
+        run: nix develop --command cargo test --locked --test integration_test
+
+      - name: dump backend logs
+        if: failure()
+        run: cat backend/server.log
+
+      - name: stop backend
+        if: always()
+        run: pkill -f 'target/debug/backend' || true
 
   clippy:
     name: clippy
