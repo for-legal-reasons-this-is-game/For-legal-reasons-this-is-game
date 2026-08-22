@@ -53,6 +53,7 @@
         pkgs.pkg-config
         pkgs.gcc # C toolchain + default linker
         pkgs.lld # faster / cross-friendly linker (optional)
+        pkgs.openssl # needed by openssl-sys (pulled in by reqwest's default TLS backend)
       ];
 
       # So rust-analyzer can find std sources (completion, no_std, build-std).
