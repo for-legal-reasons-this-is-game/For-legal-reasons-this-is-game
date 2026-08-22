@@ -10,12 +10,14 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 pub struct UserPayload {
     name: String,
+    birthday: String,
 }
 
 #[derive(Serialize, FromRow)]
 pub struct User {
     user_id: Uuid,
     user_name: String,
+    user_birthday: String,
 }
 
 // #[derive(Serialize, FromRow)]
