@@ -1,3 +1,13 @@
+x-tigerbeetle-common: &tigerbeetle-common
+  image: ghcr.io/tigerbeetle/tigerbeetle
+  restart: unless-stopped
+  security_opt:
+    - "seccomp=unconfined"
+  cap_add:
+    - IPC_LOCK
+  mem_limit: 1536m
+  entrypoint: ["tini", "--", "sh", "-c"]
+
 services:
   backend:
     container_name: backend
@@ -24,5 +34,71 @@ services:
       timeout: 5s
       retries: 5
 
+  tigerbeetle_0:
+    <<: *tigerbeetle-common
+    container_name: tigerbeetle_0
+    networks:
+      tigerbeetle_net:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "3001:3000"
+    volumes:
+      - tigerbeetle_0_data:/data
+    command:
+      - |
+        set -e
+        FILE=/data/replica_0.tigerbeetle
+        if [ ! -f "$$FILE" ]; then
+          /tigerbeetle format --cluster=112369905620179595468860499864441504024 --replica=0 --replica-count=3 "$$FILE"
+        fi
+        exec /tigerbeetle start --addresses=172.28.0.10:3000,172.28.0.11:3000,172.28.0.12:3000 --cache-grid=256MiB "$$FILE"
+
+  tigerbeetle_1:
+    <<: *tigerbeetle-common
+    container_name: tigerbeetle_1
+    networks:
+      tigerbeetle_net:
+        ipv4_address: 172.28.0.11
+    ports:
+      - "3002:3000"
+    volumes:
+      - tigerbeetle_1_data:/data
+    command:
+      - |
+        set -e
+        FILE=/data/replica_1.tigerbeetle
+        if [ ! -f "$$FILE" ]; then
+          /tigerbeetle format --cluster=112369905620179595468860499864441504024 --replica=1 --replica-count=3 "$$FILE"
+        fi
+        exec /tigerbeetle start --addresses=172.28.0.10:3000,172.28.0.11:3000,172.28.0.12:3000 --cache-grid=256MiB "$$FILE"
+
+  tigerbeetle_2:
+    <<: *tigerbeetle-common
+    container_name: tigerbeetle_2
+    networks:
+      tigerbeetle_net:
+        ipv4_address: 172.28.0.12
+    ports:
+      - "3003:3000"
+    volumes:
+      - tigerbeetle_2_data:/data
+    command:
+      - |
+        set -e
+        FILE=/data/replica_2.tigerbeetle
+        if [ ! -f "$$FILE" ]; then
+          /tigerbeetle format --cluster=112369905620179595468860499864441504024 --replica=2 --replica-count=3 "$$FILE"
+        fi
+        exec /tigerbeetle start --addresses=172.28.0.10:3000,172.28.0.11:3000,172.28.0.12:3000 --cache-grid=256MiB "$$FILE"
+
+networks:
+  tigerbeetle_net:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
 volumes:
   pgdata:
+  tigerbeetle_0_data:
+  tigerbeetle_1_data:
+  tigerbeetle_2_data:

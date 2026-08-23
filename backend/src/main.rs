@@ -3,22 +3,38 @@ use axum::{
     routing::{delete, get, post},
 };
 
+use crate::v1::AppState;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
+
+use cn_tigerbeetle as tb;
+
 use std::env;
 
-use crate::v1::AppState;
 pub mod hmac_utils;
 pub mod v1;
 
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
 async fn main() {
+    // We need to implement secrets, and hold these values there for tiger beetle.
+    let tb_client = Arc::new(
+        tb::Client::new(
+            112369905620179595468860499864441504024,
+            "172.28.0.10:3000,172.28.0.11:3000,172.28.0.12:3000",
+        )
+        .expect("Tiger Beetle client couldn't be started"),
+    );
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pg_connections = PgPoolOptions::new()
         .connect(&db_url)
         .await
         .expect("Failed to connect to DB");
-    let state = AppState { pg_connections };
+    let state = AppState {
+        pg_connections,
+        tb_client,
+    };
+
     sqlx::migrate!()
         .run(&state.pg_connections)
         .await
@@ -36,10 +52,10 @@ async fn main() {
             "/accounts/{account_id}/positions/{asset_id}",
             get(v1::fetch_account_position_asset),
         )
-        .route("/instruments", get(v1::list_instruments))
-        .route("/instruments", post(v1::create_instrument))
-        .route("/instruments", delete(v1::delete_instrument))
-        .route("/instruments/{symbol}", get(v1::list_instruments))
+        .route("/ledgers", get(v1::list_ledgers))
+        .route("/ledgers", post(v1::create_ledger))
+        .route("/ledgers", delete(v1::delete_ledger))
+        .route("/ledgers/{symbol}", get(v1::list_ledgers))
         .with_state(state);
 
     let router = Router::<()>::new().nest("/api/v1", v1);
