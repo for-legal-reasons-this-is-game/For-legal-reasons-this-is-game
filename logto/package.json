@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@logto/api": "^1.42.0"
+  }
+}
