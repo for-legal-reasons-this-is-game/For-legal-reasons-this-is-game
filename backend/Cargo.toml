@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.9"
+cn-tigerbeetle = "0.1.2"
 hex = "0.4.3"
 hmac = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }

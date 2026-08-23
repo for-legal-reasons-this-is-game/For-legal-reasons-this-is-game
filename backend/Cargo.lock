@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -86,6 +92,7 @@ name = "backend"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "cn-tigerbeetle",
  "hex",
  "hmac",
  "reqwest",
@@ -180,6 +187,17 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
+name = "cn-tigerbeetle"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39e3ca91ad8f444b355ddc178c17b5a6507429585ab71349dd7c9cfcaec0363c"
+dependencies = [
+ "anyhow",
+ "bitflags",
+ "futures-channel",
+]
 
 [[package]]
 name = "const-oid"
