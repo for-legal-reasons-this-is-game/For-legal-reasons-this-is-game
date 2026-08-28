@@ -58,6 +58,8 @@
 
       # So rust-analyzer can find std sources (completion, no_std, build-std).
       RUST_SRC_PATH = "${channel.rust-src}/lib/rustlib/src/rust/library";
+      REDIS_SESSIONS_URL = "redis://127.0.0.1:6379";
+
 
       # So binaries dynamically linked against openssl (e.g. via reqwest's
       # native-tls backend) can find libssl.so.3 / libcrypto.so.3 at runtime.

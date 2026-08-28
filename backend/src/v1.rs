@@ -7,6 +7,8 @@ use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
+use tower_sessions::Session;
+
 #[derive(Deserialize)]
 pub struct UserPayload {
     name: String,
@@ -29,6 +31,8 @@ pub struct User {
 pub struct AppState {
     pub pg_connections: PgPool,
 }
+
+const SESSION_ID: &str = "session_id";
 //create user write it to database and respond if it sucseeds and create userid
 pub async fn create_user(
     State(state): State<AppState>,

@@ -4,7 +4,10 @@ use axum::{
 };
 
 use sqlx::postgres::PgPoolOptions;
-use std::env;
+use std::{env, str::FromStr};
+use time::Duration;
+use tower_sessions::{Expiry, MemoryStore, SessionManagerLayer};
+use tower_sessions_redis_store::{RedisStore, fred::prelude::*};
 
 use crate::v1::AppState;
 pub mod hmac_utils;
@@ -13,11 +16,23 @@ pub mod v1;
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
 async fn main() {
+    let redis_url = env::var("REDIS_SESSIONS_URL").expect("Redis session url has to be set");
+
+    let config = Config::from_url(&redis_url).expect("invalid redis url");
+    let pool = Pool::new(config, None, None, None, 6).expect("failed to start pool for config");
+    let session_store = RedisStore::new(pool);
+    let session_expire = Expiry::OnInactivity(Duration::minutes(5));
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(true)
+        .with_expiry(session_expire);
+
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+
     let pg_connections = PgPoolOptions::new()
         .connect(&db_url)
         .await
         .expect("Failed to connect to DB");
+
     let state = AppState { pg_connections };
     sqlx::migrate!()
         .run(&state.pg_connections)
