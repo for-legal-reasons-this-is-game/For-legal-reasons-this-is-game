@@ -1,0 +1,2 @@
+redis: 6379 the service, 5540 for visualy inspecting
+
