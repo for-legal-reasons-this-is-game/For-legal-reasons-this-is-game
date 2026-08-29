@@ -2,9 +2,8 @@ use axum::{
     Router,
     routing::{delete, get, post},
 };
-use serde::de::IntoDeserializer;
 
-use crate::v1::AppState;
+use backend::v1::{self, AppState};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
@@ -12,13 +11,11 @@ use cn_tigerbeetle as tb;
 
 use std::env;
 
-pub mod hmac_utils;
-pub mod v1;
-
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
 async fn main() {
-    // We need to implement secrets, and hold these values there for tiger beetle.
+    // TigerBeetle connection details come from the environment (Infisical at
+    // runtime); see entrypoint.sh / secret_managment.
     let tb_client = Arc::new(
         tb::Client::new(
             env::var("TB_CLUSTER_ID")
@@ -33,9 +30,11 @@ async fn main() {
     );
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pg_connections = PgPoolOptions::new()
+        .max_connections(10)
         .connect(&db_url)
         .await
         .expect("Failed to connect to DB");
+
     let state = AppState {
         pg_connections,
         tb_client,
