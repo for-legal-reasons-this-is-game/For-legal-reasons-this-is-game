@@ -3,16 +3,13 @@ use axum::{
     routing::{delete, get, post},
 };
 
-use crate::v1::AppState;
+use backend::v1::{self, AppState};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
 use cn_tigerbeetle as tb;
 
 use std::env;
-
-pub mod hmac_utils;
-pub mod v1;
 
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
@@ -27,9 +24,11 @@ async fn main() {
     );
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pg_connections = PgPoolOptions::new()
+        .max_connections(10)
         .connect(&db_url)
         .await
         .expect("Failed to connect to DB");
+
     let state = AppState {
         pg_connections,
         tb_client,

@@ -3,11 +3,12 @@ use axum::{
     http::{Response, StatusCode},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::domain::{Account, AccountCodeType, LedgerType, User};
 use cn_tigerbeetle as tb;
-use sqlx::{FromRow, PgPool};
+use sqlx::PgPool;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -21,87 +22,11 @@ pub struct UserPayload {
     name: String,
 }
 
-#[derive(Serialize, FromRow)]
-pub struct User {
-    user_id: Uuid,
-    user_name: String,
-    user_birthday: String,
-}
-
 #[derive(Deserialize)]
 pub struct AccountPayload {
     name: String,
     ledger_type: LedgerType,
     code_type: AccountCodeType,
-}
-
-#[derive(Serialize, FromRow)]
-pub struct Account {
-    account_id: Uuid,
-    account_name: String,
-    account_ledger_type: LedgerType,
-    account_code_type: AccountCodeType,
-    account_user_id: Uuid,
-}
-
-use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::{FromPrimitive, ToPrimitive};
-
-#[derive(Debug, Clone, Copy, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type)]
-#[repr(i16)]
-#[serde(try_from = "i16", into = "i16")]
-enum LedgerType {
-    Usd = 0,
-    Eur = 1,
-    Bitcoin = 2, // extensible
-}
-
-impl TryFrom<i16> for LedgerType {
-    type Error = String;
-
-    fn try_from(value: i16) -> Result<Self, Self::Error> {
-        LedgerType::from_i16(value).ok_or_else(|| format!("invalid LedgerType{}", value))
-    }
-}
-
-impl From<LedgerType> for i16 {
-    fn from(value: LedgerType) -> Self {
-        value.to_i16().expect("enum variants always fit in i16")
-    }
-}
-
-impl From<LedgerType> for u32 {
-    fn from(value: LedgerType) -> Self {
-        value.to_u32().expect("enum variants always fit in u32")
-    }
-}
-
-#[derive(Debug, Clone, Copy, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type)]
-#[repr(i16)]
-#[serde(try_from = "i16", into = "i16")]
-enum AccountCodeType {
-    Cash = 0,
-    Crypto = 1,
-}
-
-impl TryFrom<i16> for AccountCodeType {
-    type Error = String;
-
-    fn try_from(value: i16) -> Result<Self, Self::Error> {
-        AccountCodeType::from_i16(value).ok_or_else(|| format!("invalid AccountCodeType{}", value))
-    }
-}
-
-impl From<AccountCodeType> for u16 {
-    fn from(value: AccountCodeType) -> Self {
-        value.to_u16().expect("enum variants always fit in u16")
-    }
-}
-
-impl From<AccountCodeType> for i16 {
-    fn from(value: AccountCodeType) -> Self {
-        value.to_i16().expect("enum variants always fit in i16")
-    }
 }
 
 //create user write it to database and respond if it sucseeds and create userid
@@ -154,9 +79,9 @@ pub async fn create_account(
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     })?;
 
-    sqlx::query("INSERT INTO tb_outbox(agrregate_id, kind, tb_id, ledger, code, user_id) VALUES ($1, $2, $3, $4, $5, $6)")
-    .bind(account.account_id)
-    .bind("create_account")
+    sqlx::query(
+        "INSERT INTO tb_outbox(agrregate_id, ledger, code, user_id) VALUES ($1, $2, $3, $4)",
+    )
     .bind(account.account_id)
     .bind(account.account_ledger_type)
     .bind(account.account_code_type)
