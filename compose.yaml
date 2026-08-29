@@ -1,28 +1,139 @@
+x-tigerbeetle-common: &tigerbeetle-common
+  image: ghcr.io/tigerbeetle/tigerbeetle
+  restart: unless-stopped
+  security_opt:
+    - "seccomp=unconfined"
+  cap_add:
+    - IPC_LOCK
+  # 1 GiB journal + grid cache + working set - 1536m gets OOM-killed
+  mem_limit: 2g
+  entrypoint: ["tini", "--", "sh", "-c"]
+
+# -----------------------------------------------------------------------------
+#  Secret management: brings up the Infisical stack + the infisical-setup
+#  provisioner. The app services below wait for `infisical-setup` to finish
+#  (condition: service_completed_successfully) before they start.
+# -----------------------------------------------------------------------------
+include:
+  - ./secret_managment/docker-compose.yaml
+
 services:
   backend:
     container_name: backend
     build: ./backend/
+    restart: unless-stopped
+    # the TigerBeetle client needs io_uring, which docker's default seccomp
+    # profile blocks (same reason the tigerbeetle services run unconfined).
+    security_opt:
+      - "seccomp=unconfined"
     ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgres://myuser:mypassword@db:5432/mydb
-  postgres:
+      - "${BACKEND_PORT:-8000}:8000"
+    # entrypoint.sh wraps this in `infisical run --`, so DATABASE_URL,
+    # TB_CLUSTER_ID, TB_IP_ADRESSES, ... all come from Infisical at runtime.
+    command: ["./backend"]
+    volumes:
+      - infisical_shared:/shared:ro
+    networks:
+      - default
+      - tigerbeetle_net
+    depends_on:
+      infisical-backend:
+        condition: service_healthy
+      infisical-setup:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      tigerbeetle_0:
+        condition: service_started
+
+  db:
     image: postgres:16-alpine
     container_name: db
     restart: unless-stopped
+    # The DB container needs its credentials at init time and can't run the
+    # Infisical CLI, so it reads them straight from .env. The same values are
+    # pushed into Infisical (via INFISICAL_APP_SECRETS) for the backend to use.
     environment:
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mypassword
-      POSTGRES_DB: mydb
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U myuser -d mydb"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -q"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  tigerbeetle_0:
+    <<: *tigerbeetle-common
+    container_name: tigerbeetle_0
+    networks:
+      tigerbeetle_net:
+        ipv4_address: ${TB_REPLICA_0_IP:-172.28.0.10}
+    ports:
+      - "${TB_PORT_0:-3001}:3000"
+    volumes:
+      - tigerbeetle_0_data:/data
+    command:
+      - |
+        set -e
+        FILE=/data/replica_0.tigerbeetle
+        if [ ! -f "$$FILE" ]; then
+          /tigerbeetle format --cluster=${TB_CLUSTER_ID} --replica=0 --replica-count=3 "$$FILE"
+        fi
+        exec /tigerbeetle start --addresses=${TB_IP_ADRESSES} --cache-grid=256MiB "$$FILE"
+
+  tigerbeetle_1:
+    <<: *tigerbeetle-common
+    container_name: tigerbeetle_1
+    networks:
+      tigerbeetle_net:
+        ipv4_address: ${TB_REPLICA_1_IP:-172.28.0.11}
+    ports:
+      - "${TB_PORT_1:-3002}:3000"
+    volumes:
+      - tigerbeetle_1_data:/data
+    command:
+      - |
+        set -e
+        FILE=/data/replica_1.tigerbeetle
+        if [ ! -f "$$FILE" ]; then
+          /tigerbeetle format --cluster=${TB_CLUSTER_ID} --replica=1 --replica-count=3 "$$FILE"
+        fi
+        exec /tigerbeetle start --addresses=${TB_IP_ADRESSES} --cache-grid=256MiB "$$FILE"
+
+  tigerbeetle_2:
+    <<: *tigerbeetle-common
+    container_name: tigerbeetle_2
+    networks:
+      tigerbeetle_net:
+        ipv4_address: ${TB_REPLICA_2_IP:-172.28.0.12}
+    ports:
+      - "${TB_PORT_2:-3003}:3000"
+    volumes:
+      - tigerbeetle_2_data:/data
+    command:
+      - |
+        set -e
+        FILE=/data/replica_2.tigerbeetle
+        if [ ! -f "$$FILE" ]; then
+          /tigerbeetle format --cluster=${TB_CLUSTER_ID} --replica=2 --replica-count=3 "$$FILE"
+        fi
+        exec /tigerbeetle start --addresses=${TB_IP_ADRESSES} --cache-grid=256MiB "$$FILE"
+
+networks:
+  tigerbeetle_net:
+    ipam:
+      config:
+        - subnet: ${TB_SUBNET:-172.28.0.0/24}
 
 volumes:
   pgdata:
+  tigerbeetle_0_data:
+  tigerbeetle_1_data:
+  tigerbeetle_2_data:
+  # shared with the Infisical stack (also declared in secret_managment/docker-compose.yaml)
+  infisical_shared:
