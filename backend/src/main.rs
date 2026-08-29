@@ -2,6 +2,7 @@ use axum::{
     Router,
     routing::{delete, get, post},
 };
+use serde::de::IntoDeserializer;
 
 use crate::v1::AppState;
 use sqlx::postgres::PgPoolOptions;
@@ -20,8 +21,13 @@ async fn main() {
     // We need to implement secrets, and hold these values there for tiger beetle.
     let tb_client = Arc::new(
         tb::Client::new(
-            112369905620179595468860499864441504024,
-            "172.28.0.10:3000,172.28.0.11:3000,172.28.0.12:3000",
+            env::var("TB_CLUSTER_ID")
+                .expect("TB_CLUSTER_ID not set")
+                .parse()
+                .expect("Failed to parse TB_CLUSTER_ID"),
+            env::var("TB_IP_ADRESSES")
+                .expect("TB_ADRESSES not set")
+                .as_str(),
         )
         .expect("Tiger Beetle client couldn't be started"),
     );
