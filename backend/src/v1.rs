@@ -33,7 +33,6 @@ pub struct AccountPayload {
     name: String,
     ledger_type: LedgerType,
     code_type: AccountCodeType,
-    user_id: Uuid,
 }
 
 #[derive(Serialize, FromRow)]
@@ -129,40 +128,47 @@ pub async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>
 //create account with unique ID and write it to database
 pub async fn create_account(
     State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
     Json(payload): Json<AccountPayload>,
 ) -> Result<(StatusCode, Json<Account>), StatusCode> {
-    let q = sqlx::query_as::<_, Account>(
-        "INSERT INTO accounts (account_name account_ledger_type account_code_type userid) VALUES ($1 $2 $3 $4) RETURNING * ",
+    let account_id = Uuid::from_u128(tb::id());
+
+    let mut tx = state
+        .pg_connections
+        .begin()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let account = sqlx::query_as::<_, Account>(
+        "INSERT INTO accounts (account_id, account_name, account_ledger_type, account_code_type, account_user_id) VALUES ($1, $2, $3, $4, $5) RETURNING * ",
     )
+    .bind(account_id)
     .bind(payload.name)
     .bind(payload.ledger_type)
     .bind(payload.code_type)
-    .bind(payload.user_id)
-    .fetch_one(&state.pg_connections)
-    .await;
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| match e{
+        sqlx::Error::Database(db) if db.is_foreign_key_violation() => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
 
-    if let Err(e) = &q {
-        match e.to_owned() {
-            sqlx::Error::InvalidArgument(_) => return Err(StatusCode::BAD_REQUEST),
-            _ => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    }
+    sqlx::query("INSERT INTO tb_outbox(agrregate_id, kind, tb_id, ledger, code, user_id) VALUES ($1, $2, $3, $4, $5, $6)")
+    .bind(account.account_id)
+    .bind("create_account")
+    .bind(account.account_id)
+    .bind(account.account_ledger_type)
+    .bind(account.account_code_type)
+    .bind(account.account_user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let account = q.unwrap(); // proven by previous statement
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let tb_account = tb::Account {
-        id: account.account_id.as_u128(),
-        code: account.account_code_type as u16,
-        ..Default::default()
-    };
-
-    let tb_result = state.tb_client.create_accounts(&[tb_account]).await;
-
-    if let Err(e) = &tb_result {
-        //delete in the relational database
-        todo!()
-    }
-    // iterate over CreateAccountsResult and find if error
     Ok((StatusCode::CREATED, Json(account)))
 }
 
