@@ -25,7 +25,6 @@ pub struct UserPayload {
 pub struct User {
     user_id: Uuid,
     user_name: String,
-    user_birthday: String,
 }
 
 #[derive(Deserialize)]
@@ -132,7 +131,7 @@ pub async fn create_account(
     Json(payload): Json<AccountPayload>,
 ) -> Result<(StatusCode, Json<Account>), StatusCode> {
     let q = sqlx::query_as::<_, Account>(
-        "INSERT INTO accounts (account_name account_ledger_type account_code_type userid) VALUES ($1 $2 $3 $4) RETURNING * ",
+        "INSERT INTO accounts (account_name, account_ledger_type, account_code_type, account_user_id) VALUES ($1, $2, $3, $4) RETURNING *",
     )
     .bind(payload.name)
     .bind(payload.ledger_type)

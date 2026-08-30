@@ -59,6 +59,8 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/backend
+      TB_CLUSTER_ID: "0"
+      TB_IP_ADRESSES: "127.0.0.1:3000"
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
