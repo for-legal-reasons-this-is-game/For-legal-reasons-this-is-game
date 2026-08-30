@@ -3,7 +3,10 @@ use axum::{
     routing::{delete, get, post},
 };
 
-use backend::v1::{self, AppState};
+use backend::{
+    relay,
+    v1::{self, AppState},
+};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
@@ -38,7 +41,8 @@ async fn main() {
         .run(&state.pg_connections)
         .await
         .expect("Migration failed");
-
+    // the task loops forever, but we will need to join it on ctrl c
+    tokio::task::spawn(relay::relay_loop(state.clone()));
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
         .route("/users", get(v1::list_users))

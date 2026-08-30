@@ -8,7 +8,6 @@ use uuid::Uuid;
 pub struct User {
     pub user_id: Uuid,
     pub user_name: String,
-    pub user_birthday: String,
 }
 
 #[derive(Serialize, FromRow)]
@@ -24,9 +23,9 @@ pub struct Account {
 #[repr(i16)]
 #[serde(try_from = "i16", into = "i16")]
 pub enum LedgerType {
-    Usd = 0,
-    Eur = 1,
-    Bitcoin = 2, // extensible
+    Usd = 1,
+    Eur = 2,
+    Bitcoin = 3, // extensible
 }
 
 impl TryFrom<i16> for LedgerType {
@@ -53,8 +52,8 @@ impl From<LedgerType> for u32 {
 #[repr(i16)]
 #[serde(try_from = "i16", into = "i16")]
 pub enum AccountCodeType {
-    Cash = 0,
-    Crypto = 1,
+    Cash = 1,
+    Crypto = 2,
 }
 
 impl TryFrom<i16> for AccountCodeType {

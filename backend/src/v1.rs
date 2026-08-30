@@ -80,7 +80,7 @@ pub async fn create_account(
     })?;
 
     sqlx::query(
-        "INSERT INTO tb_outbox(agrregate_id, ledger, code, user_id) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO tb_outbox(aggregate_id, ledger, code, user_id) VALUES ($1, $2, $3, $4)",
     )
     .bind(account.account_id)
     .bind(account.account_ledger_type)
@@ -93,6 +93,8 @@ pub async fn create_account(
     tx.commit()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // self report here, the relay will fix if this fails
 
     Ok((StatusCode::CREATED, Json(account)))
 }
