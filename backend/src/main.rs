@@ -2,7 +2,6 @@ use axum::{
     Router,
     routing::{delete, get, post},
 };
-use serde::de::IntoDeserializer;
 
 use crate::v1::AppState;
 use sqlx::postgres::PgPoolOptions;

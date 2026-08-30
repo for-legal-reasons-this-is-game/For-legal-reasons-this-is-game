@@ -158,7 +158,7 @@ pub async fn create_account(
 
     let tb_result = state.tb_client.create_accounts(&[tb_account]).await;
 
-    if let Err(e) = &tb_result {
+    if let Err(_e) = &tb_result {
         //delete in the relational database
         todo!()
     }
