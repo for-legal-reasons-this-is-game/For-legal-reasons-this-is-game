@@ -53,10 +53,15 @@
         pkgs.pkg-config
         pkgs.gcc # C toolchain + default linker
         pkgs.lld # faster / cross-friendly linker (optional)
+        pkgs.openssl # needed by openssl-sys (pulled in by reqwest's default TLS backend)
       ];
 
       # So rust-analyzer can find std sources (completion, no_std, build-std).
       RUST_SRC_PATH = "${channel.rust-src}/lib/rustlib/src/rust/library";
+
+      # So binaries dynamically linked against openssl (e.g. via reqwest's
+      # native-tls backend) can find libssl.so.3 / libcrypto.so.3 at runtime.
+      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [pkgs.openssl];
 
       shellHook = ''
         echo "$(rustc --version)  |  $(cargo --version)"

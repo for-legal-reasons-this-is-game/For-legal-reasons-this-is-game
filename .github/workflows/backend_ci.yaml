@@ -1,10 +1,10 @@
-name: CI
+name: backend_ci
 
 on:
   pull_request:
-    branches: [main]
+    branches: [backend_staging]
   push:
-    branches: [main]
+    branches: [backend_staging]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dir: [backend, tradingengine] 
+        dir: [backend ]
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dir: [backend, tradingengine]
+        dir: [backend]
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main
@@ -102,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dir: [backend, tradingengine]
+        dir: [backend]
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@main

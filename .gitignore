@@ -1,6 +1,4 @@
-# Rust build artifacts (backend, frontend, tradingengine, tradingengine/tradingengine, ...)
-**/target/
+target/
 
-# Nix
-result
-result-*
+# the single environment file - never commit; .env.example is the template
+.env
