@@ -1,5 +1,5 @@
 use crate::{
-    domain::{AccountCodeType, LedgerType},
+    domain::AccountCodeType,
     v1::AppState,
 };
 use cn_tigerbeetle::{self as tb};
@@ -11,7 +11,7 @@ use uuid::Uuid;
 struct TbOutbox {
     id: i64,
     aggregate_id: Uuid,
-    ledger: LedgerType,
+    ledger: i32,
     code: AccountCodeType,
     user_id: Uuid,
 }

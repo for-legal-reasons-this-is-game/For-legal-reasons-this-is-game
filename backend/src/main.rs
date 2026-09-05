@@ -8,7 +8,7 @@ use backend::{
     v1::{self, AppState},
 };
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use cn_tigerbeetle as tb;
 
@@ -32,15 +32,21 @@ async fn main() {
         .await
         .expect("Failed to connect to DB");
 
+    sqlx::migrate!()
+        .run(&pg_connections)
+        .await
+        .expect("Migration failed");
+
+    let ledgers = v1::load_ledgers(&pg_connections)
+        .await
+        .expect("Failed to load ledgers");
+
     let state = AppState {
         pg_connections,
         tb_client,
+        ledgers: Arc::new(RwLock::new(ledgers)),
     };
 
-    sqlx::migrate!()
-        .run(&state.pg_connections)
-        .await
-        .expect("Migration failed");
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
     let v1 = Router::new()
