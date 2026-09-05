@@ -1,0 +1,39 @@
+import RageClick from './extensions/rageclick';
+import { Properties, RemoteConfigResult } from './types';
+import { PostHog } from './posthog-core';
+import type { Extension } from './extensions/types';
+export declare function getAugmentPropertiesFromElement(elem: Element): Properties;
+export declare function previousElementSibling(el: Element): Element | null;
+export declare function getDefaultProperties(eventType: string): Properties;
+export declare function getPropertiesFromElement(elem: Element, maskAllAttributes: boolean, maskText: boolean, elementAttributeIgnorelist: string[] | undefined, disableCaptureUrlHashes?: boolean): Properties;
+export declare function autocapturePropertiesForElement(target: Element, { e, maskAllElementAttributes, maskAllText, elementAttributeIgnoreList, elementsChainAsString, disableCaptureUrlHashes, }: {
+    e: Event;
+    maskAllElementAttributes: boolean;
+    maskAllText: boolean;
+    elementAttributeIgnoreList?: string[] | undefined;
+    elementsChainAsString: boolean;
+    disableCaptureUrlHashes: boolean;
+}): {
+    props: Properties;
+    explicitNoCapture?: boolean;
+};
+export declare class Autocapture implements Extension {
+    instance: PostHog;
+    _initialized: boolean;
+    _isDisabledServerSide: boolean | null;
+    _hasReceivedConfigResponse: boolean;
+    _elementSelectors: Set<string> | null;
+    rageclicks: RageClick;
+    _elementsChainAsString: boolean;
+    constructor(instance: PostHog);
+    initialize(): void;
+    private get _config();
+    _addDomEventHandlers(): void;
+    startIfEnabled(): void;
+    onRemoteConfig(result: RemoteConfigResult): void;
+    setElementSelectors(selectors: Set<string>): void;
+    getElementSelectors(element: Element | null): string[] | null;
+    get isEnabled(): boolean;
+    private _captureEvent;
+    isBrowserSupported(): boolean;
+}

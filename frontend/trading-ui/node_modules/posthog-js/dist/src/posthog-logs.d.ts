@@ -1,0 +1,40 @@
+import { PostHog } from './posthog-core';
+import type { CaptureLogOptions, RemoteConfigResult, Logger } from './types';
+import { Extension } from './extensions/types';
+export declare class PostHogLogs implements Extension {
+    private readonly _instance;
+    private _isLogsEnabled;
+    private _isLoaded;
+    private readonly _logger;
+    private _queue;
+    private _core;
+    private _resolvedConfig;
+    private _resolvedFrom;
+    private _capture_logger;
+    private _consoleQueue;
+    private _consoleCore;
+    private _consoleResolvedConfig;
+    private _consoleResolvedFrom;
+    private _consecutiveStatusZeroFailures;
+    constructor(_instance: PostHog);
+    private _onReconnect;
+    private _buildCore;
+    private _getCore;
+    private _getConsoleCore;
+    initialize(): void;
+    onRemoteConfig(result: RemoteConfigResult): void;
+    reset(): void;
+    captureLog(options: CaptureLogOptions): void;
+    /** @internal */
+    _captureConsoleLog(options: CaptureLogOptions): void;
+    get logger(): Logger;
+    flushLogs(transport?: 'XHR' | 'fetch' | 'sendBeacon'): void;
+    loadIfEnabled(): void;
+    private _createHost;
+    private _sendLogsBatch;
+    private _trackEndpointReachability;
+    private _flushViaTransport;
+    private _drainQueueViaTransport;
+    private _logsUrl;
+    private _getSdkContext;
+}

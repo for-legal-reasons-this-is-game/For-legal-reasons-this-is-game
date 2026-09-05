@@ -1,1 +1,5 @@
 target/
+node_modules/
+
+# the single environment file - never commit; .env.example is the template
+.env
