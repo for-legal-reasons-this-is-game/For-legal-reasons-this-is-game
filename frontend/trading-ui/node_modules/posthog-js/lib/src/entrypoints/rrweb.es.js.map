@@ -1,1 +1,0 @@
-{"version":3,"file":"rrweb.es.js","sourceRoot":"","sources":["../../../src/entrypoints/rrweb.es.ts"],"names":[],"mappings":";;;;;;;;;;;;;;;;AAAA,yEAAyE;AACzE,iDAA8B","sourcesContent":["// Exposed as `posthog-js/rrweb` via packages/browser/rrweb/package.json.\nexport * from '@posthog/rrweb'\n"]}
