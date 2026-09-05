@@ -4,7 +4,7 @@ use crate::{
 };
 use cn_tigerbeetle::{self as tb};
 use sqlx::{self};
-use tokio::time::Duration;
+use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
@@ -17,7 +17,6 @@ struct TbOutbox {
 }
 // The relay gets launched as a working thread, drains postgres' outbox, creates the account for tb.
 // basically, it polls every, more or less, second.
-// eventually we'll also like to prune the outbox every couple of hours.
 pub async fn relay_loop(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -54,31 +53,62 @@ pub async fn relay_loop(state: AppState) {
                         ..Default::default()
                     })
                     .collect();
-                let tb_accounts = state.tb_client.create_accounts(&accounts).await;
-                if let Err(e) = tb_accounts {
-                    println!("RELAY: connection to cn_tigerbeetle failed: {e}");
-                    continue;
-                }
+                let tb_accounts = timeout(
+                    Duration::from_secs(5),
+                    state.tb_client.create_accounts(&accounts),
+                )
+                .await;
+
+                let tb_accounts = match tb_accounts {
+                    Err(_elapsed) => {
+                        println!(
+                            "RELAY: Tigerbeetle didn't respond within 5 seconds, releasing the batch and trying again"
+                        );
+                        continue;
+                    }
+                    Ok(Err(e)) => {
+                        println!("RELAY: Connection to cn_tigerbeetle failed: {e}");
+                        continue;
+                    }
+                    Ok(Ok(v)) => v,
+                };
+
                 let mut bad_indices: Vec<usize> = Vec::new();
-                for writes in tb_accounts.unwrap() {
+
+                for writes in tb_accounts {
                     match writes.result {
                         tb::CreateAccountResult::Ok | tb::CreateAccountResult::Exists => {}
-                        _ => {
+                        e => {
+                            println!(
+                                "RELAY: failed to create account with batch index {}: {e}",
+                                writes.index
+                            );
                             bad_indices.push(writes.index);
                         }
                     }
                 }
+
                 let processed_ids: Vec<i64> = v
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| !bad_indices.contains(i))
                     .map(|(_, row)| row.id)
                     .collect();
-                let marking =
-                    sqlx::query("UPDATE tb_outbox SET processed_at = now() WHERE id = ANY($1)")
-                        .bind(processed_ids)
-                        .execute(&mut *tx)
-                        .await;
+
+                //mark both status and outbox
+                let marking = sqlx::query(
+                    "WITH marked AS ( \
+                    UPDATE tb_outbox SET processed_at = now() \
+                    WHERE id = ANY($1) \
+                    RETURNING aggregate_id
+                    ) \
+                    UPDATE accounts SET account_status = 'active' \
+                    WHERE account_id IN (SELECT aggregate_id FROM marked)",
+                )
+                .bind(processed_ids)
+                .execute(&mut *tx)
+                .await;
+
                 if let Err(e) = marking {
                     println!("RELAY: couldn't stamp the outbox's completed rows: {e}");
                     continue;

@@ -4,9 +4,10 @@ use axum::{
 };
 
 use serde::Deserialize;
+use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-use crate::domain::{Account, AccountCodeType, LedgerType, User};
+use crate::domain::{Account, AccountCodeType, AccountStatus, LedgerType, User};
 use cn_tigerbeetle as tb;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -29,7 +30,7 @@ pub struct AccountPayload {
     code_type: AccountCodeType,
 }
 
-//create user write it to database and respond if it sucseeds and create userid
+//create user and write it to postgress. returns the user details, or an error if it fails.
 pub async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserPayload>,
@@ -42,7 +43,7 @@ pub async fn create_user(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-//look at users
+//fetches all users; returns the list, or an error.
 pub async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>, StatusCode> {
     sqlx::query_as::<_, User>("SELECT * FROM users")
         .fetch_all(&state.pg_connections)
@@ -50,7 +51,15 @@ pub async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
-//create account with unique ID and write it to database
+
+//create account with unique ID and writes it to postgres. It also creates an entry into the outbox,
+//which is monitored by the relay. after that, it attempts to create the tigerbeetle account by
+//itself and mark the outbox entry as done, while also marking the account as active.
+//If that fails, the relay will use the outbox to create the account. returns CREATED when
+// both writes succeed, ACCEPTED if only postgres succeeds. In any other case, returns error.
+//
+// this is probably the most critical endpoint of the API. change it with care and extensive
+// testing.
 pub async fn create_account(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -64,7 +73,7 @@ pub async fn create_account(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let account = sqlx::query_as::<_, Account>(
+    let mut account = sqlx::query_as::<_, Account>(
         "INSERT INTO accounts (account_id, account_name, account_ledger_type, account_code_type, account_user_id) VALUES ($1, $2, $3, $4, $5) RETURNING * ",
     )
     .bind(account_id)
@@ -94,9 +103,62 @@ pub async fn create_account(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // self report here, the relay will fix if this fails
+    let tb_account = tb::Account {
+        id: account.account_id.as_u128(),
+        ledger: account.account_ledger_type as u32,
+        code: account.account_code_type as u16,
+        user_data_128: account.account_user_id.as_u128(),
+        ..Default::default()
+    };
 
-    Ok((StatusCode::CREATED, Json(account)))
+    // timeout is needed for tb calls. the tb client does not implement timeouts
+    match timeout(
+        Duration::from_millis(500),
+        state.tb_client.create_accounts(&[tb_account]),
+    )
+    .await
+    {
+        Ok(Ok(results)) => {
+            let ok =
+                results.is_empty() || matches!(results[0].result, tb::CreateAccountResult::Exists);
+
+            if ok {
+                match sqlx::query(
+                    "WITH marked AS ( \
+                         UPDATE tb_outbox SET processed_at = now() \
+                         WHERE aggregate_id = $1 AND processed_at IS NULL \
+                         RETURNING aggregate_id \
+                     ) \
+                     UPDATE accounts SET account_status = 'active' WHERE account_id = $1",
+                )
+                .bind(account.account_id)
+                .execute(&state.pg_connections)
+                .await
+                {
+                    Ok(_) => {
+                        account.account_status = AccountStatus::Active;
+                        return Ok((StatusCode::CREATED, Json(account)));
+                    }
+                    Err(e) => println!(
+                        "HANDLER: self report succeeded but couldn't write the outbox stamp and the account . Relay will pick it up: {e}"
+                    ),
+                }
+            } else {
+                println!(
+                    "HANDLER: tigerbeetle rejected self report. Relay will pick it up: {:?}",
+                    results[0].result
+                );
+            }
+        }
+        Ok(Err(e)) => {
+            println!("HANDLER: connection to tigerbeetle failed. Relay will attempt it: {e}");
+        }
+        Err(_) => {
+            println!("HANDLER: Tiger beetle timed out. Relay will pick it up.");
+        }
+    }
+
+    Ok((StatusCode::ACCEPTED, Json(account)))
 }
 
 //returns with information about the user

@@ -10,12 +10,21 @@ pub struct User {
     pub user_name: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type)]
+#[sqlx(type_name = "account_status", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum AccountStatus {
+    Active,
+    Processing,
+}
+
 #[derive(Serialize, FromRow)]
 pub struct Account {
     pub account_id: Uuid,
     pub account_name: String,
     pub account_ledger_type: LedgerType,
     pub account_code_type: AccountCodeType,
+    pub account_status: AccountStatus,
     pub account_user_id: Uuid,
 }
 
