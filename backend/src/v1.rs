@@ -186,7 +186,7 @@ pub async fn create_account(
     Ok((StatusCode::ACCEPTED, Json(account)))
 }
 
-//returns with information about the user
+// returns information about the user
 pub async fn fetch_user(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -203,12 +203,21 @@ pub async fn fetch_user(
         })
 }
 
-//returns with information about the account
+//returns with information about the account. use this endpoint to poll the account's status.
 pub async fn fetch_account(
-    State(_state): State<AppState>,
-    Path(_account_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
 ) -> Result<Json<Account>, StatusCode> {
-    todo!();
+    sqlx::query_as::<_, Account>("SELECT * FROM users WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_one(&state.pg_connections)
+        .await
+        .map(Json)
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            sqlx::Error::InvalidArgument(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })
 }
 
 //returns with information about the accoiunts position
@@ -234,8 +243,12 @@ pub async fn delete_account(
     todo!();
 }
 
-pub async fn list_ledgers() -> Result<Response<String>, StatusCode> {
-    todo!();
+pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledger>>, StatusCode> {
+    sqlx::query_as::<_, Ledger>("SELECT * FROM ledgers")
+        .fetch_all(&state.pg_connections)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub async fn fetch_ledger(Path(_symbol): Path<String>) -> Result<Response<String>, StatusCode> {
