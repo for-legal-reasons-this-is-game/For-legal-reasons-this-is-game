@@ -244,15 +244,31 @@ pub async fn delete_account(
 }
 
 pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledger>>, StatusCode> {
-    sqlx::query_as::<_, Ledger>("SELECT * FROM ledgers")
-        .fetch_all(&state.pg_connections)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let cache = state
+        .ledgers
+        .read()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let ledgers: Vec<Ledger> = cache.values().cloned().collect();
+    Ok(Json(ledgers))
 }
 
-pub async fn fetch_ledger(Path(_symbol): Path<String>) -> Result<Response<String>, StatusCode> {
-    todo!();
+pub async fn fetch_ledger(
+    State(state): State<AppState>,
+    Path(ledger_symbol): Path<String>,
+) -> Result<Json<Ledger>, StatusCode> {
+    let cache = state
+        .ledgers
+        .read()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let ledger = cache.get(&ledger_symbol).cloned();
+
+    if ledger.is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    Ok(Json(ledger.unwrap()))
 }
 
 pub async fn create_ledger(Path(_symbol): Path<String>) -> Result<Response<String>, StatusCode> {
