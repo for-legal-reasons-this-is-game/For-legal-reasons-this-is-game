@@ -1,0 +1,106 @@
+# =============================================================================
+#  Infisical self-hosted secret manager + zero-touch provisioner.
+#  Included from the repo-root compose.yaml. Every service name is
+#  "infisical-"prefixed to avoid colliding with the app services.
+#
+#  All configuration comes from the single repo-root .env. Because this file is
+#  `include`d, `${VAR}` here interpolates against that root .env.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. PostgreSQL - Infisical's own datastore
+  # ---------------------------------------------------------------------------
+  infisical-db:
+    image: postgres:15-alpine
+    container_name: infisical-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: ${INFISICAL_DB_PASSWORD}
+      POSTGRES_DB: infisical
+    volumes:
+      - infisical_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical -d infisical"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # 2. Redis
+  # ---------------------------------------------------------------------------
+  infisical-redis:
+    image: redis:7-alpine
+    container_name: infisical-redis
+    restart: unless-stopped
+    volumes:
+      - infisical_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # 3. Infisical API / UI
+  # ---------------------------------------------------------------------------
+  infisical-backend:
+    image: infisical/infisical:v0.164.1
+    container_name: infisical-backend
+    restart: unless-stopped
+    ports:
+      - "${INFISICAL_PORT:-8080}:8080"
+    environment:
+      NODE_ENV: production
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
+      SITE_URL: ${INFISICAL_SITE_URL:-http://localhost:8080}
+      DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD}@infisical-db:5432/infisical
+      REDIS_URL: redis://infisical-redis:6379
+    depends_on:
+      infisical-db:
+        condition: service_healthy
+      infisical-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/api/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  # ---------------------------------------------------------------------------
+  # 4. Provisioner - one-shot, idempotent. Bootstraps the instance, creates the
+  #    project + a machine identity, pushes the keys named by
+  #    INFISICAL_APP_SECRETS, and drops the identity credentials on the shared
+  #    volume for the app services.
+  # ---------------------------------------------------------------------------
+  infisical-setup:
+    image: alpine:3.20
+    container_name: infisical-setup
+    restart: "no"
+    # the provisioner needs the admin creds AND the values of every key listed
+    # in INFISICAL_APP_SECRETS, so it takes the whole .env.
+    env_file: [../.env]
+    environment:
+      INFISICAL_API_URL: http://infisical-backend:8080
+    depends_on:
+      infisical-backend:
+        condition: service_healthy
+    volumes:
+      - ./scripts/init.sh:/app/init.sh:ro
+      - infisical_shared:/shared
+    command:
+      - /bin/sh
+      - -euc
+      - |
+        apk add --no-cache bash curl jq >/dev/null
+        curl -1sLf 'https://artifacts-cli.infisical.com/setup.apk.sh' | bash >/dev/null
+        apk add --no-cache infisical >/dev/null
+        exec bash /app/init.sh
+
+volumes:
+  infisical_pg:
+  infisical_redis:
+  # shared with the app services (also declared in the repo-root compose.yaml)
+  infisical_shared:

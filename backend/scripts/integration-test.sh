@@ -9,6 +9,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 CONTAINER_NAME="${CONTAINER_NAME:-backend-integration-pg}"
 DB_PORT="${DB_PORT:-5433}"
 DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${DB_PORT}/backend"
+TB_CLUSTER_ID="${TB_CLUSTER_ID:-0}"
+TB_IP_ADRESSES="${TB_IP_ADRESSES:-127.0.0.1:3000}"
+export TB_CLUSTER_ID TB_IP_ADRESSES
 SERVER_LOG="$(mktemp)"
 BACKEND_PID=""
 

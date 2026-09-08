@@ -31,29 +31,45 @@ You’ll need:
 > Note: exact versions and environment variables will be pinned once the stack stabilizes.
 
 ### Run (development)
-The repository is intended to be run via Docker. The exact command may change as the repo structure is finalized.
-
-**Expected workflow (subject to change):**
+One command:
 ```bash
-docker compose up --build
+make
 ```
 
-To stop:
-```bash
-docker compose down
-```
+Provide a `.env` at the repo root first (or let `make` copy `.env.example` to
+`.env` for you - it ships with throwaway dev secrets). That single file holds
+everything: compose settings, the Infisical server config, and the application
+secrets.
 
-If your repository later introduces multiple compose files, document the canonical one here, e.g.:
-```bash
-docker compose -f docker-compose.dev.yml up --build
-```
+What `make` does:
+1. `compose.yaml` `include`s `secret_managment/docker-compose.yaml`, starting a
+   self-hosted **Infisical** instance plus a one-shot `infisical-setup` container.
+2. `infisical-setup` bootstraps Infisical, creates the `transcendence` project,
+   pushes the keys listed in `INFISICAL_APP_SECRETS` into it, mints a scoped
+   machine identity, and writes its credentials to a shared volume.
+3. Every application service waits for `infisical-setup` to finish, then starts
+   wrapped in `infisical run` - so it gets its secrets from Infisical at runtime
+   and never reads `.env` directly.
 
-### Environment variables (.env)
-If/when required, copy an example file:
-```bash
-cp .env.example .env
-```
-> If `.env.example` does not exist yet, environment variables are still being defined.
+| command | effect |
+|---|---|
+| `make` / `make up` | ensure `.env`, build, start (follows the provisioner log) |
+| `make down` | stop containers, keep data + secrets |
+| `make re` | `down` + `up` |
+| `make logs` / `make ps` | tail logs / show status |
+| `make reset` | wipe **all** state (Infisical DB, secrets, app DB, TigerBeetle); keeps `.env` |
+
+Infisical UI: <http://localhost:8080> (admin credentials in `.env`).
+
+### The `.env` file
+One git-ignored file, three sections (see `.env.example`):
+- **infrastructure** - published ports, TigerBeetle network layout. Non-secret.
+- **Infisical server** - `INFISICAL_ENCRYPTION_KEY` / `INFISICAL_AUTH_SECRET`
+  (must never change once bootstrapped), first-admin credentials.
+- **application secrets** - `INFISICAL_APP_SECRETS` names which of the keys below
+  it get pushed into Infisical on `make up`. Add a key there + to the list when a
+  new microservice needs a secret; the running services only ever see it through
+  Infisical.
 
 ### Services (planned architecture)
 The system is being designed as multiple components (names/ports TBD):
@@ -94,6 +110,8 @@ We organize work using:
 ### Tools
 - **GitHub Issues**: task tracking, assignment, progress, technical discussion
 - **Discord**: communication, quick syncs, decisions
+- **Trello**: daily task tracking, scrum.
+- **SonarQube** for code analysis 
 
 ---
 
@@ -105,7 +123,7 @@ We organize work using:
 
 ### Backend / API
 - **Rust**
-- Framework: **TBD** (Axum / Actix / Rocket are candidates)
+- Framework: **Axum**
 - **REST API** planned (OpenAPI/Swagger planned once endpoints stabilize)
 
 ### Trading Engine

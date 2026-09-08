@@ -1,13 +1,27 @@
-use super::*;
+use super::{construct_signature, verify_message, verify_request};
 use axum::http::Method;
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
 
 const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 const OTHER_KEY: &[u8] = b"fedcba9876543210fedcba9876543210";
 
 #[test]
 fn construct_signature_is_deterministic() {
-    let a = construct_signature(Method::POST, "/api/v1/users", 1_700_000_000, r#"{"x":1}"#, KEY);
-    let b = construct_signature(Method::POST, "/api/v1/users", 1_700_000_000, r#"{"x":1}"#, KEY);
+    let a = construct_signature(
+        Method::POST,
+        "/api/v1/users",
+        1_700_000_000,
+        r#"{"x":1}"#,
+        KEY,
+    );
+    let b = construct_signature(
+        Method::POST,
+        "/api/v1/users",
+        1_700_000_000,
+        r#"{"x":1}"#,
+        KEY,
+    );
     assert_eq!(a, b);
 }
 
@@ -40,7 +54,13 @@ fn construct_signature_changes_with_each_component() {
     );
     assert_ne!(
         base,
-        construct_signature(Method::POST, "/api/v1/users", 1_700_000_000, "body", OTHER_KEY)
+        construct_signature(
+            Method::POST,
+            "/api/v1/users",
+            1_700_000_000,
+            "body",
+            OTHER_KEY
+        )
     );
 }
 
@@ -103,24 +123,13 @@ fn verify_request_round_trip() {
 
     let signature = construct_signature(method.clone(), path, timestamp, body, KEY);
     assert!(verify_request(
-        method,
-        path,
-        timestamp,
-        body,
-        KEY,
-        &signature
+        method, path, timestamp, body, KEY, &signature
     ));
 }
 
 #[test]
 fn verify_request_rejects_tampered_fields() {
-    let signature = construct_signature(
-        Method::POST,
-        "/api/v1/users",
-        1_700_000_000,
-        "body",
-        KEY,
-    );
+    let signature = construct_signature(Method::POST, "/api/v1/users", 1_700_000_000, "body", KEY);
 
     assert!(!verify_request(
         Method::GET,
