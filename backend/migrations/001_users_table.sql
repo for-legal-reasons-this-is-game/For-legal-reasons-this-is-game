@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS ledgers (
 INSERT INTO ledgers (symbol, name, decimals) VALUES
   ('USD', 'US Dollar', 2), -- ledger_id = 1
   ('EUR', 'Euro', 2),      -- ledger_id = 2
-  ('BTC', 'Bitcoin', 8);   -- ledger_id = 3
+  ('BTC', 'Bitcoin', 8)    -- ledger_id = 3
+ON CONFLICT (symbol) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS accounts (
   account_id UUID PRIMARY KEY,
