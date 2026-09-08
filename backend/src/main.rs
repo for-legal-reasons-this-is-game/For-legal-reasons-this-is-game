@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{delete, get, post},
+    routing::{get, patch, post},
 };
 
 use backend::{
@@ -55,16 +55,14 @@ async fn main() {
         .route("/users/{user_id}/accounts", post(v1::create_account))
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/accounts/{account_id}", get(v1::fetch_account))
-        .route("/accounts/{account_id}", delete(v1::delete_account))
-        .route("/accounts/{account_id}/positions", get(v1::fetch_positions))
         .route(
-            "/accounts/{account_id}/positions/{asset_id}",
-            get(v1::fetch_account_position_asset),
+            "/accounts/{account_id}/position",
+            get(v1::fetch_account_position),
         )
         .route("/ledgers", get(v1::list_ledgers))
         .route("/ledgers", post(v1::create_ledger))
-        .route("/ledgers", delete(v1::delete_ledger))
-        .route("/ledgers/{symbol}", get(v1::list_ledgers))
+        .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
+        .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .with_state(state);
 
     let router = Router::<()>::new().nest("/api/v1", v1);

@@ -3,11 +3,12 @@ use axum::{
     http::{Response, StatusCode},
 };
 
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, User};
+use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
 use cn_tigerbeetle as tb;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -41,6 +42,32 @@ pub struct AccountPayload {
     name: String,
     ledger_symbol: String, // e.g. "USD"
     code_type: AccountCodeType,
+}
+
+#[derive(Deserialize)]
+pub struct LedgerPayload {
+    symbol: String,
+    name: String,
+    decimals: i16,
+}
+
+#[derive(Deserialize)]
+pub struct LedgerEnabledPayload {
+    enabled: bool,
+}
+
+#[derive(Default)]
+struct RawBalance {
+    debits_posted: i128,
+    credits_posted: i128,
+    debits_pending: i128,
+    credits_pending: i128,
+}
+
+// from i128 to Decimal type
+fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
+    Decimal::try_from_i128_with_scale(raw, decimals as u32)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 //create user and write it to postgress. returns the user details, or an error if it fails.
@@ -208,41 +235,89 @@ pub async fn fetch_account(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
 ) -> Result<Json<Account>, StatusCode> {
-    sqlx::query_as::<_, Account>("SELECT * FROM users WHERE account_id = $1")
+    sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE account_id = $1")
         .bind(account_id)
         .fetch_one(&state.pg_connections)
         .await
         .map(Json)
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
-            sqlx::Error::InvalidArgument(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         })
 }
 
-//returns with information about the accoiunts position
-pub async fn fetch_positions(
-    Path(_account_id): Path<Uuid>,
-) -> Result<Response<String>, StatusCode> {
-    todo!();
+//returns with information about the account's position
+pub async fn fetch_account_position(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<Position>, StatusCode> {
+    let account = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_one(&state.pg_connections)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
+
+    let (symbol, decimals) = {
+        let cache = state
+            .ledgers
+            .read()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let ledger = cache
+            .values()
+            .find(|l| l.ledger_id == account.account_ledger_id)
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        (ledger.symbol.clone(), ledger.decimals)
+    };
+    let balance: RawBalance = if account.account_status == AccountStatus::Processing {
+        RawBalance::default()
+    } else {
+        match timeout(
+            Duration::from_millis(500),
+            state
+                .tb_client
+                .lookup_accounts(&[account.account_id.as_u128()]),
+        )
+        .await
+        {
+            Ok(Ok(result)) => {
+                let first = result.first().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+                RawBalance {
+                    debits_posted: first.debits_posted as i128,
+                    credits_posted: first.credits_posted as i128,
+                    debits_pending: first.debits_pending as i128,
+                    credits_pending: first.credits_pending as i128,
+                }
+            }
+            Ok(Err(_)) => {
+                return Err(StatusCode::BAD_GATEWAY);
+            }
+            Err(_) => {
+                return Err(StatusCode::GATEWAY_TIMEOUT);
+            }
+        }
+    };
+
+    let position = Position {
+        account_id: account.account_id,
+        symbol,
+        decimals,
+        debits_posted: to_decimal(balance.debits_posted, decimals)?,
+        credits_posted: to_decimal(balance.credits_posted, decimals)?,
+        debits_pending: to_decimal(balance.debits_pending, decimals)?,
+        credits_pending: to_decimal(balance.credits_pending, decimals)?,
+        net_posted: to_decimal(balance.credits_posted - balance.debits_posted, decimals)?,
+        account_status: account.account_status,
+    };
+
+    Ok(Json(position))
 }
 
-//returns with information about the accoiunts position
-pub async fn fetch_account_position_asset(
-    Path(_account_id): Path<Uuid>,
-    Path(_asset_id): Path<Uuid>,
-) -> Result<Response<String>, StatusCode> {
-    todo!();
-}
+//deleting an account is ommited as tb uses transfers to do so, which will come with v2.
 
-//returns with information about the accoiunts position
-pub async fn delete_account(
-    Path(_account_id): Path<Uuid>,
-    Path(_asset_id): Path<Uuid>,
-) -> Result<Response<String>, StatusCode> {
-    todo!();
-}
-
+//lists all ledgers from cache, it's read-only so no need to look at db again
 pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledger>>, StatusCode> {
     let cache = state
         .ledgers
@@ -253,16 +328,17 @@ pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledg
     Ok(Json(ledgers))
 }
 
+// fetches a ledger by its symbol from the cache
 pub async fn fetch_ledger(
     State(state): State<AppState>,
-    Path(ledger_symbol): Path<String>,
+    Path(symbol): Path<String>,
 ) -> Result<Json<Ledger>, StatusCode> {
     let cache = state
         .ledgers
         .read()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let ledger = cache.get(&ledger_symbol).cloned();
+    let ledger = cache.get(&symbol).cloned();
 
     if ledger.is_none() {
         return Err(StatusCode::NOT_FOUND);
@@ -271,10 +347,63 @@ pub async fn fetch_ledger(
     Ok(Json(ledger.unwrap()))
 }
 
-pub async fn create_ledger(Path(_symbol): Path<String>) -> Result<Response<String>, StatusCode> {
-    todo!();
+// creates a new ledger, also updating the cache. It also enforces the db requirements
+pub async fn create_ledger(
+    State(state): State<AppState>,
+    Json(payload): Json<LedgerPayload>,
+) -> Result<(StatusCode, Json<Ledger>), StatusCode> {
+    let new = sqlx::query_as::<_, Ledger>(
+        "INSERT INTO ledgers (symbol, name, decimals) VALUES ($1, $2, $3) RETURNING *",
+    )
+    .bind(payload.symbol)
+    .bind(payload.name)
+    .bind(payload.decimals)
+    .fetch_one(&state.pg_connections)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => StatusCode::CONFLICT,
+        sqlx::Error::Database(db) if db.is_check_violation() => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
+    {
+        let mut cache = state
+            .ledgers
+            .write()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        cache.insert(new.symbol.clone(), new.clone());
+    }
+
+    Ok((StatusCode::CREATED, Json(new)))
 }
 
-pub async fn delete_ledger(Path(_symbol): Path<String>) -> Result<Response<String>, StatusCode> {
-    todo!();
+//enable/disable the ledger. payload must contain information on if it's on or off. The cache is
+//also updated
+pub async fn set_ledger_enabled(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+    Json(payload): Json<LedgerEnabledPayload>,
+) -> Result<Json<Ledger>, StatusCode> {
+    let updated = sqlx::query_as::<_, Ledger>(
+        "UPDATE ledgers SET enabled = $1 WHERE symbol = $2 RETURNING *",
+    )
+    .bind(payload.enabled)
+    .bind(&symbol)
+    .fetch_one(&state.pg_connections)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
+
+    {
+        let mut cache = state
+            .ledgers
+            .write()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        cache.insert(updated.symbol.clone(), updated.clone());
+    }
+
+    Ok(Json(updated))
 }

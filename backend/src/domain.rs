@@ -1,5 +1,6 @@
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -8,6 +9,19 @@ use uuid::Uuid;
 pub struct User {
     pub user_id: Uuid,
     pub user_name: String,
+}
+
+#[derive(Serialize)]
+pub struct Position {
+    pub account_id: Uuid,
+    pub account_status: AccountStatus,
+    pub symbol: String,
+    pub decimals: i16,
+    pub debits_posted: Decimal,
+    pub credits_posted: Decimal,
+    pub debits_pending: Decimal,
+    pub credits_pending: Decimal,
+    pub net_posted: Decimal, // credits_posted - debits_posted
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type)]
