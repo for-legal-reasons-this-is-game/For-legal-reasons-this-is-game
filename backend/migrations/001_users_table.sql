@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   account_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
   account_code_type SMALLINT NOT NULL,
   account_user_id UUID REFERENCES users(user_id) NOT NULL,
-  account_status account_status NOT NULL DEFAULT 'processing'
+  account_status account_status NOT NULL DEFAULT 'processing',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
