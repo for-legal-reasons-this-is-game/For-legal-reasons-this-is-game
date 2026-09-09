@@ -1,23 +1,24 @@
 use axum::{
     Router,
-    routing::{delete, get, post},
+    routing::{get, patch, post},
 };
 
-use crate::v1::AppState;
+use backend::{
+    relay,
+    v1::{self, AppState},
+};
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use cn_tigerbeetle as tb;
 
 use std::env;
 
-pub mod hmac_utils;
-pub mod v1;
-
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
 async fn main() {
-    // We need to implement secrets, and hold these values there for tiger beetle.
+    // TB_CLUSTER_ID / TB_IP_ADRESSES are injected by `infisical run --` via
+    // backend/entrypoint.sh (see secret management setup).
     let tb_client = Arc::new(
         tb::Client::new(
             env::var("TB_CLUSTER_ID")
@@ -32,35 +33,42 @@ async fn main() {
     );
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pg_connections = PgPoolOptions::new()
+        .max_connections(10)
         .connect(&db_url)
         .await
         .expect("Failed to connect to DB");
-    let state = AppState {
-        pg_connections,
-        tb_client,
-    };
 
     sqlx::migrate!()
-        .run(&state.pg_connections)
+        .run(&pg_connections)
         .await
         .expect("Migration failed");
 
+    let ledgers = v1::load_ledgers(&pg_connections)
+        .await
+        .expect("Failed to load ledgers");
+
+    let state = AppState {
+        pg_connections,
+        tb_client,
+        ledgers: Arc::new(RwLock::new(ledgers)),
+    };
+
+    // the task loops forever, but we will need to join it on ctrl c
+    tokio::task::spawn(relay::relay_loop(state.clone()));
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
         .route("/users", get(v1::list_users))
         .route("/users/{user_id}/accounts", post(v1::create_account))
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/accounts/{account_id}", get(v1::fetch_account))
-        .route("/accounts/{account_id}", delete(v1::delete_account))
-        .route("/accounts/{account_id}/positions", get(v1::fetch_positions))
         .route(
-            "/accounts/{account_id}/positions/{asset_id}",
-            get(v1::fetch_account_position_asset),
+            "/accounts/{account_id}/position",
+            get(v1::fetch_account_position),
         )
         .route("/ledgers", get(v1::list_ledgers))
         .route("/ledgers", post(v1::create_ledger))
-        .route("/ledgers", delete(v1::delete_ledger))
-        .route("/ledgers/{symbol}", get(v1::list_ledgers))
+        .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
+        .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .with_state(state);
 
     let router = Router::<()>::new().nest("/api/v1", v1);
