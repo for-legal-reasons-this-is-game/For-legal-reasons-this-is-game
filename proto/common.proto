@@ -1,0 +1,137 @@
+syntax = "proto3";
+package trading.grpc;
+
+//A lot of this matches the FIX protocol! If in doubt, check that first.
+
+
+//protobuff doesn't support 128-bit integers which
+//is how quantities are stored in TB, so we have our own;
+//to get it, perform this operation:
+//value = (uint128(high) << 64) | uint128(low)
+
+message Uint128 {
+  fixed64 high = 1;
+  fixed64 low = 2;
+}
+
+// Same but for ids of accounts/transactions, i just want different types for this
+
+message Id {
+  fixed64 high = 1;
+  fixed64 low = 2;
+}
+
+//These enums will have a UNSPECIFIED field as is standard with enums in proto, so the message is always constructed correctly
+
+// says if it's a  buy or sell
+
+enum Side {
+  SIDE_UNSPECIFIED = 0;
+  SIDE_BUY = 1;
+  SIDE_SELL = 2;
+}
+
+enum OrderType{
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_LIMIT = 1;
+  ORDER_TYPE_MARKET = 2; // so market price, no resting
+  ORDER_TYPE_STOP_LIMIT = 3;
+  ORDER_TYPE_STOP_MARKET = 4;
+}
+
+// This is what happens to the leftover from what matches right away in an order
+// in FIX there's also Day, which closes the order at the end of the trading day,
+// but we probably wont work with trading times. We can add it later if necessary
+
+enum TimeInForce {
+  TIME_IN_FORCE_UNSPECIFIED = 0;
+  // Good Till Cancelled, leftover of the order rests until filled or cancelled, the default
+  TIME_IN_FORCE_GTC = 1;
+  // Good till date, leftover rests until filled or until a specific date
+  TIME_IN_FORCE_GTD = 2;
+  // Immediate or cancel, so you match whatever you can, and the rest doesn't rest in the book
+  TIME_IN_FORCE_IOC = 3;
+  // Fill or Kill, either you can fill the whole order now, or you don't match at all and the order gets cancelled
+  TIME_IN_FORCE_FOK = 4;
+}
+
+//current standing of the order
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_NEW = 1;
+  ORDER_STATUS_PARTIALLY_FILLED = 2;
+  ORDER_STATUS_FILLED = 3;
+  ORDER_STATUS_CANCELLED = 4;
+  ORDER_STATUS_EXPIRED = 5;
+  ORDER_STATUS_PENDING_TRIGGER = 6; // this is for a stop order wating for the trigger price
+}
+
+//this is what happened, why this report was fired. The backend will then execute something depending on this 
+enum ExecType {
+  EXEC_TYPE_UNSPECIFIED = 0;
+  EXEC_TYPE_NEW = 1;
+  EXEC_TYPE_TRIGGERED = 2;
+  EXEC_TYPE_TRADE = 3;
+  EXEC_TYPE_CANCELLED = 4;
+  EXEC_TYPE_EXPIRED = 5;
+  EXEC_TYPE_REPLACED = 6;
+// its for when the backend connects to the engine, and the engine lets
+// the backend know what's the current state of things, so this one 
+// doesn't force the backend to do anything, it just copies the state of the order to be in sync
+  EXEC_TYPE_RESTATED = 7;
+}
+
+// This is only returned synchronously, because these rejections
+// can be determined the moment the command comes 
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  REJECT_REASON_UNKNOWN_MARKET = 1; // symbol doesn't exist 
+  REJECT_REASON_MARKET_NOT_TRADING = 2; // since we can close ledgers
+  REJECT_REASON_BAD_QUANTITY = 3;
+  REJECT_REASON_BAD_PRICE = 4;
+  REJECT_REASON_BAD_ORDER_PARAMS = 5; // wrong combination of fields for the order type
+  REJECT_REASON_UNKNOWN_ORDER = 6; // for example cance/modify an unknown id
+  REJECT_REASON_ORDER_NOT_WORKING = 7; // cancel/modify order already done
+  REJECT_REASON_NOT_ORDER_OWNER = 8;
+  REJECT_REASON_DUPLICATE_COMMAND = 9; // command_id is the same as another one
+  REJECT_REASON_IOC_NO_FILL = 10; // when IOC order cant be filled at all
+  REJECT_REASON_FOK_NO_FULL_FILL = 11;
+  REJECT_REASON_SELF_TRADE = 12;
+  REJECT_REASON_PROTECTION_PRICE = 13; // if we compute a protection price, we can reject anorder if it reaches that price
+}
+
+// The direction for the trigger of a stop order
+enum TriggerDirection {
+  TRIGGER_DIRECTION_UNSPECIFIED = 0;
+  TRIGGER_DIRECTION_LAST_AT_OR_ABOVE = 1;
+  TRIGGER_DIRECTION_LAST_AT_OR_BELOW - 2;
+}
+
+enum MarketStatus {
+  MARKET_STATUS_UNSPECIFIED = 0;
+  MARKET_STATUS_TRADING = 1;
+  MARKET_STATUS_HALTED = 2; // no new orders but the orders stay
+  MARKET_STATUS_CANCEL_ONLY = 3; // no new orders but you can cancel
+}
+
+// The rest is backend config. This will be kept in postgress 
+// in a "market" table and will be editable via API.
+
+message Market {
+  string symbol_pair = 1; // BTC-USD
+  string base_symbol = 2; // BTC (Thing you're buying/selling)
+  string quote_symbol = 3; // USD (The currency the price is expressed in)
+  uint32 base_decimals = 4;
+  uint32 quote_decimals = 5;
+// how many decimals you need to write down the exchange rate of the other.
+// to set it i think the easiest is to look at the rate of the asset irl and set that amount
+  uint32 price_decimals = 6;
+  Uint128 min_base_quantity = 7;
+  Uint128 base_quantity_step = 8; // the thing you're selling should be dividable evenly on this number
+  Uint128 price_step = 9; // same but with the price
+  Uint128 min_quote_quantity = 10; 
+  MarketStatus status = 11;
+  uint32 maker_fee_bps = 12; // fee % in basis points (1 bps = 0.01%)
+  uint32 taker_fee_bps = 13;
+  Id fee_account = 14;
+}

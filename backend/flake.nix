@@ -51,6 +51,7 @@
       packages = [
         toolchain
         pkgs.pkg-config
+        pkgs.protobuf
         pkgs.gcc # C toolchain + default linker
         pkgs.lld # faster / cross-friendly linker (optional)
         pkgs.openssl # needed by openssl-sys (pulled in by reqwest's default TLS backend)
