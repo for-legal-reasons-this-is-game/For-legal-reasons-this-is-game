@@ -6,6 +6,7 @@ export function Header({ coin, price, change }: Market) {
             <p>{coin}</p>
             <p>{price}</p>
             <p>{change.toFixed(2)}%</p>
+            <p>{change > 0 ? "UP" : "DOWN"}</p>
         </header>
     );
 }
