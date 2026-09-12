@@ -21,7 +21,7 @@ service TradingEngine {
   //Read of engine state
   rpc GetOrder(GetOrderRequest) returns (OrderView);
   rpc GetOrderBook(GetOrderBookRequest) returns (OrderBook);
-  rpc ListMarkets(ListMarketsRequest) returns (ListMarketsResponse)l
+  rpc ListMarkets(ListMarketsRequest) returns (MarketList);
 
 }
 // For creating/editing markets
@@ -86,9 +86,104 @@ message PlaceOrderResponse {
   // the order for the first time immediately after the request, 
   // important for the trading engine.
   // IMPORTANT: THIS IS ONLY FOR THE IMMEDIATE REPLY TO USER!! 
-  // settlement only happens on fill message
+  // settlement only happens on fill message, this is the only way
+  // we can really report anything to the user besides just saying "we got your order now wait"
   OrderStatus status = 5;
   Uint128 filled_base_quantity = 6;
   Uint128 filled_quote_quantity = 7;
   Uint128 average_price = 8;
+}
+
+message CancelOrderRequest {
+  Id command_id = 1;
+  Id order_id = 2;
+  Id account_holder = 3;
+}
+
+message CancelOrderResponse {
+  Id command_id = 1;
+  bool accepted = 2;
+
+  RejectReason rejection_reason = 3;
+  string reject_detail = 4;
+}
+
+message ModifyOrderRequest {
+  Id command_id = 1;
+  Id order_id = 2;
+  Id account_holder = 3;
+
+  // if one of this fields is None, leave that unchanged
+  Uint128 new_base_quantity = 4;
+  Uint128 new_limit_price = 5;
+}
+
+message ModifyOrderResponse {
+  Id command_id = 1;
+  bool accepted = 2;
+
+  RejectReason rejection_reason = 3;
+  string reject_detail = 4;
+
+  OrderStatus status = 5;
+}
+
+message GetOrderRequest {
+  Id order_id = 1;
+}
+
+message OrderView {
+  Id order_id = 1;
+  Id command_id = 2;
+  string market_symbol = 3;
+  Id account_holder = 4;
+
+  Side side = 5;
+  OrderType type = 6;
+  TimeInForce time_in_force = 7;
+  OrderStatus status = 8;
+  oneof amount {
+  Uint128 order_base_quantity = 9;
+  Uint128 order_base_quantity = 10; // market/ stop_market only!
+  }
+  Uint128 limit_price = 11;
+  Uint128 trigger_price = 12;
+  
+  Uint128 filled_base_quantity = 13;
+  Uint128 filled_quote_quantity = 14;
+  Uint128 remaining_base_quantity = 15;
+  Uint128 average_price = 16;
+
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+  google.protobuf.Timestamp expire_time = 19;
+}
+
+message GetOrderBookRequest {
+  string market_symbol = 1;
+  uint32 depth = 2; // how many rows of the book on each side (Asks/bids). 0 should probably be a default we can discuss
+}
+
+message OrderBook {
+  string market_symbol = 1;
+  uint64 sequence = 2;
+  // repeated is just Vec<...>
+  repeated PriceLevel bids = 3; // highest first
+  repeated PriceLevel asks = 4; // lowest first
+}
+
+message PriceLevel {
+  Uint128 price = 1;
+  Uint128 quantity = 2;
+  uint32 order_count = 3; //how many orders make the total
+}
+
+// This is what the engine has loaded in terms of markets, 
+// here because after a restart the backend uses this
+// to confirm what the engine has before or after re-pushing everything
+// could be pointless but better to have
+
+message ListMarketsRequest{}
+message MarketList {
+  repeated Market markets = 1;
 }
