@@ -1,5 +1,5 @@
 syntax = "proto3";
-package trading.grpc;
+package trading.v1;
 
 //A lot of this matches the FIX protocol! If in doubt, check that first.
 
@@ -133,5 +133,5 @@ message Market {
   MarketStatus status = 11;
   uint32 maker_fee_bps = 12; // fee % in basis points (1 bps = 0.01%)
   uint32 taker_fee_bps = 13;
-  Id fee_account = 14;
+  Id fee_account = 14; // the account where we collect fees
 }

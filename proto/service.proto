@@ -1,0 +1,94 @@
+syntax = "proto3";
+package trading.v1;
+
+import "google/protobuf/timestamp.proto";
+import "trading/v1/common.proto";
+import "trading/v1/events.proto";
+
+service TradingEngine {
+  // Market config 
+  rpc SetMarket(SetMarketRequest) returns (SetMarketResponse);
+  rpc SetMarketStatus(SetMarketStatusRequest) returns (SetMarketStatusResponse);
+
+  //Trading commands
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  rpc ModifyOrder(ModifyOrderRequest) returns (ModifyOrderResponse);
+
+  //for subscription
+  rpc Subscribe(SubscribeRequest) returns (stream StreamItem);
+
+  //Read of engine state
+  rpc GetOrder(GetOrderRequest) returns (OrderView);
+  rpc GetOrderBook(GetOrderBookRequest) returns (OrderBook);
+  rpc ListMarkets(ListMarketsRequest) returns (ListMarketsResponse)l
+
+}
+// For creating/editing markets
+message SetMarketRequest {
+  Market market = 1;
+}
+
+message SetMarketResponse {
+  bool accepted = 1;
+  string rejection_detail = 2;
+}
+
+// Changes the status of the market only
+
+message SetMarketStatusRequest {
+  string market_symbol = 1;
+  MarketStatus status = 2;
+}
+
+message SetMarketStatusResponse {
+  bool accepted = 1;
+  string rejection_detail = 2;
+}
+
+message PlaceOrderRequest {
+  Id command_id = 1; // identifies the command
+  Id order_id = 2; // identifies the order itself
+  string market_symbol = 3;
+  Id account_holder = 4; // to detect self-trading/enable modifying
+  // the account of each of the ledgers
+  Id base_account = 5; 
+  Id quote_account = 6;
+  Side side = 7;
+  OrderType type = 8;
+  TimeInForce time_in_force = 9;
+  oneof amount {
+    Uint128 base_quantity = 10;
+    Uint128 quote_quantity = 11; // Market/stop_market buy only
+  }
+  
+  //set if type is LIMIT or STOP_LIMIT
+  Uint128 limit_price = 12;
+  // set if tyoe is Stop_limit or Stop_market
+  Uint128 trigger_price = 13;
+  // set if tyoe is Stop_limit or Stop_market
+  TriggerDirection trigger_direction = 14;
+  //optional cap/floor for market orders
+  Uint128 protection_price = 15;
+  google.protobuf.Timestamp expire_time = 16; //for GTD
+
+  google.protobuf.Timestamp sent_at = 17; // we can measure latency
+}
+
+message PlaceOrderResponse {
+  Id command_id = 1;
+  bool accepted = 2;
+  RejectionReason rejection_reason = 3;
+  string rejection_detail = 4;
+
+  //these only if it was accepted, and it
+  //needs to be set after you try to match 
+  // the order for the first time immediately after the request, 
+  // important for the trading engine.
+  // IMPORTANT: THIS IS ONLY FOR THE IMMEDIATE REPLY TO USER!! 
+  // settlement only happens on fill message
+  OrderStatus status = 5;
+  Uint128 filled_base_quantity = 6;
+  Uint128 filled_quote_quantity = 7;
+  Uint128 average_price = 8;
+}
