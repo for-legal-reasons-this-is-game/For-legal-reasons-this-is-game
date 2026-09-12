@@ -104,7 +104,7 @@ enum RejectReason {
 enum TriggerDirection {
   TRIGGER_DIRECTION_UNSPECIFIED = 0;
   TRIGGER_DIRECTION_LAST_AT_OR_ABOVE = 1;
-  TRIGGER_DIRECTION_LAST_AT_OR_BELOW - 2;
+  TRIGGER_DIRECTION_LAST_AT_OR_BELOW = 2;
 }
 
 enum MarketStatus {
@@ -118,7 +118,7 @@ enum MarketStatus {
 // in a "market" table and will be editable via API.
 
 message Market {
-  string symbol_pair = 1; // BTC-USD
+  string symbol = 1; // BTC-USD
   string base_symbol = 2; // BTC (Thing you're buying/selling)
   string quote_symbol = 3; // USD (The currency the price is expressed in)
   uint32 base_decimals = 4;

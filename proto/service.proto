@@ -2,8 +2,8 @@ syntax = "proto3";
 package trading.v1;
 
 import "google/protobuf/timestamp.proto";
-import "trading/v1/common.proto";
-import "trading/v1/events.proto";
+import "common.proto";
+import "events.proto";
 
 service TradingEngine {
   // Market config 
@@ -78,7 +78,7 @@ message PlaceOrderRequest {
 message PlaceOrderResponse {
   Id command_id = 1;
   bool accepted = 2;
-  RejectionReason rejection_reason = 3;
+  RejectReason rejection_reason = 3;
   string rejection_detail = 4;
 
   //these only if it was accepted, and it
@@ -105,7 +105,7 @@ message CancelOrderResponse {
   bool accepted = 2;
 
   RejectReason rejection_reason = 3;
-  string reject_detail = 4;
+  string rejection_detail = 4;
 }
 
 message ModifyOrderRequest {
@@ -123,7 +123,7 @@ message ModifyOrderResponse {
   bool accepted = 2;
 
   RejectReason rejection_reason = 3;
-  string reject_detail = 4;
+  string rejection_detail = 4;
 
   OrderStatus status = 5;
 }
@@ -144,7 +144,7 @@ message OrderView {
   OrderStatus status = 8;
   oneof amount {
   Uint128 order_base_quantity = 9;
-  Uint128 order_base_quantity = 10; // market/ stop_market only!
+  Uint128 order_quote_quantity = 10; // market/ stop_market only!
   }
   Uint128 limit_price = 11;
   Uint128 trigger_price = 12;
