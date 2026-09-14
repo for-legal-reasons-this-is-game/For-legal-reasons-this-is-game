@@ -1,0 +1,146 @@
+syntax = "proto3";
+package trading.v1;
+
+import "google/protobuf/timestamp.proto";
+import "common.proto";
+import "events.proto";
+
+service TradingEngine {
+  // Market config 
+  rpc SetMarket(SetMarketRequest) returns (SetMarketResponse);
+
+  //Trading commands
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  rpc CancelOrders(CancelOrdersRequest) returns (CancelOrdersResponse);
+  rpc ModifyOrder(ModifyOrderRequest) returns (ModifyOrderResponse);
+
+  //for subscription
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream EventItem);
+  rpc SubscribeMarketData(SubscribeMarketDataRequest) returns (stream MarketDataItem);
+}
+
+// For creating/editing markets
+message SetMarketRequest {
+  Market market = 1;
+}
+
+message SetMarketResponse {
+  ConfigRejectReason reject_reason = 1; // unspecified == accepted
+  string reject_detail = 2;
+}
+
+
+message PlaceOrderRequest {
+  Id command_id = 1; // identifies the command
+  Id order_id = 2; // identifies the order itself
+  string market_symbol = 3;
+  Id account_holder = 4; // to detect self-trading
+  
+  // the two accounts the user trades with, the 
+  // backed has already reserved the funds + fees
+  // they need to be here so we can make the transfers
+  // without lookups, so you just store them and send them back
+  // in the TradeSettlement
+  
+  Id base_account = 5; 
+  Id quote_account = 6;
+
+  Side side = 7;
+  OrderType type = 8;
+  TimeInForce time_in_force = 9;
+
+//   LIMIT, STOP_LIMIT, and MARKET/STOP_MARKET sell = base_quantity
+//   MARKET/STOP_MARKET buy  =  quote_quantity
+  oneof amount {
+    Uint128 base_quantity = 10;
+    Uint128 quote_quantity = 11; // Market/stop_market buy only
+  }
+  
+  //set if type is LIMIT or STOP_LIMIT
+  Uint128 limit_price = 12;
+  // set if tyoe is Stop_limit or Stop_market
+  Uint128 trigger_price = 13;
+  // set if tyoe is Stop_limit or Stop_market
+  TriggerDirection trigger_direction = 14;
+  //optional cap/floor for market orders
+  Uint128 protection_price = 15;
+
+  google.protobuf.Timestamp expire_time = 16; //for GTD
+
+  google.protobuf.Timestamp sent_at = 17; // we can measure latency
+
+  // basis points, 1 bps = 0.01%``
+  uint32 maker_fee_bps = 18; 
+  uint32 taker_fee_bps = 19;
+}
+
+message PlaceOrderResponse {
+  Id command_id = 1;
+  RejectReason reject_reason = 2; // unspecified == accepted
+  string reject_detail = 3;
+
+  //these only if it was accepted, and it
+  //needs to be set after you try to match 
+  // the order for the first time immediately after the request, 
+  // important for the trading engine.
+  // IMPORTANT: THIS IS ONLY FOR THE IMMEDIATE REPLY TO USER!! 
+  // settlement only happens on TradeSettlement, this is the only way
+  // we can really report anything to the user besides just saying "we got your order now wait"
+  OrderStatus status = 4;
+  CancelReason cancel_reason = 5; // only when status == cancelled
+  Uint128 filled_base_quantity = 6;
+  Uint128 filled_quote_quantity = 7;
+}
+
+message CancelOrderRequest {
+  Id command_id = 1;
+  Id order_id = 2;
+  Id account_holder = 3;
+}
+
+// same shape as the PlaceOrderResponse
+message CancelOrderResponse {
+  Id command_id = 1;
+  RejectReason reject_reason = 2; 
+  string reject_detail = 3;
+  OrderStatus status = 4;
+  CancelReason cancel_reason = 5;
+  Uint128 filled_base_quantity = 6;
+  Uint128 filled_quote_quantity = 7;
+}
+
+message CancelOrdersRequest {
+  Id command_id = 1;
+  string market_symbol = 2;
+  Id account_holder = 3; // if this is none, every holder in the market
+}
+
+message CancelOrdersResponse {
+  Id command_id = 1;
+  RejectReason reject_reason = 2;
+  string reject_detail = 3;
+  uint32 cancelled_count = 4;
+}
+
+message ModifyOrderRequest {
+  Id command_id = 1;
+  Id order_id = 2;
+  Id account_holder = 3;
+
+  // if one of this fields is None, leave that unchanged
+  Uint128 new_base_quantity = 4;
+  Uint128 new_limit_price = 5;
+  Uint128 new_trigger_price = 6;
+}
+
+message ModifyOrderResponse {
+  Id command_id = 1;
+  RejectReason reject_reason = 2; 
+  string reject_detail = 3;
+  OrderStatus status = 4;
+  CancelReason cancel_reason = 5;
+  Uint128 filled_base_quantity = 6;
+  Uint128 filled_quote_quantity = 7;
+}
+

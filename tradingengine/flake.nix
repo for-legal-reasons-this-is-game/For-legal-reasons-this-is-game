@@ -50,6 +50,7 @@
     devShells.${system}.default = pkgs.mkShell {
       packages = [
         toolchain
+        pkgs.protobuf
         pkgs.pkg-config
         pkgs.gcc # C toolchain + default linker
         pkgs.lld # faster / cross-friendly linker (optional)
