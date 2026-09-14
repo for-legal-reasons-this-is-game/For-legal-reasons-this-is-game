@@ -339,3 +339,17 @@ Both:
 
 - Place, fill, settle; the four accounts plus the fee account balance to the cent.
 - An IOC that fills once and cancels its remainder releases exactly the unspent amount, not more.
+
+Field numbers freeze:
+
+- Never change or reuse a field number. Mark a removed one `reserved`, with its
+  name.
+- Add fields and enum values only; never repurpose one.
+- Every enum keeps its `_UNSPECIFIED = 0`.
+- A `trading.v2` package is only for a change that cannot be additive.
+
+Worth knowing on the Rust side: prost gives you enum fields as `i32`, so an
+unknown value fails at conversion, not at decode — every conversion needs a
+catch-all arm. An unknown `oneof` arm arrives as `None`; handle it loudly rather
+than ignoring the message.
+
