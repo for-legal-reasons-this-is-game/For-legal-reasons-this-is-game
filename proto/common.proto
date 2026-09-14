@@ -31,12 +31,12 @@ enum Side {
   SIDE_SELL = 2;
 }
 
-enum OrderType{
+enum OrderType {
   ORDER_TYPE_UNSPECIFIED = 0;
   ORDER_TYPE_LIMIT = 1;
   ORDER_TYPE_MARKET = 2; // so market price, no resting
-  ORDER_TYPE_STOP_LIMIT = 3;
-  ORDER_TYPE_STOP_MARKET = 4;
+  ORDER_TYPE_STOP_LIMIT = 3; // becomes a limit when triggered
+  ORDER_TYPE_STOP_MARKET = 4; // becomes a market when triggered
 }
 
 // This is what happens to the leftover from what matches right away in an order
@@ -62,7 +62,7 @@ enum OrderStatus {
   ORDER_STATUS_PARTIALLY_FILLED = 2;
   ORDER_STATUS_FILLED = 3;
   ORDER_STATUS_CANCELLED = 4;
-  ORDER_STATUS_EXPIRED = 5;
+  ORDER_STATUS_EXPIRED = 5; // GTD ordeer reaching expiration
   ORDER_STATUS_PENDING_TRIGGER = 6; // this is for a stop order wating for the trigger price
 }
 
@@ -82,22 +82,33 @@ enum ExecType {
 }
 
 // This is only returned synchronously, because these rejections
-// can be determined the moment the command comes 
+// can be determined the moment the command comes
+// also Unspecified == accepted
 enum RejectReason {
   REJECT_REASON_UNSPECIFIED = 0;
   REJECT_REASON_UNKNOWN_MARKET = 1; // symbol doesn't exist 
-  REJECT_REASON_MARKET_NOT_TRADING = 2; // since we can close ledgers
-  REJECT_REASON_BAD_QUANTITY = 3;
-  REJECT_REASON_BAD_PRICE = 4;
-  REJECT_REASON_BAD_ORDER_PARAMS = 5; // wrong combination of fields for the order type
-  REJECT_REASON_UNKNOWN_ORDER = 6; // for example cance/modify an unknown id
-  REJECT_REASON_ORDER_NOT_WORKING = 7; // cancel/modify order already done
-  REJECT_REASON_NOT_ORDER_OWNER = 8;
-  REJECT_REASON_DUPLICATE_COMMAND = 9; // command_id is the same as another one
-  REJECT_REASON_IOC_NO_FILL = 10; // when IOC order cant be filled at all
-  REJECT_REASON_FOK_NO_FULL_FILL = 11;
-  REJECT_REASON_SELF_TRADE = 12;
-  REJECT_REASON_PROTECTION_PRICE = 13; // if we compute a protection price, we can reject anorder if it reaches that price
+  REJECT_REASON_BAD_QUANTITY = 2;
+  REJECT_REASON_BAD_PRICE = 3;
+  REJECT_REASON_BAD_ORDER_PARAMS = 4; // wrong combination of fields for the order type
+  REJECT_REASON_UNKNOWN_ORDER = 5; // for example cance/modify an unknown id
+  REJECT_REASON_ORDER_NOT_WORKING = 6; // cancel/modify order already done
+  REJECT_REASON_NOT_ORDER_OWNER = 7;
+  REJECT_REASON_DUPLICATE_COMMAND = 8; // command_id is the same as another one
+  REJECT_REASON_UNSUPPORTED  = 9; // in case i missed any other reason
+}
+
+// These is when the commands are valid and an order exists but its
+// terminated for some reason
+
+enum CancelReason {
+  CANCEL_REASON_UNSPECIFIED = 0;
+  CANCEL_REASON_USER_REQUEST = 1;
+  CANCEL_REASON_IOC_REMAINDER = 2; // when IOC is filled partially
+  CANCEL_REASON_IOC_NO_FILL = 3;
+  CANCEL_REASON_FOK_NO_FULL_FILL = 4;
+  CANCEL_REASON_SELF_TRADE = 5;
+  CANCEL_REASON_PROTECTION_PRICE = 6; // if we ever use protected prices
+  CANCEL_REASON_ADMIN = 7; // when we cancel
 }
 
 // The direction for the trigger of a stop order
@@ -107,31 +118,23 @@ enum TriggerDirection {
   TRIGGER_DIRECTION_LAST_AT_OR_BELOW = 2;
 }
 
-enum MarketStatus {
-  MARKET_STATUS_UNSPECIFIED = 0;
-  MARKET_STATUS_TRADING = 1;
-  MARKET_STATUS_HALTED = 2; // no new orders but the orders stay
-  MARKET_STATUS_CANCEL_ONLY = 3; // no new orders but you can cancel
+// constrains on the config
+enum ConfigRejectReason{
+  CONFIG_REJECT_REASON_UNSPECIFIED = 0;
+  CONFIG_REJECT_REASON_BAD_DEFINITION = 1; // decimals out of range for example
+  // this is for trying to make structural changes when the book of the market is not empty
+  CONFIG_REJECT_REASON_HAS_OPEN_ORDERS = 2;
 }
-
 // The rest is backend config. This will be kept in postgress 
 // in a "market" table and will be editable via API.
 
 message Market {
   string symbol = 1; // BTC-USD
-  string base_symbol = 2; // BTC (Thing you're buying/selling)
-  string quote_symbol = 3; // USD (The currency the price is expressed in)
-  uint32 base_decimals = 4;
-  uint32 quote_decimals = 5;
+  uint32 base_decimals = 2;
+  uint32 quote_decimals = 3;
 // how many decimals you need to write down the exchange rate of the other.
 // to set it i think the easiest is to look at the rate of the asset irl and set that amount
-  uint32 price_decimals = 6;
-  Uint128 min_base_quantity = 7;
-  Uint128 base_quantity_step = 8; // the thing you're selling should be dividable evenly on this number
-  Uint128 price_step = 9; // same but with the price
-  Uint128 min_quote_quantity = 10; 
-  MarketStatus status = 11;
-  uint32 maker_fee_bps = 12; // fee % in basis points (1 bps = 0.01%)
-  uint32 taker_fee_bps = 13;
-  Id fee_account = 14; // the account where we collect fees
+  uint32 price_decimals = 4;
+  
+  Id fee_account = 5; // the account where we collect fees
 }
