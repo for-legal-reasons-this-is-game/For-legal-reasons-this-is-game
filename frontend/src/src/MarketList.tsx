@@ -1,6 +1,5 @@
 import { type Market } from "./data";
 import { Header } from "./Header";
-import React from "react";
 
 type MarketListProps = {
     markets: Market[];
