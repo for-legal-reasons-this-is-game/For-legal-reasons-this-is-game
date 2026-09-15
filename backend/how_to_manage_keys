@@ -1,0 +1,6 @@
+Keys can be only created when user is verified with 2FA. 
+When key will be created it will be stored encrypted in database. Unencrypted copy will be sent to client with KEY_ID.
+Key_ID will be unique id with which we will verify which key should we use for verification.
+When request is made it will have KEY_ID time stamp, method and resource, this will ensure the verification is only valid for this action
+When server will recieve the request we will check the time stamp, to see if the request is current. than we will with KEY_ID search for the 
+encrypted key in database. We will verify the user. And do what is asked form us if it sucseeds

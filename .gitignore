@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Rust build output. Unanchored so it matches every crate in the repo
 # (backend/, frontend/, tradingengine/) rather than one at a time.
 target/
@@ -19,3 +20,9 @@ result-*
 .idea/
 *.swp
 .DS_Store
+=======
+target/
+
+# the single environment file - never commit; .env.example is the template
+.env
+>>>>>>> origin/main
