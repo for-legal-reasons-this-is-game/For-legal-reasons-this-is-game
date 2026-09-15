@@ -76,7 +76,7 @@ impl IdempotencyKey {
         let length_ok = (1..=Self::MAX_LEN).contains(&value.len());
         let charset_ok = value
             .bytes()
-            .all(|byte| (byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'));
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
 
         if length_ok && charset_ok {
             Ok(Self(value))

@@ -10,4 +10,4 @@ pub const SCALE: u32 = 8;
 
 pub const ONE: i64 = 100_000_000;
 
-const _: () = assert!(ONE == (10i64).pow(SCALE));
+const _: () = assert!(ONE == 10i64.pow(SCALE));

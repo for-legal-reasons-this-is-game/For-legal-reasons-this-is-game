@@ -49,7 +49,7 @@ fn rejects_an_order_with_zero_original_quantity() {
             Price::from_minor_units(ONE).expect("valid price"),
             Quantity::ZERO,
             SeqNo::new(33),
-            IdempotencyKey::new("order-11".to_owned()).expect("valid idempotency key")
+            IdempotencyKey::new("order-11".to_owned()).expect("valid idempotency key"),
         ),
         Err(EngineError::QuantityNotPositive)
     );
