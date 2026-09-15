@@ -1,0 +1,153 @@
+syntax = "proto3";
+package trading.v1;
+
+import "google/protobuf/timestamp.proto";
+import "common.proto";
+
+message SubscribeEventsRequest {
+  //this is used for re-connections; restart the processing after
+  //this sequence number. 0 is everything, so the bakend sends after_sequence 0 at start.
+  uint64 after_sequence = 1;
+  // the epoch the after_sequence belongs to, 
+  // a missmatch against the engine's current epoch should force a snapshot
+  // regardless of what after_sequence says. 
+  uint64 engine_epoch = 2;
+}
+
+message EventItem {
+  // it's basically a counter of each individual "frame" of the processing.
+  // you need to increase it every time you return a ExecutionReport(except RESTATED) or a TradeSettlement
+  // BUT YOU HAVE TO SET IT TO 0 ON SNAPSHOT LINES, so:
+  // 1. ExecutionReport with exec_type RESTATED
+  // 2. CONTROL {SNAPSHOT_BEGIN}
+  // 3. CONTROL {SNAPSHOT_END}
+  uint64 sequence = 1;
+  // process start time in unix nanos
+  uint64 engine_epoch = 2;
+  google.protobuf.Timestamp engine_time = 3;
+  // empty when it's Control
+  string market_symbol = 4;
+
+  oneof body {
+    ExecutionReport execution_report = 10;
+    TradeSettlement trade_settlement = 11;
+    Control control = 12;
+  }
+}
+
+// this is one for each  change to an order,
+// its here to display info to the owner of the 
+// account and populate rows with trading history
+// it doesn't make the money move
+
+message ExecutionReport {
+  Id order_id = 1;
+  Id command_id = 2;
+  Id account_holder = 3;
+
+  ExecType exec_type = 4;
+  OrderStatus status = 5;
+  CancelReason cancel_reason = 6;
+
+  Side side = 7;
+  OrderType type = 8;
+  TimeInForce time_in_force = 9;
+
+  // for the oneofs:
+  // LIMIT/STOP_LIMIT and MARKET/STOP_MARKET sells   = set base
+  // MARKET/STOP_MARKET buy = set quote
+  oneof order_amount {
+    Uint128 order_base_quantity = 10;
+    Uint128 order_quote_quantity = 11;
+  }
+
+  //same for this
+  oneof remaining_amount {
+    Uint128 remaining_base_quantity = 12;
+    Uint128 remaining_quote_quantity = 13;
+  }
+
+  Uint128 filled_base_quantity = 14;
+  Uint128 filled_quote_quantity = 15;
+  Uint128 limit_price = 16;
+
+  // Set when exec_type == TRADE so when the trade happened
+  Id trade_id = 17;
+}
+
+// its the settlement for one match, so one per trade 
+// and it contains both sides. Emmit this first, before the
+// two execution reports
+message TradeSettlement {
+  Id trade_id = 1;
+  Uint128 price = 2;
+  Uint128 base_quantity = 3;
+  Uint128 quote_quantity = 4;
+
+  Side taker_side = 5; // buyer went up, or seller went down?
+
+  Id buyer_order_id = 6;
+  Id buyer_account_holder = 7;
+  Id buyer_base_account = 8;
+  Id buyer_quote_account = 9;
+  Uint128 buyer_fee = 10;
+
+
+  Id seller_order_id = 11;
+  Id seller_account_holder = 12;
+  Id seller_base_account = 13;
+  Id seller_quote_account = 14;
+  Uint128 seller_fee = 15;
+
+  Id fee_account = 16;
+}
+
+message Control {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_SNAPSHOT_BEGIN = 1;
+    KIND_SNAPSHOT_END = 2;
+  }
+  Kind kind = 1;
+  uint64 as_of_sequence = 2;
+}
+
+// This is the second stream. it's there
+// to derive the data needed to display
+
+message SubscribeMarketDataRequest{}
+
+message MarketDataItem {
+  // This is a separate counter than the sequence of the event
+  // item, its only to detect gaps. The fw will always re-snapshot
+  uint64 md_sequence = 1;
+  uint64 engine_epoch = 2;
+  google.protobuf.Timestamp engine_time = 3;
+  string market_symbol = 4;
+
+  oneof body {
+    BookSnapshot book_snapshot = 10;
+    BookDelta book_delta = 11;
+  }
+}
+
+// Sent ONCE PER MARKET on connect and again when we find any gap.
+// first the snapshot then only send  deltas.
+// "repeated" are vecs.
+message BookSnapshot {
+  repeated PriceLevel bids = 1; // highest first
+  repeated PriceLevel asks = 2; // lowest first
+}
+
+// not percentages, price and quantity only
+message BookDelta {
+  Side side = 1;
+  Uint128 price = 2;
+  Uint128 quantity = 3;  // set to 0 when the last order is not there anymore (filled, cancelled, modified to a different level, etc)
+}
+
+message PriceLevel {
+  Uint128 price = 1;
+  Uint128 quantity = 2; // total resting base quantity at this price
+}
+
