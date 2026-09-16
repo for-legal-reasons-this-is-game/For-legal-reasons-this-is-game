@@ -1,5 +1,6 @@
 import { type Market } from "./data";
 import { Header } from "./Header";
+import { OrderForm } from "./OrderForm";
 
 type MarketListProps = {
     markets: Market[];
@@ -10,7 +11,9 @@ type MarketListProps = {
 export function MarketList({ markets, onBuy, onSell }: MarketListProps) {
     return markets.map((market) => (
         <div key={market.coin}>
-            <Header {...market} onBuy={onBuy} onSell={onSell} />
+            <Header {...market}>
+                <OrderForm coin={market.coin} onBuy={onBuy} onSell={onSell} />
+            </Header>
             <br />
         </div>
     ));

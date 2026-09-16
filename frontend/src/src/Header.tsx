@@ -1,13 +1,12 @@
+import type { ReactNode } from "react";
 import { type Market } from "./data";
-import { OrderForm } from "./OrderForm";
 
 // `Market &` means all the properties of Market plus...
 type HeaderProps = Market & {
-    onBuy: (coin: string, amount: number) => void;
-    onSell: (coin: string, amount: number) => void;
+    children: ReactNode;
 };
 
-export function Header({ coin, price, change, onBuy, onSell }: HeaderProps) {
+export function Header({ coin, price, change, children }: HeaderProps) {
     return (
         <header>
             <p>{coin}</p>
@@ -17,7 +16,7 @@ export function Header({ coin, price, change, onBuy, onSell }: HeaderProps) {
                 {change > 0 ? "UP" : "DOWN"}
                 {change > 0 && <span>, Market is rising!</span>}
             </p>
-            <OrderForm coin={coin} onBuy={onBuy} onSell={onSell} />
+            {children}
         </header>
     );
 }

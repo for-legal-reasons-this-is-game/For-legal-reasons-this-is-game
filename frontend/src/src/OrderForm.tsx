@@ -1,4 +1,4 @@
-import React, { useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 type OrderFormProps = {
     coin: string;
@@ -6,13 +6,21 @@ type OrderFormProps = {
     onSell: (coin: string, amount: number) => void;
 };
 
+function parseAmount(amount: string): number | null {
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) {
+        return null;
+    }
+    return value;
+}
+
 export function OrderForm({ coin, onBuy, onSell }: OrderFormProps) {
     const [amount, setAmount] = useState("");
 
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        const value = Number(amount);
-        if (!Number.isFinite(value) || value <= 0) {
+        const value = parseAmount(amount);
+        if (value === null) {
             console.log("Not a valid value!");
             return;
         }
@@ -25,10 +33,10 @@ export function OrderForm({ coin, onBuy, onSell }: OrderFormProps) {
     return (
         <form onSubmit={handleSubmit}>
             <input value={amount} onChange={(event) => setAmount(event.target.value)} />
-            <button type="submit" name="action" value="buy">
+            <button type="submit" value="buy">
                 Buy
             </button>
-            <button type="submit" name="action" value="sell">
+            <button type="submit" value="sell">
                 Sell
             </button>
             <p>You entered: {amount}</p>
