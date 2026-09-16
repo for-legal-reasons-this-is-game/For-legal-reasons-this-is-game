@@ -5,7 +5,7 @@ import { useState } from "react";
 function App() {
     const [totalOrders, setTotalOrders] = useState(0);
     return (
-        <>
+        <div className="market_list">
             <h1>My Trading Platform</h1>
             {totalOrders > 0 && <h2>Total Orders: {totalOrders}</h2>}
             <MarketList
@@ -19,7 +19,7 @@ function App() {
                     console.log(`Selling ${amount} ${coin}`);
                 }}
             />
-        </>
+        </div>
     );
 }
 
