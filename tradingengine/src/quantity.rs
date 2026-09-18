@@ -1,20 +1,16 @@
 use crate::error::{EngineError, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Quantity(i64);
+pub struct Quantity(u128);
 
 impl Quantity {
     pub const ZERO: Self = Self(0);
 
-    pub fn from_minor_units(minor_units: i64) -> Result<Self> {
-        if minor_units < 0 {
-            Err(EngineError::QuantityNegative)
-        } else {
-            Ok(Quantity(minor_units))
-        }
+    pub const fn from_minor_units(minor_units: u128) -> Self {
+        Quantity(minor_units)
     }
 
-    pub fn minor_units(self) -> i64 {
+    pub fn minor_units(self) -> u128 {
         self.0
     }
 
@@ -36,11 +32,10 @@ impl Quantity {
     }
 
     pub fn checked_sub(self, other: Self) -> Result<Self> {
-        let difference = self.0 - other.0;
-        if difference < 0 {
+        if other.0 > self.0 {
             Err(EngineError::QuantityNegative)
         } else {
-            Ok(Quantity(difference))
+            Ok(Quantity(self.0 - other.0))
         }
     }
 }

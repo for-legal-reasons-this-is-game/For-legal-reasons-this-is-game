@@ -1,8 +1,8 @@
 use tradingengine::error::EngineError;
 use tradingengine::quantity::Quantity;
 
-fn qty(minor_units: i64) -> Quantity {
-    Quantity::from_minor_units(minor_units).expect("valid quantity")
+fn qty(minor_units: u128) -> Quantity {
+    Quantity::from_minor_units(minor_units)
 }
 
 #[test]
@@ -16,14 +16,6 @@ fn accepts_zero() {
 #[test]
 fn accepts_positive() {
     assert_eq!(qty(5).minor_units(), 5);
-}
-
-#[test]
-fn rejects_negative() {
-    assert_eq!(
-        Quantity::from_minor_units(-1),
-        Err(EngineError::QuantityNegative)
-    );
 }
 
 #[test]
@@ -46,7 +38,7 @@ fn checked_add_sums() {
 
 #[test]
 fn checked_add_reports_overflow() {
-    let max = qty(i64::MAX);
+    let max = qty(u128::MAX);
     assert_eq!(max.checked_add(qty(1)), Err(EngineError::Overflow));
 }
 
@@ -63,7 +55,6 @@ fn checked_sub_can_reach_exactly_zero() {
 
 #[test]
 fn checked_sub_refuses_to_go_negative() {
-    // an i64 would happily wrap here; the type must not
     assert_eq!(
         qty(3).checked_sub(qty(10)),
         Err(EngineError::QuantityNegative)

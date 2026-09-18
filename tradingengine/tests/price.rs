@@ -11,14 +11,6 @@ fn rejects_zero() {
 }
 
 #[test]
-fn rejects_negative() {
-    assert_eq!(
-        Price::from_minor_units(-1),
-        Err(EngineError::PriceNotPositive)
-    );
-}
-
-#[test]
 fn accepts_the_smallest_positive_value() {
     let price = Price::from_minor_units(1).expect("one minor unit is a valid price");
     assert_eq!(price.minor_units(), 1);
@@ -52,7 +44,7 @@ fn prices_sort_themselves_in_a_btreemap() {
         levels.insert(price, whole);
     }
 
-    let ascending: Vec<i64> = levels.values().copied().collect();
+    let ascending: Vec<u128> = levels.values().copied().collect();
     assert_eq!(ascending, vec![29_000, 29_001, 29_002]);
 
     // asks read best-first from the front, bids best-first from the back

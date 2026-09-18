@@ -1,6 +1,6 @@
 # `src/price.rs`
 
-A price, stored as an `i64` count of minor units at the crate's `SCALE` decimal places.
+A price, stored as a `u128` count of minor units at the crate's `SCALE` decimal places.
 
 ## Why an integer and not a float
 
@@ -21,24 +21,12 @@ wrapper around `f64`, because `NaN != NaN` breaks the reflexivity both traits re
 Because the representation is an integer, `Price` gets exact equality, exact ordering
 and hashing for free.
 
-## Why a newtype and not a bare `i64`
-
-`Price(i64)` compiles to exactly the same machine code as `i64` — the wrapper is free at
-runtime. What it buys is that the compiler refuses to let a price be passed where a
-quantity belongs, or two ids be swapped.
-
 ## The invariant: strictly positive
 
-**The inner field is private.** That is the whole mechanism. No code outside this file
-can write `Price(-5)`; the only door in is `from_minor_units`, which rejects anything
-not strictly positive.
-
-The alternative design — a plain `i64` plus an `if price <= 0` check at every call site
-— gets forgotten exactly once, and then a negative price is sitting in the book. Pushing
-the check into the constructor means the compiler enforces it everywhere, permanently.
-
-Zero is rejected along with negatives: a price of zero means "I will trade this for
-nothing", which is not a price.
+**The inner field is private.** The only door in is `from_minor_units`, which rejects
+zero. `u128` already makes a negative price unrepresentable at the type level; zero is
+rejected because a price of zero means "I will trade this for nothing", which is not a
+price.
 
 ## Why `from_minor_units` rather than `new`
 
@@ -52,7 +40,7 @@ would sit alongside it if one is ever needed.
 |---|---|
 | `Debug` | `assert_eq!` will not compile without it |
 | `Clone` | prerequisite for `Copy` |
-| `Copy` | it is one `i64`; without this every use *moves* and you fight the borrow checker for nothing |
+| `Copy` | it is one `u128`; without this every use *moves* and you fight the borrow checker for nothing |
 | `PartialEq`, `Eq` | comparing prices; exact because the inside is an integer |
 | `PartialOrd`, `Ord` | **the important one** — see below |
 | `Hash` | for maps keyed by price |
