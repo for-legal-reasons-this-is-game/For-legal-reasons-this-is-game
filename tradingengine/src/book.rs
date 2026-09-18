@@ -12,28 +12,10 @@ type BookSide = BTreeMap<Price, Level>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fill {
-    maker: OrderId,
-    taker: OrderId,
-    price: Price,
-    quantity: Quantity,
-}
-
-impl Fill {
-    pub const fn maker(&self) -> OrderId {
-        self.maker
-    }
-
-    pub const fn taker(&self) -> OrderId {
-        self.taker
-    }
-
-    pub const fn price(&self) -> Price {
-        self.price
-    }
-
-    pub const fn quantity(&self) -> Quantity {
-        self.quantity
-    }
+    pub maker: OrderId,
+    pub taker: OrderId,
+    pub price: Price,
+    pub quantity: Quantity,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

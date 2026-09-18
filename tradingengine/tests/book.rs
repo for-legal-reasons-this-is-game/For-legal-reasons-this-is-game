@@ -7,15 +7,15 @@ use tradingengine::price::Price;
 use tradingengine::quantity::Quantity;
 use tradingengine::resting_order::RestingOrder;
 
-fn order(id: u64, side: Side, whole_price: i64) -> RestingOrder {
+fn order(id: u64, side: Side, whole_price: u128) -> RestingOrder {
     RestingOrder::new(
         OrderId::new(id),
         UserId::new(u128::from(id)),
         side,
         Price::from_minor_units(whole_price * ONE).expect("valid price"),
-        Quantity::from_minor_units(10).expect("valid quantity"),
+        Quantity::from_minor_units(10),
         SeqNo::new(id),
-        IdempotencyKey::new(format!("order-{id}")).expect("valid idempotency key"),
+        IdempotencyKey::new(&format!("order-{id}")).expect("valid idempotency key"),
     )
     .expect("valid resting order")
 }
@@ -24,7 +24,7 @@ fn ids<'a>(orders: impl Iterator<Item = &'a RestingOrder>) -> Vec<u64> {
     orders.map(|resting| resting.id().value()).collect()
 }
 
-fn price(whole: i64) -> Price {
+fn price(whole: u128) -> Price {
     Price::from_minor_units(whole * ONE).expect("valid price")
 }
 
@@ -94,8 +94,8 @@ fn bids_read_highest_price_first_and_asks_lowest_first() {
             .expect("valid insert");
     }
 
-    let bid_prices: Vec<i64> = book.bids().map(|o| o.price().minor_units() / ONE).collect();
-    let ask_prices: Vec<i64> = book.asks().map(|o| o.price().minor_units() / ONE).collect();
+    let bid_prices: Vec<u128> = book.bids().map(|o| o.price().minor_units() / ONE).collect();
+    let ask_prices: Vec<u128> = book.asks().map(|o| o.price().minor_units() / ONE).collect();
 
     assert_eq!(bid_prices, vec![29_002, 29_001, 29_000]);
     assert_eq!(ask_prices, vec![29_008, 29_009, 29_010]);
@@ -345,21 +345,21 @@ fn amend_rejects_a_replacement_id_already_in_the_book() {
 
 // ---- matching ----
 
-fn sized(id: u64, side: Side, whole_price: i64, quantity: i64) -> RestingOrder {
+fn sized(id: u64, side: Side, whole_price: u128, quantity: u128) -> RestingOrder {
     RestingOrder::new(
         OrderId::new(id),
         UserId::new(u128::from(id)),
         side,
         Price::from_minor_units(whole_price * ONE).expect("valid price"),
-        Quantity::from_minor_units(quantity).expect("valid quantity"),
+        Quantity::from_minor_units(quantity),
         SeqNo::new(id),
-        IdempotencyKey::new(format!("order-{id}")).expect("valid idempotency key"),
+        IdempotencyKey::new(&format!("order-{id}")).expect("valid idempotency key"),
     )
     .expect("valid resting order")
 }
 
-fn qty(minor_units: i64) -> Quantity {
-    Quantity::from_minor_units(minor_units).expect("valid quantity")
+fn qty(minor_units: u128) -> Quantity {
+    Quantity::from_minor_units(minor_units)
 }
 
 #[test]
@@ -406,9 +406,9 @@ fn a_fill_happens_at_the_makers_price() {
         .insert(sized(2, Side::Buy, 29_005, 10))
         .expect("valid insert");
 
-    assert_eq!(execution.fills()[0].price(), price(29_000));
-    assert_eq!(execution.fills()[0].maker(), OrderId::new(1));
-    assert_eq!(execution.fills()[0].taker(), OrderId::new(2));
+    assert_eq!(execution.fills()[0].price, price(29_000));
+    assert_eq!(execution.fills()[0].maker, OrderId::new(1));
+    assert_eq!(execution.fills()[0].taker, OrderId::new(2));
 }
 
 #[test]
@@ -466,10 +466,10 @@ fn a_taker_walks_levels_cheapest_first() {
         .insert(sized(4, Side::Buy, 29_002, 15))
         .expect("valid insert");
 
-    let prices: Vec<i64> = execution
+    let prices: Vec<u128> = execution
         .fills()
         .iter()
-        .map(|fill| fill.price().minor_units() / ONE)
+        .map(|fill| fill.price.minor_units() / ONE)
         .collect();
     assert_eq!(prices, vec![29_000, 29_001, 29_002]);
     assert!(book.is_empty());
@@ -509,7 +509,7 @@ fn fills_take_the_oldest_order_at_a_price_first() {
     let makers: Vec<u64> = execution
         .fills()
         .iter()
-        .map(|fill| fill.maker().value())
+        .map(|fill| fill.maker.value())
         .collect();
     assert_eq!(makers, vec![1, 2]);
     assert_eq!(ids(book.asks()), vec![3]);
@@ -527,10 +527,10 @@ fn a_selling_taker_walks_the_bids_highest_first() {
         .insert(sized(3, Side::Sell, 29_000, 10))
         .expect("valid insert");
 
-    let prices: Vec<i64> = execution
+    let prices: Vec<u128> = execution
         .fills()
         .iter()
-        .map(|fill| fill.price().minor_units() / ONE)
+        .map(|fill| fill.price.minor_units() / ONE)
         .collect();
     assert_eq!(prices, vec![29_002, 29_000]);
     assert!(book.is_empty());
