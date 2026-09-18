@@ -1,4 +1,18 @@
+# Rust build output. Unanchored so it matches every crate in the repo
+# (backend/, frontend/, tradingengine/) rather than one at a time.
 target/
 
-# the single environment file - never commit; .env.example is the template
+# Nix build results and the direnv cache
+result
+result-*
+.direnv/
+
+# Environment and secrets.
 .env
+.env.*
+!.env.example
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
