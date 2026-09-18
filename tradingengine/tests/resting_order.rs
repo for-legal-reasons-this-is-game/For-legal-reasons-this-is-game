@@ -6,8 +6,8 @@ use tradingengine::price::Price;
 use tradingengine::quantity::Quantity;
 use tradingengine::resting_order::RestingOrder;
 
-fn qty(minor_units: i64) -> Quantity {
-    Quantity::from_minor_units(minor_units).expect("valid quantity")
+fn qty(minor_units: u128) -> Quantity {
+    Quantity::from_minor_units(minor_units)
 }
 
 fn order(quantity: Quantity) -> RestingOrder {
@@ -18,7 +18,7 @@ fn order(quantity: Quantity) -> RestingOrder {
         Price::from_minor_units(29_000 * ONE).expect("valid price"),
         quantity,
         SeqNo::new(33),
-        IdempotencyKey::new("order-11".to_owned()).expect("valid idempotency key"),
+        IdempotencyKey::new("order-11").expect("valid idempotency key"),
     )
     .expect("valid resting order")
 }
@@ -49,7 +49,7 @@ fn rejects_an_order_with_zero_original_quantity() {
             Price::from_minor_units(ONE).expect("valid price"),
             Quantity::ZERO,
             SeqNo::new(33),
-            IdempotencyKey::new("order-11".to_owned()).expect("valid idempotency key"),
+            IdempotencyKey::new("order-11").expect("valid idempotency key"),
         ),
         Err(EngineError::QuantityNotPositive)
     );
