@@ -2,6 +2,7 @@
 
 # For legal reasons this is game
 
+
 ## Description
 **For legal reasons this is game** is an **API-first, real-time simulated trading platform** (ft_transcendence) where users can paper-trade instruments such as **stocks, coins, and options**.
 
@@ -12,8 +13,8 @@ The project’s goal is to design and build a system that is:
 - **Modular** (separate trading engine, database layer, and API service)
 
 ### Key features (current + planned)
-- Public API for market data and trading actions (**planned / in progress**)
-- Trading engine that recalculates prices based on platform activity (**planned / in progress**)
+- Public API for market data and trading actions (**in progress**)
+- Trading engine that recalculates prices based on platform activity (**in progress**)
 - Database seeding from external APIs (**planned**, provider TBD)
 - Responsive web frontend (**TBD: Angular/Vue/other**)
 - Admin / advanced permission ideas similar to prediction-market resolution flows (**idea stage; not implemented yet**)
@@ -75,8 +76,10 @@ One git-ignored file, three sections (see `.env.example`):
 The system is being designed as multiple components (names/ports TBD):
 - **API service (Rust)**: exposes REST endpoints (public API)
 - **Trading engine (Rust)**: processes orders/trades and recalculates prices
-- **Database (Rust, relational)**: custom distributed relational database (schema in progress)
-- **Cache layer (TBD)**: Redis/Memcached/other (not decided)
+- **Databases (TigerBeetle + PostgreSQL)**:  Postgres stores user data and account metadata, TigerBeetle handles trades and accounts
+- **Keycloak**: Handles authentication
+- **Infiscal**: Secret management
+- **Cache layer (TBD)**: Redis
 
 ---
 
@@ -89,7 +92,7 @@ All team members are currently **Developers** (responsibilities will be refined 
     - Technical Lead Architect
   Responsibilities: TBD (initial architecture, requirements, planning input)
 - **alvcampo** 
-    - Project Manager Scrum Master
+    - Project Manager/Scrum Master
     - Developer  
   Responsibilities: TBD
 - **jel-ghna** — Developer  
@@ -117,6 +120,10 @@ We organize work using:
 
 ## Technical Stack (current decisions + TBD)
 
+### Big Picture View
+
+![Big Picture](docs/big_picture.png)   
+
 ### Frontend
 - **TBD** (candidates discussed: Angular / Vue)
 - Target: responsive UI, good maintainability for a complex system
@@ -124,18 +131,19 @@ We organize work using:
 ### Backend / API
 - **Rust**
 - Framework: **Axum**
-- **REST API** planned (OpenAPI/Swagger planned once endpoints stabilize)
+- **REST API** (OpenAPI/Swagger planned once endpoints stabilize)
+- **gRPC**
 
 ### Trading Engine
 - **Rust**
-- Separate component/service responsible for price recalculation and order processing (**in progress**)
+- **gRPC**
 
-### Database
-- **Custom distributed relational database in Rust**
-- Schema: **in progress / not finalized**
+### Databases
+- **PostgreSQL** as our relational database
+- **TigerBeetle** as our distributed transactional database; currently, there are 3 replicas in our cluster.
 
 ### Cache
-- **TBD** (Redis/Memcached/other)
+- **Redis**
 
 ### DevOps / Deployment
 - **Dockerfiles** for services
@@ -147,13 +155,10 @@ We organize work using:
 ## Database Schema (TBD)
 A relational schema is being designed.
 
-Planned deliverable for this section:
-- Tables/entities (users, markets, instruments, orders, trades, balances, etc.)
-- Relationships (1:N, N:M)
-- Key fields and data types
-- Diagram (image or ASCII ERD)
+Currently, our relational database contains tables for users, account metadata, and ledgers, with markets coming soon.
 
 > This section is intentionally left incomplete until the schema is finalized.
+
 
 ---
 
@@ -161,10 +166,14 @@ Planned deliverable for this section:
 This section is intended to help contributors quickly see **what exists** and **what still needs to be built**.
 
 ### Implemented
-- (none yet / TBD)
-
+- TigerBeetle
+- PostgreSQL
+- User and account endpoints for the API
+- Secret Management
+- gRPC contract definition
+  
 ### In progress
-- Rust backend/API scaffolding (framework TBD)
+- Rust backend/API scaffolding (Axum)
 - Trading engine design and separation into its own component
 - Relational DB structure design
 
@@ -249,7 +258,5 @@ AI tools were used for:
 
 ## Notes / Known limitations (current)
 - Frontend framework is not selected yet.
-- Backend Rust framework is not selected yet.
-- Cache solution is not selected yet.
 - Database schema is in progress.
 - External API provider for seeding is not selected yet.
