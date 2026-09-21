@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 type OrderFormProps = {
     coin: string;
@@ -16,6 +16,13 @@ function parseAmount(amount: string): number | null {
 
 export function OrderForm({ coin, onBuy, onSell }: OrderFormProps) {
     const [amount, setAmount] = useState("");
+
+    // useEffect(() => {
+    //     const timer = setInterval(() => {
+    //         console.log(`${timer}: TICK ${coin}`);
+    //     }, 1000);
+    //     return () => clearInterval(timer);
+    // }, [coin, amount]);
 
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
