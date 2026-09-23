@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { type Market } from "./data";
 
 // `Market &` means all the properties of Market plus...
@@ -7,6 +8,8 @@ type HeaderProps = Market & {
 };
 
 export function Header({ coin, price, change, children }: HeaderProps) {
+    const [isVisible, setIsVisible] = useState(false);
+
     return (
         <header>
             <p>{coin}</p>
@@ -16,7 +19,10 @@ export function Header({ coin, price, change, children }: HeaderProps) {
                 {change > 0 ? "UP" : "DOWN"}
                 {change > 0 && <span>, Market is rising!</span>}
             </p>
-            {children}
+            <button onClick={() => setIsVisible(!isVisible)}>
+                {(isVisible ? "Hide" : "Show") + " Form"}
+            </button>
+            {isVisible && children}
         </header>
     );
 }
