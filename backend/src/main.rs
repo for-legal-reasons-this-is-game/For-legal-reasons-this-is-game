@@ -1,5 +1,6 @@
 use axum::{
     Router,
+    http::HeaderValue,
     routing::{get, patch, post},
 };
 
@@ -13,6 +14,7 @@ use std::sync::{Arc, RwLock};
 use cn_tigerbeetle as tb;
 
 use std::env;
+use tower_http::cors::CorsLayer;
 
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
@@ -69,7 +71,8 @@ async fn main() {
         .route("/ledgers", post(v1::create_ledger))
         .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
-        .with_state(state);
+        .with_state(state)
+        .layer(CorsLayer::new().allow_origin(HeaderValue::from_static("http://localhost:5173")));
 
     let router = Router::<()>::new().nest("/api/v1", v1);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
