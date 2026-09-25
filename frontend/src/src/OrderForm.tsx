@@ -17,6 +17,18 @@ function parseAmount(amount: string): number | null {
 export function OrderForm({ coin, onBuy, onSell }: OrderFormProps) {
     const [amount, setAmount] = useState("");
 
+    useEffect(() => {
+        function handleKeyDown(event: KeyboardEvent) {
+            console.log(`{}`, event.key);
+        }
+        console.log("adding event listener");
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            console.log("removing event listener");
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, []);
+
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         const value = parseAmount(amount);

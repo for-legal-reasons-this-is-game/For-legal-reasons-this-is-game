@@ -5,8 +5,8 @@ x-tigerbeetle-common: &tigerbeetle-common
     - "seccomp=unconfined"
   cap_add:
     - IPC_LOCK
-  # 1 GiB journal + grid cache + working set - 1536m gets OOM-killed
-  mem_limit: 2g
+  # 1 GiB journal + grid cache + working set - allocates ~2.3GiB during init
+  mem_limit: 3g
   entrypoint: ["tini", "--", "sh", "-c"]
 
 # -----------------------------------------------------------------------------
