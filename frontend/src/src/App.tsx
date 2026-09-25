@@ -10,17 +10,17 @@ type Ledger = {
     enabled: boolean;
 };
 
-function Backend() {
+function Ledger() {
     const [ledgers, setLedgers] = useState<Ledger[]>([]);
 
     async function getJson() {
         try {
             const response = await fetch("http://localhost:8000/api/v1/ledgers");
-            const hehe = await response.json();
-            setLedgers(hehe);
-            console.log(hehe);
+            const responseJson = await response.json();
+            setLedgers(responseJson);
+            // console.log(responseJson);
         } catch (error) {
-            console.log(`error is ${error}`);
+            console.log(`error: ${error}`);
         }
     }
 
@@ -50,7 +50,7 @@ function App() {
     const [totalOrders, setTotalOrders] = useState(0);
     return (
         <>
-            <Backend />
+            <Ledger />
             <div className="market_list">
                 <h1>My Trading Platform</h1>
                 {totalOrders > 0 && <h2>Total Orders: {totalOrders}</h2>}
