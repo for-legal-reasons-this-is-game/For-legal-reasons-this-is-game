@@ -1,15 +1,25 @@
 # ---- Build stage ----
 FROM rust:1-slim-bookworm AS builder
 
+# protobuf-compiler provides protoc for proto/build.rs; libprotobuf-dev
+# provides the well-known types (google/protobuf/timestamp.proto).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
+    protobuf-compiler \
+    libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY migrations ./migrations
+# Build context is the repo root (see compose.yaml). Mirror the repo layout
+# so the backend's `proto = { path = "../proto" }` resolves.
+WORKDIR /app/proto
+COPY proto/Cargo.toml proto/build.rs proto/*.proto ./
+COPY proto/src ./src
+
+WORKDIR /app/backend
+COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/src ./src
+COPY backend/migrations ./migrations
 
 RUN cargo build --release --locked
 
@@ -31,8 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --create-home backend
 
 WORKDIR /app
-COPY --from=builder /app/target/release/backend ./backend
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --from=builder /app/backend/target/release/backend ./backend
+COPY backend/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER backend
