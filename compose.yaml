@@ -20,7 +20,11 @@ include:
 services:
   backend:
     container_name: backend
-    build: ./backend/
+    # context is the repo root so the build can reach ../proto;
+    # backend/Dockerfile.dockerignore controls what gets sent.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     # the TigerBeetle client needs io_uring, which docker's default seccomp
     # profile blocks (same reason the tigerbeetle services run unconfined).

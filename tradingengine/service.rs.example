@@ -1,0 +1,62 @@
+use proto::trading_engine_server::TradingEngine;
+use proto::*;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Status};
+
+pub struct EngineService {}
+
+#[tonic::async_trait]
+impl TradingEngine for EngineService {
+    async fn set_market(
+        &self,
+        request: Request<SetMarketRequest>,
+    ) -> Result<Response<SetMarketResponse>, Status> {
+        todo!()
+    }
+
+    async fn place_order(
+        &self,
+        request: Request<PlaceOrderRequest>,
+    ) -> Result<Response<PlaceOrderResponse>, Status> {
+        todo!()
+    }
+
+    async fn cancel_order(
+        &self,
+        request: Request<CancelOrderRequest>,
+    ) -> Result<Response<CancelOrderResponse>, Status> {
+        todo!()
+    }
+
+    async fn cancel_orders(
+        &self,
+        request: Request<CancelOrdersRequest>,
+    ) -> Result<Response<CancelOrdersResponse>, Status> {
+        todo!()
+    }
+
+    async fn modify_order(
+        &self,
+        request: Request<ModifyOrderRequest>,
+    ) -> Result<Response<ModifyOrderResponse>, Status> {
+        todo!()
+    }
+
+    type SubscribeEventsStream = ReceiverStream<Result<EventItem, Status>>;
+
+    async fn subscribe_events(
+        &self,
+        request: Request<SubscribeEventsRequest>,
+    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
+        todo!()
+    }
+
+    type SubscribeMarketDataStream = ReceiverStream<Result<MarketDataItem, Status>>;
+
+    async fn subscribe_market_data(
+        &self,
+        request: Request<SubscribeMarketDataRequest>,
+    ) -> Result<Response<Self::SubscribeMarketDataStream>, Status> {
+        todo!()
+    }
+}
