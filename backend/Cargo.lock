@@ -1344,7 +1344,6 @@ version = "0.1.0"
 dependencies = [
  "prost",
  "prost-types",
- "tokio",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
