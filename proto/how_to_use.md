@@ -1,6 +1,6 @@
 # Coding against the trading contract
 
-Checklist for the backend and the engine. Contract is `proto/trading/v1/`.
+Checklist for the backend and the engine. Contract is `proto/`.
 
 One rule underneath most of what follows: **the backend may decide from things
 it writes — its own config, its own order table, the clock — and from the
