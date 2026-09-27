@@ -1,5 +1,10 @@
 use proto::trading_engine_client::TradingEngineClient;
-use proto::*;
+use proto::{
+    CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse, EventItem,
+    MarketDataItem, ModifyOrderRequest, ModifyOrderResponse, PlaceOrderRequest, PlaceOrderResponse,
+    SetMarketRequest, SetMarketResponse, SubscribeEventsRequest, SubscribeMarketDataRequest,
+};
+
 use tonic::transport::Channel;
 use tonic::{Status, Streaming};
 
