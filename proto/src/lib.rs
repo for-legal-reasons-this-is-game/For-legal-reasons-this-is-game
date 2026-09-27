@@ -1,6 +1,8 @@
 pub mod trading {
     pub mod v1 {
         tonic::include_proto!("trading.v1");
+        pub const FILE_DESCRIPTOR_SET: &[u8] =
+            tonic::include_file_descriptor_set!("trading_service");
     }
 }
 

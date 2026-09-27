@@ -12,6 +12,8 @@ use std::sync::{Arc, RwLock};
 
 use cn_tigerbeetle as tb;
 
+mod service;
+
 use std::env;
 
 // how to stricture api /api/{version: String}/*
@@ -52,9 +54,9 @@ async fn main() {
         tb_client,
         ledgers: Arc::new(RwLock::new(ledgers)),
     };
-
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
+
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
         .route("/users", get(v1::list_users))
