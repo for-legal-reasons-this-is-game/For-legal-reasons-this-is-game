@@ -1,0 +1,10 @@
+*
+
+!tradingengine/Cargo.toml
+!tradingengine/Cargo.lock
+!tradingengine/src
+
+!proto/Cargo.toml
+!proto/build.rs
+!proto/*.proto
+!proto/src
