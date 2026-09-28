@@ -30,7 +30,7 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     # entrypoint.sh wraps this in `infisical run --`, so DATABASE_URL,
     # TB_CLUSTER_ID, TB_IP_ADRESSES, ... all come from Infisical at runtime.
-    command: ["./backend"]
+    command: ["/app/backend"]
     volumes:
       - infisical_shared:/shared:ro
     networks:

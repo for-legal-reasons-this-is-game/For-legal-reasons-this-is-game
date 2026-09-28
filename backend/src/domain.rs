@@ -3,36 +3,46 @@ use num_traits::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, TS)]
+#[ts(export)]
 pub struct User {
     pub user_id: Uuid,
     pub user_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct Position {
     pub account_id: Uuid,
     pub account_status: AccountStatus,
     pub symbol: String,
     pub decimals: i16,
+    #[ts(type = "string")]
     pub debits_posted: Decimal,
+    #[ts(type = "string")]
     pub credits_posted: Decimal,
+    #[ts(type = "string")]
     pub debits_pending: Decimal,
+    #[ts(type = "string")]
     pub credits_pending: Decimal,
+    #[ts(type = "string")]
     pub net_posted: Decimal, // credits_posted - debits_posted
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type, TS)]
 #[sqlx(type_name = "account_status", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
+#[ts(export)]
 pub enum AccountStatus {
     Active,
     Processing,
 }
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, TS)]
+#[ts(export)]
 pub struct Account {
     pub account_id: Uuid,
     pub account_name: String,
@@ -42,7 +52,8 @@ pub struct Account {
     pub account_user_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, FromRow, TS)]
+#[ts(export)]
 pub struct Ledger {
     pub ledger_id: i32,
     pub symbol: String,
@@ -51,9 +62,12 @@ pub struct Ledger {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Copy, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type, TS,
+)]
 #[repr(i16)]
 #[serde(try_from = "i16", into = "i16")]
+#[ts(export)]
 pub enum AccountCodeType {
     Cash = 1,
     Crypto = 2,

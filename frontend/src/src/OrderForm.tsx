@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 type OrderFormProps = {
     coin: string;

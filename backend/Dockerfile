@@ -4,14 +4,19 @@ FROM rust:1-slim-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-watch
 
 WORKDIR /app
+
+# Cache dependencies layer
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && echo 'fn main() {}' > src/main.rs && cargo build --locked && rm -rf src
+
 COPY src ./src
 COPY migrations ./migrations
 
-RUN cargo build --release --locked
+RUN cargo build --locked
 
 # ---- Runtime stage ----
 FROM debian:bookworm-slim AS runtime
@@ -31,11 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --create-home backend
 
 WORKDIR /app
-COPY --from=builder /app/target/release/backend ./backend
+COPY --from=builder /app/target/debug/backend ./backend
+COPY --from=builder /usr/local/cargo/bin/cargo-watch /usr/local/bin/cargo-watch
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER backend
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["./backend"]
+CMD ["/app/backend"]

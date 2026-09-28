@@ -1,6 +1,5 @@
 use axum::{
     Router,
-    http::HeaderValue,
     routing::{get, patch, post},
 };
 
@@ -72,7 +71,8 @@ async fn main() {
         .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .with_state(state)
-        .layer(CorsLayer::new().allow_origin(HeaderValue::from_static("http://localhost:5173")));
+        // don't use permissive() for release
+        .layer(CorsLayer::permissive());
 
     let router = Router::<()>::new().nest("/api/v1", v1);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
