@@ -50,6 +50,17 @@ services:
       tigerbeetle_0:
         condition: service_started
 
+  tradingengine:
+    container_name: tradingengine
+    build:
+      context: .
+      dockerfile: tradingengine/Dockerfile
+    restart: unless-stopped
+    # the backend reaches it in-network at http://tradingengine:50051;
+    # the host port is published for grpcurl/grpcui (reflection is enabled).
+    ports:
+      - "${TRADINGENGINE_PORT:-50051}:50051"
+
   db:
     image: postgres:16-alpine
     container_name: db
