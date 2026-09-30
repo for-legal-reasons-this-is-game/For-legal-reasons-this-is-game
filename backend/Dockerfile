@@ -19,7 +19,7 @@ COPY migrations ./migrations
 RUN cargo build --locked
 
 # ---- Runtime stage ----
-FROM debian:bookworm-slim AS runtime
+FROM rust:1-slim-bookworm AS runtime
 
 # ca-certificates for TLS, curl to install the Infisical CLI, which the
 # entrypoint uses to pull secrets at startup.
@@ -38,10 +38,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder /app/target/debug/backend ./backend
 COPY --from=builder /usr/local/cargo/bin/cargo-watch /usr/local/bin/cargo-watch
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/Cargo.toml /app/Cargo.lock ./
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh && chown -R backend:backend /app
 
 USER backend
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["/app/backend"]
+CMD ["sh", "-c", "cargo watch -x run"]

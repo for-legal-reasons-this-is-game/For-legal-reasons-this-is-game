@@ -30,9 +30,22 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     # entrypoint.sh wraps this in `infisical run --`, so DATABASE_URL,
     # TB_CLUSTER_ID, TB_IP_ADRESSES, ... all come from Infisical at runtime.
-    command: ["/app/backend"]
+    command: ["sh", "-c", "cargo watch -x run"]
     volumes:
       - infisical_shared:/shared:ro
+      - ./backend/src:/app/src
+      - ./backend/Cargo.toml:/app/Cargo.toml
+      - ./backend/migrations:/app/migrations
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+        - action: sync
+          path: ./backend/Cargo.toml
+          target: /app/Cargo.toml
+        - action: rebuild
+          path: ./backend/Cargo.lock
     networks:
       - default
       - tigerbeetle_net
