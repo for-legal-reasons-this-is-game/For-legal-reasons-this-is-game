@@ -5,6 +5,7 @@ use axum::{
 
 use backend::{
     relay,
+    service::EngineClient,
     v1::{self, AppState},
 };
 use sqlx::postgres::PgPoolOptions;
@@ -49,10 +50,15 @@ async fn main() {
         .await
         .expect("Failed to load ledgers");
 
+    let engine_client = EngineClient::new("0.0.0.0:50051")
+        .await
+        .expect("Cannont connect to Trading Engine");
+
     let state = AppState {
         pg_connections,
         tb_client,
         ledgers: Arc::new(RwLock::new(ledgers)),
+        engine_client,
     };
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
