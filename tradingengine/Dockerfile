@@ -24,6 +24,7 @@ RUN useradd --system --create-home tradingengine
 
 WORKDIR /app
 COPY --from=builder /app/tradingengine/target/release/tradingengine ./tradingengine
+COPY --from=ghcr.io/grpc-ecosystem/grpc-health-probe:v0.4.57 /ko-app/grpc-health-probe /usr/local/bin/grpc_health_probe
 
 USER tradingengine
 EXPOSE 50051
