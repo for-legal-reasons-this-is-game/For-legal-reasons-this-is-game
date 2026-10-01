@@ -50,9 +50,9 @@ async fn main() {
         .await
         .expect("Failed to load ledgers");
 
-    let engine_client = EngineClient::new("0.0.0.0:50051")
+    let engine_client = EngineClient::new("http://tradingengine:50051")
         .await
-        .expect("Cannont connect to Trading Engine");
+        .expect("Failed trading engine connection");
 
     let state = AppState {
         pg_connections,
