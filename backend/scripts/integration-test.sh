@@ -24,6 +24,12 @@ TB_CLUSTER_ID="${TB_CLUSTER_ID:-0}"
 TB_IP_ADRESSES="${TB_IP_ADRESSES:-127.0.0.1:${TB_PORT}}"
 export TB_CLUSTER_ID TB_IP_ADRESSES
 
+ENGINE_IMAGE="${ENGINE_IMAGE:-tradingengine-integration}"
+ENGINE_CONTAINER="${ENGINE_CONTAINER:-backend-integration-engine}"
+ENGINE_PORT="${ENGINE_PORT:-50051}"
+ENGINE_URL="${ENGINE_URL:-http://127.0.0.1:${ENGINE_PORT}}"
+export ENGINE_URL
+
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 SERVER_LOG="$(mktemp)"
 BACKEND_PID=""
@@ -40,6 +46,9 @@ cleanup() {
     docker logs --tail 50 "$PG_CONTAINER" >&2 2>&1 || true
     echo "----- tigerbeetle log -----" >&2
     docker logs "$TB_CONTAINER" >&2 2>&1 || true
+    echo "----- trading engine health / log -----" >&2
+    docker inspect -f '{{json .State.Health}}' "$ENGINE_CONTAINER" >&2 2>&1 || true
+    docker logs "$ENGINE_CONTAINER" >&2 2>&1 || true
   fi
   if [[ -n "$BACKEND_PID" ]] && kill -0 "$BACKEND_PID" 2>/dev/null; then
     kill "$BACKEND_PID" 2>/dev/null || true
@@ -47,7 +56,7 @@ cleanup() {
   fi
   # `cargo run` spawns the binary as a child, which outlives a kill of cargo
   pkill -f 'target/debug/backend' 2>/dev/null || true
-  docker rm -f "$PG_CONTAINER" "$TB_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -f "$PG_CONTAINER" "$TB_CONTAINER" "$ENGINE_CONTAINER" >/dev/null 2>&1 || true
   rm -f "$SERVER_LOG"
 }
 trap cleanup EXIT
@@ -139,6 +148,34 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [[ "$tb_ready" == true ]] || { echo "tigerbeetle never logged 'listening on'" >&2; exit 1; }
+
+# --- trading engine ---------------------------------------------------------
+# Same image and healthcheck as compose.yaml; the backend connects to it at boot.
+echo "==> building trading engine image ($ENGINE_IMAGE)"
+docker build -q -t "$ENGINE_IMAGE" -f ../tradingengine/Dockerfile .. >/dev/null
+
+echo "==> starting trading engine ($ENGINE_CONTAINER on :$ENGINE_PORT)"
+docker rm -f "$ENGINE_CONTAINER" >/dev/null 2>&1 || true
+docker run -d --name "$ENGINE_CONTAINER" \
+  -p "${ENGINE_PORT}:50051" \
+  --health-cmd "grpc_health_probe -addr=localhost:50051 -service=trading.v1.TradingEngine" \
+  --health-start-period 30s \
+  --health-start-interval 1s \
+  --health-interval 10s \
+  --health-timeout 3s \
+  --health-retries 3 \
+  "$ENGINE_IMAGE" >/dev/null
+
+echo "==> waiting for trading engine"
+engine_ready=false
+for _ in $(seq 1 60); do
+  case "$(docker inspect -f '{{.State.Health.Status}}' "$ENGINE_CONTAINER" 2>/dev/null || echo missing)" in
+    healthy) engine_ready=true; break ;;
+    unhealthy|missing) echo "trading engine container is unhealthy or gone" >&2; exit 1 ;;
+  esac
+  sleep 1
+done
+[[ "$engine_ready" == true ]] || { echo "trading engine never became healthy" >&2; exit 1; }
 
 # --- backend --------------------------------------------------------------
 echo "==> building backend"

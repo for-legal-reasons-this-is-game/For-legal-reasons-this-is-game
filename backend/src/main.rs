@@ -50,7 +50,9 @@ async fn main() {
         .await
         .expect("Failed to load ledgers");
 
-    let engine_client = EngineClient::new("http://tradingengine:50051")
+    let engine_url =
+        env::var("ENGINE_URL").unwrap_or_else(|_| "http://tradingengine:50051".to_string());
+    let engine_client = EngineClient::new(&engine_url)
         .await
         .expect("Failed trading engine connection");
 
