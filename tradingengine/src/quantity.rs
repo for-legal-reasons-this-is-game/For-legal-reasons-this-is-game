@@ -1,13 +1,13 @@
 use crate::error::{EngineError, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Quantity(u128);
+pub struct BaseQuantity(u128);
 
-impl Quantity {
-    pub const ZERO: Self = Self(0);
+impl BaseQuantity {
+    pub const ZERO: BaseQuantity = BaseQuantity(0);
 
-    pub const fn from_minor_units(minor_units: u128) -> Self {
-        Quantity(minor_units)
+    pub fn from_minor_units(minor_units: u128) -> BaseQuantity {
+        BaseQuantity(minor_units)
     }
 
     pub fn minor_units(self) -> u128 {
@@ -15,27 +15,67 @@ impl Quantity {
     }
 
     pub fn is_zero(self) -> bool {
-        self == Self::ZERO
+        self.0 == 0
     }
 
-    pub fn require_positive(self) -> Result<Self> {
+    pub fn require_positive(self) -> Result<BaseQuantity> {
         if self.is_zero() {
-            Err(EngineError::QuantityNotPositive)
-        } else {
-            Ok(self)
+            return Err(EngineError::QuantityNotPositive);
+        }
+        Ok(self)
+    }
+
+    pub fn checked_add(self, other: BaseQuantity) -> Result<BaseQuantity> {
+        match self.0.checked_add(other.0) {
+            Some(sum) => Ok(BaseQuantity(sum)),
+            None => Err(EngineError::Overflow),
         }
     }
 
-    pub fn checked_add(self, other: Self) -> Result<Self> {
-        let sum = self.0.checked_add(other.0).ok_or(EngineError::Overflow)?;
-        Ok(Quantity(sum))
-    }
-
-    pub fn checked_sub(self, other: Self) -> Result<Self> {
+    pub fn checked_sub(self, other: BaseQuantity) -> Result<BaseQuantity> {
         if other.0 > self.0 {
-            Err(EngineError::QuantityNegative)
-        } else {
-            Ok(Quantity(self.0 - other.0))
+            return Err(EngineError::QuantityNegative);
         }
+        Ok(BaseQuantity(self.0 - other.0))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct QuoteQuantity(u128);
+
+impl QuoteQuantity {
+    pub const ZERO: QuoteQuantity = QuoteQuantity(0);
+
+    pub fn from_minor_units(minor_units: u128) -> QuoteQuantity {
+        QuoteQuantity(minor_units)
+    }
+
+    pub fn minor_units(self) -> u128 {
+        self.0
+    }
+
+    pub fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn require_positive(self) -> Result<QuoteQuantity> {
+        if self.is_zero() {
+            return Err(EngineError::QuantityNotPositive);
+        }
+        Ok(self)
+    }
+
+    pub fn checked_add(self, other: QuoteQuantity) -> Result<QuoteQuantity> {
+        match self.0.checked_add(other.0) {
+            Some(sum) => Ok(QuoteQuantity(sum)),
+            None => Err(EngineError::Overflow),
+        }
+    }
+
+    pub fn checked_sub(self, other: QuoteQuantity) -> Result<QuoteQuantity> {
+        if other.0 > self.0 {
+            return Err(EngineError::QuantityNegative);
+        }
+        Ok(QuoteQuantity(self.0 - other.0))
     }
 }

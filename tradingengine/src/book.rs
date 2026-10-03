@@ -4,7 +4,7 @@ use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::Side;
 use crate::price::Price;
-use crate::quantity::Quantity;
+use crate::quantity::BaseQuantity;
 use crate::resting_order::RestingOrder;
 
 type Level = VecDeque<RestingOrder>;
@@ -15,7 +15,7 @@ pub struct Fill {
     pub maker: OrderId,
     pub taker: OrderId,
     pub price: Price,
-    pub quantity: Quantity,
+    pub quantity: BaseQuantity,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,10 +33,12 @@ impl Execution {
         self.resting
     }
 
-    pub fn filled(&self) -> Result<Quantity> {
-        self.fills.iter().try_fold(Quantity::ZERO, |total, fill| {
-            total.checked_add(fill.quantity)
-        })
+    pub fn filled(&self) -> Result<BaseQuantity> {
+        self.fills
+            .iter()
+            .try_fold(BaseQuantity::ZERO, |total, fill| {
+                total.checked_add(fill.quantity)
+            })
     }
 }
 
