@@ -1,9 +1,9 @@
 # The wire boundary (`src/wire.rs`)
 
 This file is the only place in the engine that touches a protobuf message. It
-converts between the contract's wire types and the Layer 0 values described in
-[LAYER0.md](LAYER0.md), and it is where the contract's rules about *absent*
-fields are enforced.
+converts between the contract's wire types and the Layer 0 values of
+[DATA_MODEL.md](DATA_MODEL.md), and it is where the contract's rules about
+*absent* fields are enforced.
 
 Nothing else in the crate imports `proto`. Everything above this file works in
 `Price`, `BaseQuantity`, `QuoteQuantity`, `FeeBps`, `Timestamp` and
@@ -123,8 +123,10 @@ cannot see the mistake.
 
 `TryFrom<&Market> for QuoteScale` reads the three fields by name, so this is the
 one call site that has to be right. `market_decimals_are_read_by_name_not_by_position`
-in `tests/wire.rs` uses base 6, quote 2, price 3 — three distinct values where
-no transposition reaches the correct exponent of 7.
+in `tests/wire.rs` uses base 6, quote 2, price 3 — three distinct values, so
+the quote decimals cannot land in another slot and still give 7. Swapping price
+and base does still give 7, but that is the swap the paragraph above says is
+harmless.
 
 When Layer 3 introduces the engine's own `Market` type, it should build its
 `QuoteScale` through this conversion rather than calling `new` again.

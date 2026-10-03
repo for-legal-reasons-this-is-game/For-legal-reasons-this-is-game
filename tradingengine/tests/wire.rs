@@ -175,8 +175,8 @@ fn the_largest_timestamp_the_engine_holds_still_splits_correctly() {
 
 #[test]
 fn market_decimals_are_read_by_name_not_by_position() {
-    // base 6, quote 2, price 3  ->  k = 3 + 6 - 2 = 7, and no transposition
-    // of the three reaches 7.
+    // base 6, quote 2, price 3  ->  k = 3 + 6 - 2 = 7. All three differ, so the
+    // quote decimals cannot land in another slot and still give 7.
     let scale = QuoteScale::try_from(&market(6, 2, 3)).unwrap();
     assert_eq!(scale.exponent(), 7);
 }
