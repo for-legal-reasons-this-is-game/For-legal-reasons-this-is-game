@@ -8,11 +8,12 @@ CREATE TYPE account_status AS ENUM ('active', 'processing');
 
 CREATE TABLE IF NOT EXISTS ledgers (
   ledger_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- the TigerBeetle ledger number
-  symbol TEXT NOT NULL UNIQUE, -- "USD", "BTC" — the API handle
+  symbol TEXT NOT NULL UNIQUE, -- "USD", "BTC"  the API handle
   name TEXT NOT NULL,
   decimals SMALLINT NOT NULL, -- smallest-unit exponent: USD=2, BTC=8
   enabled BOOLEAN NOT NULL DEFAULT TRUE, --  ledgers can be turned off, not deleted. 
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  escrow_account_id UUID NOT NULL REFERENCES accounts(account_id)
   CHECK (decimals >= 0 AND decimals <= 18)
 );
 
@@ -21,6 +22,18 @@ INSERT INTO ledgers (symbol, name, decimals) VALUES
   ('EUR', 'Euro', 2),      -- ledger_id = 2
   ('BTC', 'Bitcoin', 8)    -- ledger_id = 3
 ON CONFLICT (symbol) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS markets (
+  market_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  symbol TEXT NOT NULL UNIQUE, -- "USD-BTC" for example"
+  base_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
+  quote_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
+  price_decimals SMALLINT NOT NULL,
+  fee_account_id UUID NOT NULL REFERENCES accounts(account_id)
+  enabled BOOLEAN NOT NULL DEFAULT TRUE, --  market can be turned off, not deleted. 
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (price_decimals >= 0 AND price_decimals <= 18)
+);
 
 CREATE TABLE IF NOT EXISTS accounts (
   account_id UUID PRIMARY KEY,
@@ -32,14 +45,27 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS tb_outbox (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  aggregate_id UUID NOT NULL UNIQUE, -- Id of the account requesting it
-  ledger INTEGER NOT NULL,
-  code SMALLINT NOT NULL,
-  user_id UUID NOT NULL, --user_data_128 in tb
+CREATE TABLE IF NOT EXISTS orders (
+  order_id UUID GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  command_id UUID UNIQUE 
+  symbol TEXT NOT NULL UNIQUE, -- "USD-BTC" for example"
+  base_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
+  quote_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
+  price_decimals SMALLINT NOT NULL,
+  fee_account_id UUID NOT NULL REFERENCES accounts(account_id)
+  enabled BOOLEAN NOT NULL DEFAULT TRUE, --  ledgers can be turned off, not deleted. 
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  processed_at TIMESTAMPTZ -- Null means still pending 
+  CHECK (price_decimals >= 0 AND price_decimals <= 18)
+);
+
+create table if not exists tb_outbox (
+  id bigint generated always as identity primary key,
+  aggregate_id uuid not null unique, -- id of the account requesting it
+  ledger integer not null,
+  code smallint not null,
+  user_id uuid not null, --user_data_128 in tb
+  created_at timestamptz not null default now(),
+  processed_at timestamptz -- null means still pending 
 );
 -- this creates a partial index so the relay can be more efficient.
 CREATE INDEX IF NOT EXISTS tb_outbox_unprocessed
