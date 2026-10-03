@@ -2,15 +2,19 @@ import { useState } from "react";
 import { CreateUser } from "./CreateUser";
 import { ListUsers } from "./ListUsers";
 import { CreateAccount } from "./CreateAccount";
+import { CreateLedger } from "./CreateLedger";
 import { Ledgers } from "./Ledgers";
 import { Account } from "./Account";
+import { Position } from "./Position";
 
 function App() {
     const [showCreateUser, setShowCreateUser] = useState(false);
     const [showUsers, setShowUsers] = useState(false);
     const [showCreateAccount, setShowCreateAccount] = useState(false);
+    const [showCreateLedger, setShowCreateLedger] = useState(false);
     const [showLedgers, setShowLedgers] = useState(false);
     const [showAccount, setShowAccount] = useState(false);
+    const [showAccountPosition, setShowAccountPosition] = useState(false);
     // const [showUser, setShowUser] = useState(false);
     // const [showAccountPosition, setAccountPosition] = useState(false);
 
@@ -26,14 +30,24 @@ function App() {
                 Create Account
             </button>
             <br />
+            <button onClick={() => setShowCreateLedger(!showCreateLedger)}>
+                Create Ledger
+            </button>
+            <br />
             <button onClick={() => setShowLedgers(!showLedgers)}>List Ledgers</button>
             <br />
             <button onClick={() => setShowAccount(!showAccount)}>Fetch Account</button>
+            <br />
+            <button onClick={() => setShowAccountPosition(!showAccountPosition)}>
+                Fetch Position
+            </button>
             {showCreateUser && <CreateUser />}
             {showUsers && <ListUsers />}
             {showCreateAccount && <CreateAccount />}
+            {showCreateLedger && <CreateLedger />}
             {showLedgers && <Ledgers />}
             {showAccount && <Account />}
+            {showAccountPosition && <Position />}
         </div>
     );
 }
