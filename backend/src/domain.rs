@@ -66,7 +66,7 @@ pub struct Ledger {
     Debug, Clone, Copy, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type, TS,
 )]
 #[repr(i16)]
-#[serde(try_from = "i16", into = "i16")]
+// #[serde(try_from = "i16", into = "i16")]
 #[ts(export)]
 pub enum AccountCodeType {
     Cash = 1,

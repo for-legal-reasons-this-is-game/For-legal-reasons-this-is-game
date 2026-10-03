@@ -89,13 +89,13 @@ export function CreateAccount() {
 
             {creationRes.account_name && (
                 <div>
-                    <span>Created Account: </span>
-                    acc_id: {creationRes.account_ledger_id}
-                    acc_name: {creationRes.account_name}
-                    acc_ledger_id: {creationRes.account_ledger_id}
-                    acc_code_type: {creationRes.account_ledger_id}
-                    acc_status: {creationRes.account_ledger_id}
-                    account_user_id: {creationRes.account_ledger_id}
+                    <div>Created Account: </div>
+                    <div>Acc ID: {creationRes.account_id}</div>
+                    <div>Acc Name: {creationRes.account_name}</div>
+                    <div>Ledger ID: {creationRes.account_ledger_id}</div>
+                    <div>Code Type: {creationRes.account_code_type}</div>
+                    <div>Status: {creationRes.account_status}</div>
+                    <div>User ID: {creationRes.account_user_id}</div>
                 </div>
             )}
         </div>
