@@ -9,6 +9,7 @@ use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
+use crate::service::EngineClient;
 use cn_tigerbeetle as tb;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ pub struct AppState {
     pub pg_connections: PgPool,
     pub tb_client: Arc<tb::Client>,
     pub ledgers: Arc<RwLock<HashMap<String, Ledger>>>,
+    pub engine_client: EngineClient,
 }
 
 /// Loads every ledger into a `symbol/ledger` map. Call at startup, and again

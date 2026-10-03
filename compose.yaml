@@ -49,6 +49,8 @@ services:
         condition: service_healthy
       tigerbeetle_0:
         condition: service_started
+      tradingengine:
+        condition: service_healthy
 
   tradingengine:
     container_name: tradingengine
@@ -60,6 +62,13 @@ services:
     # the host port is published for grpcurl/grpcui (reflection is enabled).
     ports:
       - "${TRADINGENGINE_PORT:-50051}:50051"
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051", "-service=trading.v1.TradingEngine"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   db:
     image: postgres:16-alpine

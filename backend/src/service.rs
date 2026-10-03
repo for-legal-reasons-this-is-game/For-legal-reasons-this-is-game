@@ -17,7 +17,7 @@ pub struct EngineClient {
 #[allow(unused)]
 impl EngineClient {
     pub async fn new(url: &str) -> Result<Self, tonic::transport::Error> {
-        let client = TradingEngineClient::connect(url.to_owned()).await.unwrap();
+        let client = TradingEngineClient::connect(url.to_owned()).await?;
         Ok(EngineClient { inner: client })
     }
 
