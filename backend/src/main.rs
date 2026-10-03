@@ -13,8 +13,6 @@ use std::sync::{Arc, RwLock};
 
 use cn_tigerbeetle as tb;
 
-mod service;
-
 use std::env;
 
 // how to stricture api /api/{version: String}/*
