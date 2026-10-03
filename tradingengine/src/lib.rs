@@ -6,6 +6,7 @@ pub mod price;
 pub mod quantity;
 pub mod resting_order;
 
+pub mod service;
 pub const SCALE: u32 = 8;
 
 pub const ONE: u128 = 100_000_000;

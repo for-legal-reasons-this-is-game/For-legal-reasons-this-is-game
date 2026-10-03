@@ -27,6 +27,7 @@ The project’s goal is to design and build a system that is:
 You’ll need:
 - **Docker** (required)
 - **Docker Compose** (required)
+- **Nix** (required)
 - (Planned later) **Kubernetes** for scalable deployment
 
 > Note: exact versions and environment variables will be pinned once the stack stabilizes.

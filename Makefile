@@ -12,6 +12,7 @@ up: setup
 	@echo ""
 	@echo "  Infisical UI : http://localhost:$${INFISICAL_PORT:-8080}"
 	@echo "  Backend API  : http://localhost:$${BACKEND_PORT:-8000}"
+	@echo "  Trading gRPC : localhost:$${TRADINGENGINE_PORT:-50051}"
 	@echo ""
 	@echo "  Following the provisioner (Ctrl-C is safe once it says 'complete'):"
 	-$(COMPOSE) logs -f infisical-setup
