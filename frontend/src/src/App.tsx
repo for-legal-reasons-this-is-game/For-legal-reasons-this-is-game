@@ -6,48 +6,57 @@ import { CreateLedger } from "./CreateLedger";
 import { Ledgers } from "./Ledgers";
 import { Account } from "./Account";
 import { Position } from "./Position";
+import { EnableLedger } from "./EnableLedger";
+import { Ledger } from "./Ledger";
 
 function App() {
-    const [showCreateUser, setShowCreateUser] = useState(false);
-    const [showUsers, setShowUsers] = useState(false);
-    const [showCreateAccount, setShowCreateAccount] = useState(false);
-    const [showCreateLedger, setShowCreateLedger] = useState(false);
-    const [showLedgers, setShowLedgers] = useState(false);
-    const [showAccount, setShowAccount] = useState(false);
-    const [showAccountPosition, setShowAccountPosition] = useState(false);
-    // const [showUser, setShowUser] = useState(false);
-    // const [showAccountPosition, setAccountPosition] = useState(false);
+    const [createUser, setCreateUser] = useState(false);
+    const [users, setUsers] = useState(false);
+    const [createAccount, setCreateAccount] = useState(false);
+    const [createLedger, setCreateLedger] = useState(false);
+    const [ledgers, setLedgers] = useState(false);
+    const [account, setAccount] = useState(false);
+    const [accountPosition, setAccountPosition] = useState(false);
+    const [enableLedger, setSetLedgerEnabled] = useState(false);
+    const [ledger, setLedger] = useState(false);
 
     return (
         <div>
-            <button onClick={() => setShowCreateUser(!showCreateUser)}>
-                Create User
-            </button>
+            <button onClick={() => setCreateUser(!createUser)}>Create User</button>
             <br />
-            <button onClick={() => setShowUsers(!showUsers)}>List Users</button>
+            <button onClick={() => setUsers(!users)}>List Users</button>
             <br />
-            <button onClick={() => setShowCreateAccount(!showCreateAccount)}>
+            <br />
+            <button onClick={() => setCreateAccount(!createAccount)}>
                 Create Account
             </button>
             <br />
-            <button onClick={() => setShowCreateLedger(!showCreateLedger)}>
-                Create Ledger
-            </button>
+            <button onClick={() => setAccount(!account)}>Fetch Account</button>
             <br />
-            <button onClick={() => setShowLedgers(!showLedgers)}>List Ledgers</button>
-            <br />
-            <button onClick={() => setShowAccount(!showAccount)}>Fetch Account</button>
-            <br />
-            <button onClick={() => setShowAccountPosition(!showAccountPosition)}>
+            <button onClick={() => setAccountPosition(!accountPosition)}>
                 Fetch Position
             </button>
-            {showCreateUser && <CreateUser />}
-            {showUsers && <ListUsers />}
-            {showCreateAccount && <CreateAccount />}
-            {showCreateLedger && <CreateLedger />}
-            {showLedgers && <Ledgers />}
-            {showAccount && <Account />}
-            {showAccountPosition && <Position />}
+            <br />
+            <br />
+            <button onClick={() => setCreateLedger(!createLedger)}>Create Ledger</button>
+            <br />
+            <button onClick={() => setLedgers(!ledgers)}>List Ledgers</button>
+            <br />
+            <button onClick={() => setSetLedgerEnabled(!enableLedger)}>
+                Enable Ledger
+            </button>
+            <br />
+            <button onClick={() => setLedger(!ledger)}>Get Ledger</button>
+            <br />
+            {createUser && <CreateUser />}
+            {users && <ListUsers />}
+            {createAccount && <CreateAccount />}
+            {account && <Account />}
+            {accountPosition && <Position />}
+            {createLedger && <CreateLedger />}
+            {ledgers && <Ledgers />}
+            {enableLedger && <EnableLedger />}
+            {ledger && <Ledger />}
         </div>
     );
 }
