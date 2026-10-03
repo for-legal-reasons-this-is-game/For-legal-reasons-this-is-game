@@ -2,11 +2,4 @@
 import type { AccountCodeType } from "./AccountCodeType";
 import type { AccountStatus } from "./AccountStatus";
 
-export type Account = {
-    account_id: string;
-    account_name: string;
-    account_ledger_id: number;
-    account_code_type: AccountCodeType;
-    account_status: AccountStatus;
-    account_user_id: string;
-};
+export type Account = { account_id: string, account_name: string, account_ledger_id: number, account_code_type: AccountCodeType, account_status: AccountStatus, account_user_id: string, };
