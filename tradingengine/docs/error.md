@@ -34,6 +34,7 @@ Later, the API layer must turn every engine failure into an HTTP or gRPC respons
 | `Overflow` | `checked_add` on either quantity, `QuoteScale::quote_for`, `FeeBps::fee_on` | arithmetic overflow |
 | `DecimalsOutOfRange` | `QuoteScale::new` | price_decimals + base_decimals - quote_decimals must be between 0 and 38 |
 | `TimestampOutOfRange` | `Timestamp::from_unix_parts` | timestamp must be a valid time between 1970 and the year 2554 |
+| `RequiredFieldAbsent` | `wire::required`, and so every `Option<message>` conversion in `src/wire.rs` | a required message field was not set |
 
 Two messages are built from constants, so the number in the text always matches the code:
 
@@ -50,6 +51,14 @@ A quantity may be zero, but never negative. Some places, like the size of a new 
 One variant for both would give a message that is wrong for one of the two cases.
 
 `Price` does not have this problem. It rejects zero and negative alike, so one variant is accurate for both.
+
+## Why absence is its own variant
+
+`RequiredFieldAbsent` is not "a bad value". It says the field was never sent.
+
+proto3 delivers a message field that was never set and one set to its zero value as the same thing, `None`. The contract's rule is to check absence rather than zero, so the two answers have to stay apart. Alice's order with no quantity is malformed; Alice's order with a quantity of zero is an order for nothing. Those are different mistakes, and `QuantityNotPositive` is the wrong message for the first one.
+
+It carries no payload saying *which* field, which follows the same choice as `IdempotencyKeyInvalid`: one variant per rule, not per cause. The caller knows which field it passed in, and the gRPC layer logs the call. If a reply ever needs to name the field, that belongs with the contract's `RejectReason` work, not here.
 
 ## Why `Overflow` has a general message
 

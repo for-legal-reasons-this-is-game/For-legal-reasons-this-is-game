@@ -18,9 +18,10 @@ contract rule each one carries, and what is deliberately missing.
 | `src/quote.rs` | `QuoteScale`, `QuoteScale::quote_for` | [quote.md](quote.md) |
 | `src/timestamp.rs` | `Timestamp` | [timestamp.md](timestamp.md) |
 | `src/wide.rs` | `mul_div_floor`, private to the crate | inside [quote.md](quote.md) |
+| `src/wire.rs` | conversions to and from the contract's messages | [wire.md](wire.md) |
 
-`src/error.rs` gains three variants for this layer: `Overflow`, `DecimalsOutOfRange`
-and `TimestampOutOfRange`. See [error.md](error.md).
+`src/error.rs` gains four variants for this layer: `Overflow`, `DecimalsOutOfRange`,
+`TimestampOutOfRange` and `RequiredFieldAbsent`. See [error.md](error.md).
 
 ## Why every number gets its own type
 
@@ -56,6 +57,8 @@ which line of code carries it.
 | Integers only, no floats anywhere | no `f32`/`f64` in the crate |
 | Decimals out of range is `BAD_DEFINITION` | `QuoteScale::new` returns `DecimalsOutOfRange` |
 | A timestamp is `int64 seconds` plus `int32 nanos` | `Timestamp::from_unix_parts` |
+| A 128-bit value is `(high << 64) \| low` | the `proto` crate, used by `wire` |
+| Absent `Uint128`/`Id` is not zero. Check absence | `wire::required`, and the `Option` conversions |
 
 ## Which constructors can fail, and why
 
@@ -117,13 +120,11 @@ These are recorded in the data model and are not settled by this code.
 
 ## What Layer 0 does not do
 
-- **It does not touch the wire.** Nothing here depends on the `proto` crate. Every
-  constructor takes plain Rust numbers, and `from_unix_parts` takes the two
-  `google.protobuf.Timestamp` fields as an `i64` and an `i32` rather than the message.
-  So the conversion from `Uint128`, `Id` and `Timestamp` into these types does not
-  exist yet. It is the first thing the gRPC layer needs, and it is the natural place
-  for the contract's "absent is not zero" rule, which no type here can enforce on its
-  own.
+- **The value types themselves do not touch the wire.** Their constructors take plain
+  Rust numbers, and `from_unix_parts` takes the two `google.protobuf.Timestamp` fields
+  as an `i64` and an `i32` rather than the message. All the protobuf is confined to
+  `src/wire.rs`, which is also where the contract's "absent is not zero" rule lives,
+  since no value type can enforce it on its own. See [wire.md](wire.md).
 - **It does not read a clock.** A `Timestamp` always arrives from outside — from a
   request, or as the `now` argument the data model passes into matching. That is what
   keeps a replay of the same commands deterministic.
@@ -143,5 +144,7 @@ changes nothing, and the BTC-USD example used throughout these documents has
 produces the right answer. `three_different_decimals_pin_the_argument_order` in
 `tests/quote.rs` uses three distinct values so that a transposition fails.
 
-**proposed:** when Layer 3 introduces `Market`, give it a `QuoteScale` accessor that
-reads the fields by name, and let that be the only call site.
+**decided:** `TryFrom<&Market> for QuoteScale` in `src/wire.rs` reads the three fields
+by name, so there is now one call site that has to be right. When Layer 3 introduces
+the engine's own market type, it should build its scale through that conversion rather
+than calling `new` again.

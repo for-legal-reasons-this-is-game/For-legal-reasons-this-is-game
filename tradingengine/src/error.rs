@@ -11,6 +11,7 @@ pub enum EngineError {
     Overflow,
     DecimalsOutOfRange,
     TimestampOutOfRange,
+    RequiredFieldAbsent,
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -42,6 +43,9 @@ impl std::fmt::Display for EngineError {
                 f,
                 "timestamp must be a valid time between 1970 and the year 2554"
             ),
+            Self::RequiredFieldAbsent => {
+                write!(f, "a required message field was not set")
+            }
         }
     }
 }

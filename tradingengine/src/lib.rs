@@ -9,5 +9,6 @@ pub mod quote;
 pub mod resting_order;
 pub mod service;
 pub mod timestamp;
+pub mod wire;
 
 mod wide;
