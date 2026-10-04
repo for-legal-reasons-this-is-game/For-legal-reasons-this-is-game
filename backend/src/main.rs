@@ -4,7 +4,7 @@ use axum::{
 };
 
 use backend::{
-    relay,
+    bootstrap, relay,
     service::EngineClient,
     v1::{self, AppState},
 };
@@ -60,6 +60,11 @@ async fn main() {
         ledgers: Arc::new(RwLock::new(ledgers)),
         engine_client,
     };
+
+    bootstrap::run(&state)
+        .await
+        .expect("Failed to bootstrap system accounts");
+
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
 

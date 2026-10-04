@@ -95,14 +95,12 @@ async fn create_account(
     c: &reqwest::Client,
     user_id: &str,
     ledger_symbol: &str,
-    code_type: i64,
 ) -> (u16, Value) {
     let res = c
         .post(format!("{}/users/{user_id}/accounts", base()))
         .json(&json!({
             "name": unique("account"),
             "ledger_symbol": ledger_symbol,
-            "code_type": code_type,
         }))
         .send()
         .await
@@ -384,7 +382,7 @@ async fn create_account_eventually_activates() {
     let user_id = create_user(&c).await;
     let symbol = create_ledger(&c, 2).await;
 
-    let (status, body) = create_account(&c, &user_id, &symbol, 1).await;
+    let (status, body) = create_account(&c, &user_id, &symbol).await;
     assert!(
         status == 201 || status == 202,
         "unexpected status {status}; body {body}"
@@ -403,7 +401,7 @@ async fn create_account_eventually_activates() {
 async fn create_account_with_unknown_ledger_returns_404() {
     let c = client();
     let user_id = create_user(&c).await;
-    let (status, _) = create_account(&c, &user_id, &unique_symbol(), 1).await;
+    let (status, _) = create_account(&c, &user_id, &unique_symbol()).await;
     assert_eq!(status, 404);
 }
 
@@ -414,7 +412,7 @@ async fn create_account_on_disabled_ledger_returns_400() {
     let symbol = create_ledger(&c, 2).await;
     set_ledger_enabled(&c, &symbol, false).await;
 
-    let (status, _) = create_account(&c, &user_id, &symbol, 1).await;
+    let (status, _) = create_account(&c, &user_id, &symbol).await;
     assert_eq!(status, 400);
 }
 
@@ -422,21 +420,27 @@ async fn create_account_on_disabled_ledger_returns_400() {
 async fn create_account_for_unknown_user_returns_400() {
     let c = client();
     // USD is seeded and enabled; the failure must come from the user FK.
-    let (status, _) = create_account(&c, &Uuid::new_v4().to_string(), "USD", 1).await;
+    let (status, _) = create_account(&c, &Uuid::new_v4().to_string(), "USD").await;
     assert_eq!(status, 400);
 }
 
 #[tokio::test]
-async fn create_account_with_invalid_code_type_returns_422() {
+async fn create_account_ignores_client_code_type() {
     let c = client();
     let user_id = create_user(&c).await;
     let res = c
         .post(format!("{}/users/{user_id}/accounts", base()))
-        .json(&json!({ "name": unique("acc"), "ledger_symbol": "USD", "code_type": 99 }))
+        .json(&json!({ "name": unique("acc"), "ledger_symbol": "USD", "code_type": 3 }))
         .send()
         .await
         .unwrap();
-    expect_status(res, 422).await;
+    let status = res.status().as_u16();
+    let body: Value = res.json().await.unwrap_or(Value::Null);
+    assert!(
+        status == 201 || status == 202,
+        "unexpected status {status}; body {body}"
+    );
+    assert_eq!(body["account_code_type"], 1);
 }
 
 #[tokio::test]
@@ -457,7 +461,7 @@ async fn fetch_account_returns_it() {
     let c = client();
     let user_id = create_user(&c).await;
     let symbol = create_ledger(&c, 2).await;
-    let (_, body) = create_account(&c, &user_id, &symbol, 2).await;
+    let (_, body) = create_account(&c, &user_id, &symbol).await;
     let account_id = body["account_id"].as_str().unwrap().to_string();
 
     let fetched = expect_status(
@@ -466,7 +470,7 @@ async fn fetch_account_returns_it() {
     )
     .await;
     assert_eq!(fetched["account_id"], account_id);
-    assert_eq!(fetched["account_code_type"], 2);
+    assert_eq!(fetched["account_code_type"], 1);
     assert_eq!(fetched["account_user_id"], user_id);
 }
 
@@ -499,7 +503,7 @@ async fn fetch_position_of_fresh_account_is_all_zero() {
     let c = client();
     let user_id = create_user(&c).await;
     let symbol = create_ledger(&c, 2).await;
-    let (_, body) = create_account(&c, &user_id, &symbol, 1).await;
+    let (_, body) = create_account(&c, &user_id, &symbol).await;
     let account_id = body["account_id"].as_str().unwrap().to_string();
 
     wait_for_active(&c, &account_id).await;

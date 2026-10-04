@@ -8,6 +8,7 @@ use serde::Deserialize;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
+use crate::bootstrap;
 use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
 use crate::service::EngineClient;
 use cn_tigerbeetle as tb;
@@ -43,7 +44,6 @@ pub struct UserPayload {
 pub struct AccountPayload {
     name: String,
     ledger_symbol: String, // e.g. "USD"
-    code_type: AccountCodeType,
 }
 
 #[derive(Deserialize)]
@@ -133,7 +133,7 @@ pub async fn create_account(
     .bind(account_id)
     .bind(payload.name)
     .bind(ledger_id)
-    .bind(payload.code_type)
+    .bind(AccountCodeType::User)
     .bind(user_id)
     .fetch_one(&mut *tx)
     .await
@@ -162,7 +162,7 @@ pub async fn create_account(
         ledger: account.account_ledger_id as u32,
         code: account.account_code_type as u16,
         user_data_128: account.account_user_id.as_u128(),
-        flags: tb::AccountFlags::DebitsMustNotExceedCredits,
+        flags: account.account_code_type.tb_flags(),
         ..Default::default()
     };
 
@@ -355,19 +355,34 @@ pub async fn create_ledger(
     State(state): State<AppState>,
     Json(payload): Json<LedgerPayload>,
 ) -> Result<(StatusCode, Json<Ledger>), StatusCode> {
+    let mut tx = state
+        .pg_connections
+        .begin()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let new = sqlx::query_as::<_, Ledger>(
         "INSERT INTO ledgers (symbol, name, decimals) VALUES ($1, $2, $3) RETURNING *",
     )
     .bind(payload.symbol)
     .bind(payload.name)
     .bind(payload.decimals)
-    .fetch_one(&state.pg_connections)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| match e {
         sqlx::Error::Database(db) if db.is_unique_violation() => StatusCode::CONFLICT,
         sqlx::Error::Database(db) if db.is_check_violation() => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     })?;
+
+    bootstrap::insert_system_accounts(&mut tx, new.ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     {
         let mut cache = state
             .ledgers
@@ -377,7 +392,17 @@ pub async fn create_ledger(
         cache.insert(new.symbol.clone(), new.clone());
     }
 
-    Ok((StatusCode::CREATED, Json(new)))
+    match bootstrap::activate_system_accounts(&state, new.ledger_id).await {
+        Ok(true) => Ok((StatusCode::CREATED, Json(new))),
+        Ok(false) => Ok((StatusCode::ACCEPTED, Json(new))),
+        Err(e) => {
+            println!(
+                "HANDLER: couldn't mark the system accounts of ledger {} as active. Relay will pick them up: {e}",
+                new.symbol
+            );
+            Ok((StatusCode::ACCEPTED, Json(new)))
+        }
+    }
 }
 
 //enable/disable the ledger. payload must contain information on if it's on or off. The cache is
