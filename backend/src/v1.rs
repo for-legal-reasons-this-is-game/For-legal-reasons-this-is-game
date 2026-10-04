@@ -162,6 +162,7 @@ pub async fn create_account(
         ledger: account.account_ledger_id as u32,
         code: account.account_code_type as u16,
         user_data_128: account.account_user_id.as_u128(),
+        flags: tb::AccountFlags::DebitsMustNotExceedCredits,
         ..Default::default()
     };
 
