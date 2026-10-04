@@ -350,7 +350,9 @@ pub async fn fetch_ledger(
     Ok(Json(ledger.unwrap()))
 }
 
-// creates a new ledger, also updating the cache. It also enforces the db requirements
+// creates a new ledger, also updating the cache. It also enforces the db requirements.
+// Additionally, creates the fee account (for collecting fees) and the source account (for giving
+// money to users). if those accounts cant be created, the relay picks them up
 pub async fn create_ledger(
     State(state): State<AppState>,
     Json(payload): Json<LedgerPayload>,
@@ -394,14 +396,8 @@ pub async fn create_ledger(
 
     match bootstrap::activate_system_accounts(&state, new.ledger_id).await {
         Ok(true) => Ok((StatusCode::CREATED, Json(new))),
-        Ok(false) => Ok((StatusCode::ACCEPTED, Json(new))),
-        Err(e) => {
-            println!(
-                "HANDLER: couldn't mark the system accounts of ledger {} as active. Relay will pick them up: {e}",
-                new.symbol
-            );
-            Ok((StatusCode::ACCEPTED, Json(new)))
-        }
+        Ok(false) => Ok((StatusCode::ACCEPTED, Json(new))), // relay handles
+        Err(_) => Ok((StatusCode::ACCEPTED, Json(new))),    // relay handles
     }
 }
 

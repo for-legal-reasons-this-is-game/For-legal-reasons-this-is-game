@@ -61,7 +61,8 @@ pub enum AccountCodeType {
     User = 1,
     Fee = 2,
     Source = 3,
-    Hold = 4,
+    Hold = 4, // this will be created for each order to hold the money the order might spend (not
+              // currently implemented)
 }
 
 impl AccountCodeType {

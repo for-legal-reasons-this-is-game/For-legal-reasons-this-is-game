@@ -41,6 +41,7 @@ CREATE INDEX IF NOT EXISTS orders_user_created ON orders(user_id, created_at DES
 CREATE INDEX IF NOT EXISTS orders_market_open ON orders(market_id)
 WHERE submission <> 'rejected' AND (status IS NULL OR status IN (1, 2, 6));
 
+-- this gets called when orders ar updated to keep the time correct, it just changes the updated at row
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN
   NEW.updated_at = now();

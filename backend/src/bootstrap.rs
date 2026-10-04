@@ -9,6 +9,9 @@ use uuid::Uuid;
 
 pub type BootstrapError = Box<dyn std::error::Error + Send + Sync>;
 
+// bootstraps a system user for the backend so that we can actually create fee/source accounts. It
+// also creates fee and source accounts for any ledgers that dont have one (if we manually add
+// ledgers at migration time this is what makes sure that they work)
 pub async fn run(state: &AppState) -> Result<(), BootstrapError> {
     let ledgers: Vec<Ledger> = {
         let cache = state
@@ -34,6 +37,7 @@ pub async fn run(state: &AppState) -> Result<(), BootstrapError> {
     Ok(())
 }
 
+// inserts fee/source acc to a ledger in postgres
 pub async fn insert_system_accounts(
     conn: &mut PgConnection,
     ledger_id: i32,
@@ -70,7 +74,12 @@ pub async fn insert_system_accounts(
     Ok(())
 }
 
-pub async fn activate_system_accounts(state: &AppState, ledger_id: i32) -> Result<bool, sqlx::Error> {
+// inserts the processing accounts into tigerbeetle and marks them as done, for create ledgers the
+// relay picks up the account creation when needed and for the bootstrap it just dies.
+pub async fn activate_system_accounts(
+    state: &AppState,
+    ledger_id: i32,
+) -> Result<bool, sqlx::Error> {
     let pending = sqlx::query_as::<_, (Uuid, AccountCodeType, Uuid)>(
         "SELECT account_id, account_code_type, account_user_id FROM accounts \
          WHERE account_ledger_id = $1 AND account_code_type IN (2, 3) AND account_status = 'processing'",
@@ -137,6 +146,7 @@ pub async fn activate_system_accounts(state: &AppState, ledger_id: i32) -> Resul
     Ok(all_active)
 }
 
+// creates or gives back the system account
 async fn ensure_system_user(conn: &mut PgConnection) -> Result<Uuid, sqlx::Error> {
     sqlx::query(
         "INSERT INTO users (user_name, is_system) VALUES ('system', TRUE) \

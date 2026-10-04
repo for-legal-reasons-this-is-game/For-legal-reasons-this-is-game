@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS markets (
   base_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
   quote_ledger_id INTEGER NOT NULL REFERENCES ledgers(ledger_id),
   price_decimals SMALLINT NOT NULL,
-  fee_account_id UUID NOT NULL, -- NOT IMPLEMENTED YET: We need to start up with a master user that can actually create this accounts + new ledgers + new fee accounts
+  fee_account_id UUID NOT NULL,
   status market_status NOT NULL DEFAULT 'halted',
   min_base_quantity NUMERIC(39, 0) NOT NULL CHECK (min_base_quantity > 0),
   min_quote_quantity NUMERIC(39, 0) NOT NULL CHECK (min_quote_quantity > 0),
