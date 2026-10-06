@@ -50,6 +50,7 @@ pub async fn relay_loop(state: AppState) {
                         ledger: m.ledger as u32,
                         code: m.code as u16,
                         user_data_128: m.user_id.as_u128(),
+                        flags: m.code.tb_flags(),
                         ..Default::default()
                     })
                     .collect();

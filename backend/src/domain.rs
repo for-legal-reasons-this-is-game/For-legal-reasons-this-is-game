@@ -1,3 +1,4 @@
+use cn_tigerbeetle as tb;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
@@ -51,12 +52,26 @@ pub struct Ledger {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Copy, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type,
+)]
 #[repr(i16)]
 #[serde(try_from = "i16", into = "i16")]
 pub enum AccountCodeType {
-    Cash = 1,
-    Crypto = 2,
+    User = 1,
+    Fee = 2,
+    Source = 3,
+    Hold = 4, // this will be created for each order to hold the money the order might spend (not
+              // currently implemented)
+}
+
+impl AccountCodeType {
+    pub fn tb_flags(self) -> tb::AccountFlags {
+        match self {
+            AccountCodeType::Source => tb::AccountFlags::empty(),
+            _ => tb::AccountFlags::DebitsMustNotExceedCredits,
+        }
+    }
 }
 
 impl TryFrom<i16> for AccountCodeType {

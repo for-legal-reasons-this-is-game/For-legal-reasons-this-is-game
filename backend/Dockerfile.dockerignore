@@ -1,7 +1,3 @@
-# Used instead of a root .dockerignore when building backend/Dockerfile.
-# Paths are relative to the build context (the repo root).
-# Allowlist: ignore everything, then re-include only what the build COPYs,
-# so .env, target/ dirs and the rest of the repo never reach the builder.
 *
 
 !backend/Cargo.toml
