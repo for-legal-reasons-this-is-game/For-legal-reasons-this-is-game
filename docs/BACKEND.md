@@ -1,141 +1,172 @@
-# Backend boundaries & responsibilities
+# Backend boundaries and responsibilities
 
-This document defines what the **backend** is responsible for in this project, and where other parts (database, frontend) take the lead.
+This document describes the components of the trading system, what each one is
+responsible for, which component owns which data, and the rules that keep the
+boundaries between them clean.
 
-## Scope: what “backend” means here
+For the detailed rules on implementing the gRPC contract between the backend and
+the trading engine, see [`proto/how_to_use.md`](../proto/how_to_use.md).
 
-**Backend (this repository) includes:**
-- **API service** (REST + WebSockets): client-facing network interface
-- **Trading engine**: matching/simulation/pricing and market state transitions
-- **Shared domain code**: types, commands/events, pure validation rules
+## Goal
 
-**Not in this repository:**
-- **Database implementation** (separate service/repository)
-- **Frontend** (web/mobile/CLI clients)
+The system keeps a strict separation between three concerns:
 
----
+| Concern | Owner |
+|---|---|
+| Transport and access control | Backend |
+| Money | Backend, stored in TigerBeetle |
+| Market outcomes: the order book, matching, and order state | Trading engine |
 
-## High-level goal
+This separation has the following benefits:
 
-Keep a strict separation between:
-- **Transport & access control** (API)
-- **Business/domain truth** (engine)
+- **Testability:** the engine is deterministic and can be tested on its own.
+- **Scalability:** the engine scales independently of the backend.
+- **Safety:** HTTP code can't silently change trading outcomes, and the engine
+  can't move money.
 
-This makes the system:
-- easier to test (engine is deterministic)
-- easier to scale (engine workers can scale independently)
-- harder to break (HTTP code cannot silently change trading outcomes)
+## Components
 
----
+| Component | Location | Description |
+|---|---|---|
+| Backend | `backend/` | The API service, written in Rust with axum. It exposes the REST and WebSocket interface, owns money movements, and talks to the engine over gRPC. |
+| Trading engine | `tradingengine/` | A separate service that holds the order book, matches orders, and reports results over gRPC streams. |
+| gRPC contract | `proto/` | The protobuf definitions shared by the backend and the engine, compiled into the `proto` crate. |
+| Postgres | `db` service | Stores users, account metadata, ledgers, markets, orders, trades, and the event stream cursor. The schema is in `backend/migrations/`. |
+| TigerBeetle | `tigerbeetle_*` services | Stores balances and transfers. It's the system of record for money. |
+| Frontend | Not in this document | Web clients that call the backend. |
 
-## API service responsibilities (what API owns)
+## Backend responsibilities
 
-The API service is the backend’s **public interface**.
+The backend is the system's public interface and its owner of money.
 
-It owns:
-- Authentication / sessions / permissions
-- Request validation (shape + permission checks)
-- REST endpoints and WebSocket connections
-- Rate limiting / pagination / error formatting
-- Translating HTTP requests into **engine commands**
-- Broadcasting **engine events** to clients (real-time updates)
-- Observability (logging, metrics, tracing)
+### The backend owns
 
-API must NOT own:
-- matching logic (order book rules)
-- price formation / simulation logic
-- order lifecycle transitions (beyond trivial sanity checks)
-- trade execution decisions
+- Authentication, sessions, and permissions.
+- Request validation: request shape, permissions, and the market rules the
+  engine doesn't check (minimum sizes, quantity and price steps, and market
+  status).
+- REST endpoints and WebSocket connections.
+- Rate limiting, pagination, and error formatting.
+- Translating HTTP requests into engine commands.
+- Broadcasting engine events to clients in real time.
+- Money: reserving funds before an order reaches the engine, settling every
+  trade, and refunding what's left when an order ends.
+- Market configuration: markets, fee rates, minimums, steps, and status. The
+  backend pushes market definitions to the engine with `SetMarket`.
+- The database schema and migrations.
+- Observability: logging, metrics, and tracing.
 
-**Rule:** API can reject a request, but it cannot decide *what trades happen*.
+### The backend doesn't own
 
----
+- Matching logic or order book rules.
+- Price formation.
+- Order state transitions.
+- Decisions about which trades happen.
 
-## Trading engine responsibilities (what the engine owns)
+The backend can reject a request, but it can't decide which trades happen.
 
-The engine is the backend’s **domain authority** (“market brain”).
+## Trading engine responsibilities
 
-It owns:
-- Domain-level validation of trading commands
-- Order lifecycle transitions (NEW → OPEN → PARTIAL → FILLED/CANCELLED)
-- Matching and trade execution
-- Price calculation / simulation rules
-- Creating authoritative events:
-  - `OrderAccepted` / `OrderRejected`
-  - `TradeExecuted`
-  - `PriceUpdated`
-  - etc.
-- Idempotency handling for commands (important for reliability)
+The engine is the authority on market outcomes.
 
-Engine must NOT own:
-- HTTP routing, REST semantics
-- WebSocket connection management
-- user sessions / tokens
+### The engine owns
 
-**Rule:** if changing code can change trading outcomes, it belongs in the engine.
+- Validation of the fields of trading commands.
+- The order book.
+- Matching and trade execution.
+- Order state transitions, reported in `ExecutionReport` messages.
+- Fee amounts per fill, computed from the rates that the backend sends with each
+  order.
+- Order expiry for GTD orders, and stop order triggers.
+- Idempotency of commands, using `command_id`.
+- The event stream (`SubscribeEvents`) and the market data stream
+  (`SubscribeMarketData`).
 
----
+### The engine doesn't own
 
-## Shared domain library responsibilities
+- Money, balances, or checks on whether a user can pay.
+- Market configuration or fee rates.
+- Minimum sizes, steps, or market status.
+- HTTP routing, REST semantics, or WebSocket connections.
+- User sessions or tokens.
 
-The shared domain code should include:
-- Core types: `Order`, `Trade`, `Instrument`, `Market`, `Money`, etc.
-- Command/event schemas (engine inputs/outputs)
-- Pure validation utilities and shared errors
+If changing code can change which trades happen, the code belongs in the engine.
+If changing code can change where money goes, the code belongs in the backend.
 
-Constraints:
-- No network IO
-- No database IO
-- Keep it deterministic and portable
+## Shared contract
 
----
+The `proto` crate contains the types shared by the backend and the engine:
 
-## Database responsibilities (external service)
+- Commands and their responses, such as `PlaceOrderRequest` and
+  `PlaceOrderResponse`.
+- Stream messages, such as `EventItem`, `ExecutionReport`, `TradeSettlement`,
+  and `MarketDataItem`.
+- Shared types, such as `Market`, `Id`, and `Uint128`, and conversions between
+  them and Rust types.
 
-The database is a separate project/service and owns:
-- persistence, replication, consistency model
-- schema/migrations (depending on DB design)
-- long-term storage of users/orders/trades/balances/etc.
+The shared contract has the following constraints:
 
-Backend responsibilities around the DB boundary:
-- define a clear contract: what is stored, how it is queried, how it is updated
-- ensure idempotency of write operations (to handle retries)
-- keep engine events as the truth for market outcomes
+- No network I/O.
+- No database I/O.
+- Deterministic and portable.
 
-**Rule:** backend defines *what* must be persisted; DB service defines *how* it is stored.
+## Data ownership
 
----
+Each piece of data has exactly one system of record.
 
-## Frontend responsibilities (clients)
+| Data | System of record | Written by |
+|---|---|---|
+| Balances and transfers | TigerBeetle | Backend |
+| Users, account metadata, ledgers, and markets | Postgres | Backend |
+| Order book and live order state | Engine (in memory) | Engine |
+| Order history and trade history | Postgres | Backend, from engine events |
+| Event stream position | Postgres (`engine_stream_state`) | Backend |
+| Current market depth | Backend (in memory) | Backend, from the market data stream |
 
-Frontend owns:
-- user experience (UI/UX)
-- visualizations, charts, dashboards
-- calling REST endpoints
-- maintaining WebSocket subscriptions
-- client-side caching and state management
+Postgres keeps a record of orders and trades for display. The engine's events are
+the source of truth for market outcomes, and TigerBeetle is the source of truth
+for money.
 
-Frontend must NOT own:
-- any trading outcomes logic (matching/pricing rules)
-- authoritative balance/position calculations (display-only is fine)
+## Frontend responsibilities
 
----
+### The frontend owns
 
-## Recommended system flow (typical request)
+- User experience: UI, visualizations, charts, and dashboards.
+- Calling REST endpoints.
+- Maintaining WebSocket subscriptions.
+- Client-side caching and state management.
+- Generating an `idempotency_key` for each order request, so that retries don't
+  create duplicate orders.
 
-1. Client sends `PlaceOrder` to API (HTTP).
-2. API authenticates, checks permissions, validates request shape.
-3. API forwards a command to the engine (sync or async).
-4. Engine validates domain rules, performs matching/pricing, emits events.
-5. API streams events to subscribed clients via WebSockets.
-6. Persistence is handled via the DB contract (API-owned or engine-owned writes — decide and document).
+### The frontend doesn't own
 
----
+- Any trading outcome logic, such as matching or pricing rules.
+- Authoritative balances or positions. Calculations for display only are
+  acceptable.
 
-## Non-negotiable border rules (keep it clean)
+## Order flow
 
-- Only the engine can execute trades.
-- Only the engine can transition order state.
-- API is responsible for auth and transport.
-- Domain types/events are shared and IO-free.
-- Database is external; its implementation is not part of this repo.
+The following steps describe the life of an order:
+
+1. The client sends an order request to the backend over HTTP.
+2. The backend authenticates the user, checks permissions, and validates the
+   request against the market's rules.
+3. The backend records the order in Postgres and reserves the funds in
+   TigerBeetle.
+4. The backend sends `PlaceOrder` to the engine over gRPC.
+5. The engine validates the command, matches the order, and emits events on the
+   event stream.
+6. The backend reads the event stream, settles each trade in TigerBeetle, and
+   records the results in Postgres.
+7. The backend pushes the updates to subscribed clients over WebSockets.
+
+## Boundary rules
+
+- Only the engine executes trades.
+- Only the engine changes order state.
+- Only the backend moves money.
+- The backend makes decisions only from data it writes itself and from the
+  message it's processing. It never decides anything from the order book or
+  trades it reads from the engine's streams.
+- The backend is responsible for authentication and transport.
+- The shared contract contains no I/O.

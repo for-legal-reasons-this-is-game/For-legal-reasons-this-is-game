@@ -54,13 +54,17 @@ impl EngineClient {
         &self,
         req: SubscribeEventsRequest,
     ) -> Result<Streaming<EventItem>, Status> {
-        todo!()
+        let mut client = self.inner.clone();
+        let response = client.subscribe_events(req).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn subscribe_market_data(
         &self,
         req: SubscribeMarketDataRequest,
     ) -> Result<Streaming<MarketDataItem>, Status> {
-        todo!()
+        let mut client = self.inner.clone();
+        let response = client.subscribe_market_data(req).await?;
+        Ok(response.into_inner())
     }
 }
