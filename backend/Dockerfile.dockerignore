@@ -1,4 +1,11 @@
 *
 
-!backend/target/debug/backend
-!backend/entrypoint.sh
+!backend/Cargo.toml
+!backend/Cargo.lock
+!backend/src
+!backend/migrations
+
+!proto/Cargo.toml
+!proto/build.rs
+!proto/*.proto
+!proto/src

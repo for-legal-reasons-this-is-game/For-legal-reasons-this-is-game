@@ -1,24 +1,40 @@
-# Runtime-only image: expects `make compile_backend` to have produced
-# backend/target/debug/backend (gnu, distro dynamic linker via flake RUSTFLAGS).
-FROM debian:bookworm-slim
+# ---- Build stage ----
+# Build context is the repo root (needs ../proto).
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler provides protoc for proto/build.rs; libprotobuf-dev
+# provides the well-known types (google/protobuf/timestamp.proto).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    protobuf-compiler \
+    libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/proto
+COPY proto/Cargo.toml proto/build.rs proto/*.proto ./
+COPY proto/src ./src
+
+WORKDIR /app/backend
+COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/src ./src
+COPY backend/migrations ./migrations
+
+RUN cargo build --release --locked --bin backend
+
+# ---- Runtime stage ----
+# No Infisical CLI: secrets arrive as env (e.g. K8s Secret via envFrom).
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home backend
 
-# Official CLI image ships a static binary; copy it instead of apt-installing.
-COPY --from=infisical/cli:latest /bin/infisical /usr/local/bin/infisical
-
 WORKDIR /app
-
-# Build context is the repo root (see compose.yaml).
-COPY backend/target/debug/backend ./backend
-COPY backend/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x ./backend /usr/local/bin/entrypoint.sh \
-    && chown backend:backend ./backend
+COPY --from=builder /app/backend/target/release/backend ./backend
+RUN chown backend:backend ./backend
 
 USER backend
 EXPOSE 8000
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["./backend"]

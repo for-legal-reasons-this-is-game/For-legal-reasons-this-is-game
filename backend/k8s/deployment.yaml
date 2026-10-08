@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: transcendence
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      # TigerBeetle client needs io_uring; Docker/K8s default seccomp blocks it
+      # (same reason compose uses security_opt: seccomp=unconfined). The node
+      # runtime must allow Unconfined or an io_uring-capable profile.
+      securityContext:
+        runAsNonRoot: true
+        # Matches `useradd --system` UID in backend/Dockerfile (debian).
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: Unconfined
+      containers:
+        - name: backend
+          # Replace with your registry image after CI push, e.g.
+          #   ghcr.io/org/backend:1.0.0
+          image: backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: backend-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
