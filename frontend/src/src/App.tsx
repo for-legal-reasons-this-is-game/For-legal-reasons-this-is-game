@@ -22,31 +22,61 @@ function App() {
 
     return (
         <div>
-            <button onClick={() => setCreateUser(!createUser)}>Create User</button>
+            <button
+                style={{ background: createUser ? "green" : "grey" }}
+                onClick={() => setCreateUser(!createUser)}>
+                Create User
+            </button>
             <br />
-            <button onClick={() => setUsers(!users)}>List Users</button>
+            <button
+                style={{ background: users ? "green" : "grey" }}
+                onClick={() => setUsers(!users)}>
+                List Users
+            </button>
             <br />
             <br />
-            <button onClick={() => setCreateAccount(!createAccount)}>
+            <button
+                style={{ background: createAccount ? "green" : "grey" }}
+                onClick={() => setCreateAccount(!createAccount)}>
                 Create Account
             </button>
             <br />
-            <button onClick={() => setAccount(!account)}>Fetch Account</button>
+            <button
+                style={{ background: account ? "green" : "grey" }}
+                onClick={() => setAccount(!account)}>
+                Fetch Account
+            </button>
             <br />
-            <button onClick={() => setAccountPosition(!accountPosition)}>
+            <button
+                style={{ background: accountPosition ? "green" : "grey" }}
+                onClick={() => setAccountPosition(!accountPosition)}>
                 Fetch Position
             </button>
             <br />
             <br />
-            <button onClick={() => setCreateLedger(!createLedger)}>Create Ledger</button>
+            <button
+                style={{ background: createLedger ? "green" : "grey" }}
+                onClick={() => setCreateLedger(!createLedger)}>
+                Create Ledger
+            </button>
             <br />
-            <button onClick={() => setLedgers(!ledgers)}>List Ledgers</button>
+            <button
+                style={{ background: ledgers ? "green" : "grey" }}
+                onClick={() => setLedgers(!ledgers)}>
+                List Ledgers
+            </button>
             <br />
-            <button onClick={() => setSetLedgerEnabled(!enableLedger)}>
+            <button
+                style={{ background: enableLedger ? "green" : "grey" }}
+                onClick={() => setSetLedgerEnabled(!enableLedger)}>
                 Enable Ledger
             </button>
             <br />
-            <button onClick={() => setLedger(!ledger)}>Get Ledger</button>
+            <button
+                style={{ background: ledger ? "green" : "grey" }}
+                onClick={() => setLedger(!ledger)}>
+                Get Ledger
+            </button>
             <br />
             {createUser && <CreateUser />}
             {users && <ListUsers />}

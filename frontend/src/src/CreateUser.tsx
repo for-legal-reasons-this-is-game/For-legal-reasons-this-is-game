@@ -1,5 +1,6 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
 import { type User } from "./types/User";
+import { api, errorMessage } from "./api";
 
 export function CreateUser() {
     const [formData, setFormData] = useState({
@@ -8,24 +9,26 @@ export function CreateUser() {
         password: "",
         passwordConfirmation: "",
     });
-    const [creationRes, setCreationRes] = useState({
-        user_id: "",
-        user_name: "",
-    });
+    const [user, setUser] = useState<User | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        setError(null);
+        if (
+            !formData.name ||
+            !formData.email ||
+            !formData.password ||
+            !formData.passwordConfirmation ||
+            formData.password != formData.passwordConfirmation
+        ) {
+            setError(errorMessage("Empty field or mismatching password fields"));
+            return;
+        }
         try {
-            const res = await fetch(`http://localhost:8000/api/v1/users`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(formData),
-            });
-            const user: User = await res.json();
-            setCreationRes(user);
-            console.log(`Created User:\n name:${user.user_name}\n id:${user.user_id}`);
-        } catch (error) {
-            console.log(`ERROR: ${error}`);
+            setUser(await api.users.create(formData));
+        } catch (e) {
+            setError(errorMessage(e));
         }
     }
 
@@ -55,22 +58,26 @@ export function CreateUser() {
                 />
                 <input
                     name="password"
+                    type="password"
                     value={formData.password}
                     onChange={handleChange}
                     placeholder="Password"
                 />
                 <input
                     name="passwordConfirmation"
+                    type="password"
                     value={formData.passwordConfirmation}
                     onChange={handleChange}
                     placeholder="Password Confirmation"
                 />
                 <button type="submit">Create User</button>
             </form>
-            {creationRes.user_name && (
+            {error && <div style={{ color: "red" }}>{error}</div>}
+            {user && (
                 <div>
-                    Created User: name: {creationRes.user_name}
-                    id: {creationRes.user_id}
+                    <div>Created User...</div>
+                    <div>name: {user.user_name}</div>
+                    <div>id: {user.user_id}</div>
                 </div>
             )}
         </div>

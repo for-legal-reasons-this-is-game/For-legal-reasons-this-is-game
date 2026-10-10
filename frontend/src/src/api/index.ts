@@ -7,6 +7,7 @@ import type { AccountPayload } from "../types/AccountPayload";
 import type { Position } from "../types/Position";
 import type { Ledger } from "../types/Ledger";
 import type { LedgerPayload } from "../types/LedgerPayload";
+import type { UserPayload } from "../types/UserPayload";
 
 export { ApiError, errorMessage } from "./client";
 
@@ -17,7 +18,7 @@ export const api = {
     users: {
         list: () => http.get<User[]>("/users"),
         get: (userId: string) => http.get<User>(`/users/${seg(userId)}`),
-        create: (name: string) => http.post<User>("/users", { name }),
+        create: (payload: UserPayload) => http.post<User>("/users", payload),
         createAccount: (userId: string, payload: AccountPayload) =>
             http.post<Account>(`/users/${seg(userId)}/accounts`, payload),
     },
