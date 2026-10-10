@@ -1,36 +1,29 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
 import { type LedgerPayload } from "./types/LedgerPayload";
 import { type Ledger } from "./types/Ledger";
+import { api, errorMessage } from "./api";
 
 export function CreateLedger() {
     const [formData, setFormData] = useState<LedgerPayload>({
         symbol: "",
         name: "",
-        decimals: -1,
+        decimals: 2,
     });
-
-    const [res, setRes] = useState<Ledger>({
-        ledger_id: -1,
-        symbol: "",
-        name: "",
-        decimals: -1,
-        enabled: false,
-    });
+    // null = nothing created yet; no need for a fake "empty" Ledger
+    const [ledger, setLedger] = useState<Ledger | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        setError(null);
+        if (!formData.symbol || !formData.name) {
+            setError(errorMessage("Can't have empty fields"));
+            return;
+        }
         try {
-            console.log(`body: ${JSON.stringify(formData)}`);
-            const res = await fetch(`http://localhost:8000/api/v1/ledgers`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(formData),
-            });
-
-            const ledger = await res.json();
-            setRes(ledger);
-        } catch (error) {
-            console.log(`ERROR: ${error}`);
+            setLedger(await api.ledgers.create(formData));
+        } catch (e) {
+            setError(errorMessage(e));
         }
     }
 
@@ -60,6 +53,7 @@ export function CreateLedger() {
                 />
                 <input
                     name="decimals"
+                    type="number"
                     value={formData.decimals}
                     onChange={handleChange}
                     placeholder="Decimals"
@@ -67,14 +61,15 @@ export function CreateLedger() {
                 <button type="submit">Create Ledger</button>
             </form>
 
-            {res.name && (
+            {error && <div style={{ color: "red" }}>{error}</div>}
+            {ledger && (
                 <div>
-                    <div>Created Account: </div>
-                    <div>Name: {res.name}</div>
-                    <div>Symbol: {res.symbol}</div>
-                    <div>Decimals: {res.decimals}</div>
-                    <div>Ledger ID: {res.ledger_id}</div>
-                    <div>Enabled: {res.enabled ? "true" : "false"}</div>
+                    <div>Created Ledger: </div>
+                    <div>Name: {ledger.name}</div>
+                    <div>Symbol: {ledger.symbol}</div>
+                    <div>Decimals: {ledger.decimals}</div>
+                    <div>Ledger ID: {ledger.ledger_id}</div>
+                    <div>Enabled: {ledger.enabled ? "true" : "false"}</div>
                 </div>
             )}
         </>

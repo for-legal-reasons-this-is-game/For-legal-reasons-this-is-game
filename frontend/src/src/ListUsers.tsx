@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type User } from "./types/User";
+import { api, errorMessage } from "./api";
 
 function User({ user }: { user: User }) {
     return (
@@ -14,27 +15,40 @@ function User({ user }: { user: User }) {
 
 export function ListUsers() {
     const [users, setUsers] = useState<User[]>([]);
-    const [refresh, setRefresh] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    // bumping this number re-runs the effect
+    const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
-        async function fetchUsers() {
-            try {
-                const res = await fetch("http://localhost:8000/api/v1/users");
-                const resJson = await res.json();
-                setUsers(resJson);
-                console.log(`received users:\n ${resJson}`);
-                setRefresh(false);
-            } catch (error) {
-                console.log(`ERROR: ${error}`);
-            }
-        }
-        fetchUsers();
-    }, [refresh]);
+        // If the component unmounts (or refreshes again) before this request
+        // finishes, ignore its result instead of setting stale state.
+        let ignore = false;
+        api.users
+            .list()
+            .then((users) => {
+                if (ignore) return;
+                setUsers(users);
+                setError(null);
+            })
+            .catch((e) => !ignore && setError(errorMessage(e)))
+            .finally(() => !ignore && setLoading(false));
+        return () => {
+            ignore = true;
+        };
+    }, [reloadKey]);
+
+    function refresh() {
+        setLoading(true);
+        setReloadKey((k) => k + 1);
+    }
 
     return (
         <>
             <h3>Users</h3>
-            <button onClick={() => setRefresh(true)}>refresh</button>
+            <button onClick={refresh}>refresh</button>
+            {loading && <div>Loading...</div>}
+            {error && <div style={{ color: "red" }}>{error}</div>}
             {users.map((user) => (
                 <div key={user.user_id}>
                     <User user={user} />
