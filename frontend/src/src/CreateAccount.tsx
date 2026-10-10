@@ -1,50 +1,36 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
 import { type Account } from "./types/Account";
+import { type AccountPayload } from "./types/AccountPayload";
+import { api, errorMessage } from "./api";
 
-export function CreateAccount() {
-    const [formData, setFormData] = useState({
+type CreateAccountProps = {
+    userID: string | undefined;
+};
+
+export function CreateAccount({ userID }: CreateAccountProps) {
+    const [formData, setFormData] = useState<AccountPayload>({
         name: "",
-        user_id: "",
         ledger_symbol: "",
-        code_type: "",
+        code_type: "Cash",
     });
-    const [creationRes, setCreationRes] = useState({
-        account_id: "",
-        account_name: "",
-        account_ledger_id: -1,
-        account_code_type: "",
-        account_status: "",
-        account_user_id: "",
-    });
+    const [account, setAccount] = useState<Account | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        setError(null);
+        if (!formData.name || !formData.ledger_symbol || !formData.code_type || !userID) {
+            setError(
+                errorMessage(
+                    "Empty field or no userID set. click ListUsers to set userID as last user in the list",
+                ),
+            );
+            return;
+        }
         try {
-            if (formData.user_id == "") {
-                alert("User ID can't be empty when creating an account!");
-                throw Error("User ID can't be empty when creating an account!");
-            }
-            const res = await fetch(
-                `http://localhost:8000/api/v1/users/${formData.user_id}/accounts`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(formData),
-                },
-            );
-            const account: Account = await res.json();
-            setCreationRes(account);
-            console.log(
-                `Created Account:\n
-				account_id:${account.account_id}\n
-				account_name:${account.account_name}\n,
-				account_ledger_id:${account.account_ledger_id}\n
-				account_code_type:${account.account_code_type}\n
-				account_status:${account.account_status}\n
-				account_user_id:${account.account_user_id}\n`,
-            );
-        } catch (error) {
-            console.log(`ERROR: ${error}`);
+            setAccount(await api.users.createAccount(userID, formData));
+        } catch (e) {
+            setError(errorMessage(e));
         }
     }
 
@@ -61,12 +47,6 @@ export function CreateAccount() {
             <h3>Create Account</h3>
             <form onSubmit={handleSubmit}>
                 <input
-                    name="user_id"
-                    value={formData.user_id}
-                    onChange={handleChange}
-                    placeholder="User ID"
-                />
-                <input
                     name="name"
                     value={formData.name}
                     onChange={handleChange}
@@ -78,24 +58,30 @@ export function CreateAccount() {
                     onChange={handleChange}
                     placeholder="ledger_symbol"
                 />
-                <input
+                <select>
+                    <option value={formData.code_type}>Cash</option>
+                    <option value={formData.code_type}>Crypto</option>
+                </select>
+                {/* <input type="custom-select" value={formData.code_type}></input> */}
+                {/* <input
                     name="code_type"
                     value={formData.code_type}
                     onChange={handleChange}
                     placeholder="code_type"
-                />
+                /> */}
                 <button type="submit">Create Account</button>
             </form>
 
-            {creationRes.account_name && (
+            {error && <div style={{ color: "red" }}>{error}</div>}
+            {account && (
                 <div>
                     <div>Created Account: </div>
-                    <div>Acc ID: {creationRes.account_id}</div>
-                    <div>Acc Name: {creationRes.account_name}</div>
-                    <div>Ledger ID: {creationRes.account_ledger_id}</div>
-                    <div>Code Type: {creationRes.account_code_type}</div>
-                    <div>Status: {creationRes.account_status}</div>
-                    <div>User ID: {creationRes.account_user_id}</div>
+                    <div>Acc ID: {account.account_id}</div>
+                    <div>Acc Name: {account.account_name}</div>
+                    <div>Ledger ID: {account.account_ledger_id}</div>
+                    <div>Code Type: {account.account_code_type}</div>
+                    <div>Status: {account.account_status}</div>
+                    <div>User ID: {account.account_user_id}</div>
                 </div>
             )}
         </div>

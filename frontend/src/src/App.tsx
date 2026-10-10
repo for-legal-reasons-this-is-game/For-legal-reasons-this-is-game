@@ -10,6 +10,7 @@ import { EnableLedger } from "./EnableLedger";
 import { Ledger } from "./Ledger";
 
 function App() {
+    const [userID, setUserID] = useState<string | undefined>(undefined);
     const [createUser, setCreateUser] = useState(false);
     const [users, setUsers] = useState(false);
     const [createAccount, setCreateAccount] = useState(false);
@@ -22,6 +23,7 @@ function App() {
 
     return (
         <div>
+            {userID ? <h3>Hello, user _{userID}_</h3> : ""}
             <button
                 style={{ background: createUser ? "green" : "grey" }}
                 onClick={() => setCreateUser(!createUser)}>
@@ -79,8 +81,8 @@ function App() {
             </button>
             <br />
             {createUser && <CreateUser />}
-            {users && <ListUsers />}
-            {createAccount && <CreateAccount />}
+            {users && <ListUsers setUserID={setUserID} />}
+            {createAccount && <CreateAccount userID={userID} />}
             {account && <Account />}
             {accountPosition && <Position />}
             {createLedger && <CreateLedger />}

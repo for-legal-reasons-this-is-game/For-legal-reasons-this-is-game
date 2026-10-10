@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import { type User } from "./types/User";
 import { api, errorMessage } from "./api";
 
+type ListUsersProps = {
+    setUserID: (name: string | undefined) => void;
+};
+
 function User({ user }: { user: User }) {
     return (
         <>
@@ -13,7 +17,7 @@ function User({ user }: { user: User }) {
     );
 }
 
-export function ListUsers() {
+export function ListUsers({ setUserID }: ListUsersProps) {
     const [users, setUsers] = useState<User[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -33,10 +37,11 @@ export function ListUsers() {
             })
             .catch((e) => !ignore && setError(errorMessage(e)))
             .finally(() => !ignore && setLoading(false));
+        setUserID(users.findLast(() => true)?.user_id);
         return () => {
             ignore = true;
         };
-    }, [reloadKey]);
+    }, [reloadKey, users, setUserID]);
 
     function refresh() {
         setLoading(true);
