@@ -34,14 +34,14 @@ export function ListUsers({ setUserID }: ListUsersProps) {
                 if (ignore) return;
                 setUsers(users);
                 setError(null);
+                setUserID(users.findLast(() => true)?.user_id); // delete this bruh
             })
             .catch((e) => !ignore && setError(errorMessage(e)))
             .finally(() => !ignore && setLoading(false));
-        setUserID(users.findLast(() => true)?.user_id);
         return () => {
             ignore = true;
         };
-    }, [reloadKey, users, setUserID]);
+    }, [reloadKey, setUserID]);
 
     function refresh() {
         setLoading(true);

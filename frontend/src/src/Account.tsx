@@ -1,29 +1,20 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
 import { type Account } from "./types/Account";
+import { api, errorMessage } from "./api";
 
 export function Account() {
-    const [accountID, setAccountID] = useState("");
-    const [res, setRes] = useState<Account>({
-        account_id: "",
-        account_name: "",
-        account_code_type: "Cash",
-        account_ledger_id: -1,
-        account_status: "active",
-        account_user_id: "",
-    });
+    const [accountID, setAccountID] = useState<string>("");
+    const [account, setAccount] = useState<Account | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-
+        setError(null);
         try {
-            const res = await fetch(`http://localhost:8000/api/v1/accounts/${accountID}`);
-            const account: Account = await res.json();
-            setRes(account);
-            console.log(
-                `Received Account:\n name:${account.account_name}\n id:${account.account_id}`,
-            );
-        } catch (error) {
-            console.log(`ERROR: ${error}`);
+            if (!accountID) throw Error("AccountID field can't be empty");
+            setAccount(await api.accounts.get(accountID));
+        } catch (e) {
+            setError(errorMessage(e));
         }
     }
 
@@ -35,18 +26,20 @@ export function Account() {
         <>
             <h3>Account</h3>
             <form onSubmit={handleSubmit}>
-                <input onChange={handleChange} />
+                <input onChange={handleChange} placeholder="AccountID" />
                 <button type="submit">Get Account</button>
             </form>
-            {res.account_id && (
+
+            {error && <div style={{ color: "red" }}>{error}</div>}
+            {account && (
                 <>
                     <div>Received account...</div>
-                    <div>Name: {res.account_name} </div>
-                    <div>ID: {res.account_id} </div>
-                    <div>Code Type: {res.account_code_type} </div>
-                    <div>Ledger ID: {res.account_ledger_id} </div>
-                    <div>Status: {res.account_status} </div>
-                    <div>User ID: {res.account_user_id} </div>
+                    <div>Name: {account.account_name} </div>
+                    <div>ID: {account.account_id} </div>
+                    <div>Code Type: {account.account_code_type} </div>
+                    <div>Ledger ID: {account.account_ledger_id} </div>
+                    <div>Status: {account.account_status} </div>
+                    <div>User ID: {account.account_user_id} </div>
                 </>
             )}
         </>

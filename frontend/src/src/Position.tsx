@@ -1,32 +1,20 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
 import { type Position } from "./types/Position";
+import { api, errorMessage } from "./api";
 
 export function Position() {
-    const [accountID, setAccountID] = useState("");
-    const [res, setRes] = useState<Position>({
-        account_id: "",
-        account_status: "processing",
-        symbol: "",
-        decimals: -1,
-        debits_posted: "",
-        credits_posted: "",
-        debits_pending: "",
-        credits_pending: "",
-        net_posted: "",
-    });
+    const [accountID, setAccountID] = useState<string>("");
+    const [position, setPosition] = useState<Position | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-
+        setError(null);
         try {
-            const res = await fetch(
-                `http://localhost:8000/api/v1/accounts/${accountID}/position`,
-            );
-            const position: Position = await res.json();
-            setRes(position);
-            console.log(`Received Position:\n acc_id:${position.account_id}\n`);
-        } catch (error) {
-            console.log(`ERROR: ${error}`);
+            if (!accountID) throw Error("AccountID field can't be empty");
+            setPosition(await api.accounts.position(accountID));
+        } catch (e) {
+            setError(errorMessage(e));
         }
     }
 
@@ -38,21 +26,22 @@ export function Position() {
         <>
             <h3>Account Position</h3>
             <form onSubmit={handleSubmit}>
-                <input onChange={handleChange} placeholder="Account ID" />
+                <input onChange={handleChange} placeholder="AccountID" />
                 <button type="submit">Get Account Position</button>
             </form>
-            {res.account_id && (
+            {error && <div style={{ color: "red" }}>{error}</div>}
+            {position && (
                 <>
                     <div>Received account...</div>
-                    <div>Account ID: {res.account_id} </div>
-                    <div>Account Status: {res.account_status} </div>
-                    <div>Symbol: {res.symbol} </div>
-                    <div>Decimals ID: {res.decimals} </div>
-                    <div>Debits Posted: {res.debits_posted} </div>
-                    <div>Credits Posted: {res.credits_posted} </div>
-                    <div>Debits Pending: {res.debits_pending} </div>
-                    <div>Credits Pending: {res.credits_pending} </div>
-                    <div>Net Posted: {res.net_posted} </div>
+                    <div>Account ID: {position.account_id} </div>
+                    <div>Account Status: {position.account_status} </div>
+                    <div>Symbol: {position.symbol} </div>
+                    <div>Decimals ID: {position.decimals} </div>
+                    <div>Debits Posted: {position.debits_posted} </div>
+                    <div>Credits Posted: {position.credits_posted} </div>
+                    <div>Debits Pending: {position.debits_pending} </div>
+                    <div>Credits Pending: {position.credits_pending} </div>
+                    <div>Net Posted: {position.net_posted} </div>
                 </>
             )}
         </>
