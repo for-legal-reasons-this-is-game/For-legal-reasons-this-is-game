@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type Ledger } from "./types/Ledger";
+import { api, errorMessage } from "./api";
 
 function Ledger({ ledger }: { ledger: Ledger }) {
     return (
@@ -20,24 +21,37 @@ function Ledger({ ledger }: { ledger: Ledger }) {
 
 export function Ledgers() {
     const [ledgers, setLedgers] = useState<Ledger[]>([]);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
-        async function fetchLedgers() {
-            try {
-                const res = await fetch("http://localhost:8000/api/v1/ledgers");
-                const resJson = await res.json();
-                setLedgers(resJson);
-                console.log(resJson);
-            } catch (error) {
-                console.log(`error is ${error}`);
-            }
-        }
-        fetchLedgers();
-    }, []);
+        let ignore = false;
+        api.ledgers
+            .list()
+            .then((ledgers) => {
+                if (ignore) return;
+                setLedgers(ledgers);
+                setError(null);
+            })
+            .catch((e) => !ignore && setError(errorMessage(e)))
+            .finally(() => !ignore && setLoading(false));
+        return () => {
+            ignore = true;
+        };
+    }, [reloadKey]);
+
+    function refresh() {
+        setLoading(true);
+        setReloadKey((k) => k + 1);
+    }
 
     return (
         <div>
             <h3>List of Ledgers</h3>
+            <button onClick={refresh}>Refresh</button>
+            {error && <div style={{ color: "red" }}>{error}</div>}
+            {loading && <div>Loading...</div>}
             {ledgers.map((ledger) => (
                 <div key={ledger.ledger_id}>
                     <Ledger ledger={ledger} />

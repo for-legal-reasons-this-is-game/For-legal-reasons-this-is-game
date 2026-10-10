@@ -32,7 +32,7 @@ export function Position() {
             {error && <div style={{ color: "red" }}>{error}</div>}
             {position && (
                 <>
-                    <div>Received account...</div>
+                    <div>Received Position...</div>
                     <div>Account ID: {position.account_id} </div>
                     <div>Account Status: {position.account_status} </div>
                     <div>Symbol: {position.symbol} </div>
