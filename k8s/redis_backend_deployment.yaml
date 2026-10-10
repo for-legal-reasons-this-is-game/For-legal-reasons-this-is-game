@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-redis
+  namespace: transcendence
+  labels:
+    app: backend-redis
+
+spec:
+  selector:
+    matchLabels:
+      app: backend-redis
+  template:
+    spec:
+      containers:
+        - name: redis
+          image: redis:latest
+          ports:
+            - containerPort: 6379
+          args:
+            - redis-server
+            - --appendonly
+            - "yes"
+
+          volumeMounts:
+            - mountPath: /data
+              name: storage
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: redis-backend-pvc
+    metadata:
+      labels:
+        app: backend-redis
+
+  replicas: 1
