@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-postgress
+  namespace: transcendence
+  labels:
+    app: backend-postgress
+
+spec:
+  selector:
+    matchLabels:
+      app: backend-postgress
+  template:
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:latest
+          ports:
+            - containerPort: 5432
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              value: test
+            - name: POSTGRES_PASSWORD
+              value: test
+            - name: POSTGRES_DB
+              value: test
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: storage
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: postgres-backend-pvc
+    metadata:
+      labels:
+        app: backend-postgress
+
+  replicas: 1
