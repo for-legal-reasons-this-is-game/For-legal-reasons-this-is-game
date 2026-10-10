@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: backend_trading_engine #our image
+          image: backend_trading_engine
           resources:
             limits:
               cpu: 500m
