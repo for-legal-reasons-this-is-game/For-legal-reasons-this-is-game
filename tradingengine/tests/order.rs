@@ -1,4 +1,5 @@
-use tradingengine::ONE;
+// One whole unit at 8 decimals. A test fixture only: scale is per market now.
+const ONE: u128 = 100_000_000;
 use tradingengine::order::{OrderKind, OrderStatus, Side, TimeInForce};
 use tradingengine::price::Price;
 

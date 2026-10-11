@@ -1,16 +1,17 @@
-use tradingengine::ONE;
+// One whole unit at 8 decimals. A test fixture only: scale is per market now.
+const ONE: u128 = 100_000_000;
 use tradingengine::error::EngineError;
 use tradingengine::ids::{IdempotencyKey, OrderId, SeqNo, UserId};
 use tradingengine::order::{OrderStatus, Side};
 use tradingengine::price::Price;
-use tradingengine::quantity::Quantity;
+use tradingengine::quantity::BaseQuantity;
 use tradingengine::resting_order::RestingOrder;
 
-fn qty(minor_units: u128) -> Quantity {
-    Quantity::from_minor_units(minor_units)
+fn qty(minor_units: u128) -> BaseQuantity {
+    BaseQuantity::from_minor_units(minor_units)
 }
 
-fn order(quantity: Quantity) -> RestingOrder {
+fn order(quantity: BaseQuantity) -> RestingOrder {
     RestingOrder::new(
         OrderId::new(11),
         UserId::new(22),
@@ -47,7 +48,7 @@ fn rejects_an_order_with_zero_original_quantity() {
             UserId::new(22),
             Side::Buy,
             Price::from_minor_units(ONE).expect("valid price"),
-            Quantity::ZERO,
+            BaseQuantity::ZERO,
             SeqNo::new(33),
             IdempotencyKey::new("order-11").expect("valid idempotency key"),
         ),
@@ -69,7 +70,7 @@ fn exact_fill_moves_quantity_to_zero_and_status_to_filled() {
     let mut order = order(qty(10));
 
     assert_eq!(order.fill(qty(10)), Ok(()));
-    assert_eq!(order.qty_remaining(), Quantity::ZERO);
+    assert_eq!(order.qty_remaining(), BaseQuantity::ZERO);
     assert_eq!(order.status(), OrderStatus::Filled);
 }
 
@@ -81,7 +82,7 @@ fn consecutive_fills_preserve_the_original_quantity() {
     order.fill(qty(6)).expect("valid final fill");
 
     assert_eq!(order.qty_original(), qty(10));
-    assert_eq!(order.qty_remaining(), Quantity::ZERO);
+    assert_eq!(order.qty_remaining(), BaseQuantity::ZERO);
     assert_eq!(order.status(), OrderStatus::Filled);
 }
 
@@ -91,7 +92,7 @@ fn rejects_zero_fill_without_changing_the_order() {
     let before = order.clone();
 
     assert_eq!(
-        order.fill(Quantity::ZERO),
+        order.fill(BaseQuantity::ZERO),
         Err(EngineError::QuantityNotPositive)
     );
     assert_eq!(order, before);
