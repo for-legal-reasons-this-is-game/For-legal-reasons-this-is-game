@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,7 +19,13 @@ spec:
         - name: backend
           image: backend_trading_engine:latest
           resources:
+            requests:
+              cpu: 200m
+              memory: 50Mi
+              ephemeral-storage: 50Mi
             limits:
               cpu: 500m
               memory: 500Mi
               ephemeral-storage: 500Mi
+
+      automountServiceAccountToken: false
