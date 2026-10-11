@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+apiVersion: v1
+kind: Service
+metadata:
+  name: tradingengine-redis
+  namespace: transcendence
+  labels:
+    app: tradingengine-redis
+spec:
+  selector:
+    app: tradingengine-redis
+  ports:
+    - name: http
+      port: 6379
+      targetPort: 6379
+  type: ClusterIP
