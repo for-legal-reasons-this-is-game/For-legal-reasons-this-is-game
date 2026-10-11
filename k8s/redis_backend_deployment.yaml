@@ -27,6 +27,12 @@ spec:
           volumeMounts:
             - mountPath: /data
               name: storage
+
+          resources:
+            limits:
+              cpu: 500m
+              memory: 500Mi
+              ephemeral-storage: 500Mi
       volumes:
         - name: storage
           persistentVolumeClaim:
