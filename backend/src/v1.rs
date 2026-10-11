@@ -9,9 +9,9 @@ use serde::Deserialize;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-use crate::bootstrap;
 use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
 use crate::service::EngineClient;
+use crate::{bootstrap, domain::TransferCodeType};
 use cn_tigerbeetle::{self as tb, CreateTransferResult, TransferFlags};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -295,7 +295,7 @@ pub async fn close_account(
             debit_account_id: account.id,
             amount: 0,
             ledger: account.ledger,
-            code: 1, // PLACEHOLDER, we will need an enum for this
+            code: TransferCodeType::CloseAccount as u16,
             flags: TransferFlags::Pending | tb::TransferFlags::ClosingDebit,
             ..Default::default()
         }])
