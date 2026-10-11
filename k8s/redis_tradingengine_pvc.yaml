@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-tradingengine-pvc
+  namespace: transcendence
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
