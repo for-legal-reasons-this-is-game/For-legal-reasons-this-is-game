@@ -4,7 +4,6 @@
 !backend/Cargo.lock
 !backend/src
 !backend/migrations
-!backend/entrypoint.sh
 
 !proto/Cargo.toml
 !proto/build.rs

@@ -3,15 +3,16 @@ use axum::{
     http::StatusCode,
 };
 
+use proto::{CancelOrdersRequest, RejectReason};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-use crate::bootstrap;
 use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
 use crate::service::EngineClient;
-use cn_tigerbeetle as tb;
+use crate::{bootstrap, domain::TransferCodeType};
+use cn_tigerbeetle::{self as tb, CreateTransferResult, TransferFlags};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -72,6 +73,7 @@ fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+//                                                           API ENDPOINTS
 //create user and write it to postgress. returns the user details, or an error if it fails.
 pub async fn create_user(
     State(state): State<AppState>,
@@ -214,6 +216,104 @@ pub async fn create_account(
     }
 
     Ok((StatusCode::ACCEPTED, Json(account)))
+}
+
+// closes an account and returns no content if it was able to do it/was already closed. It doesnt
+// need timeouts with tb because retrying is 100% safe.
+
+pub async fn close_account(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+) -> Result<StatusCode, StatusCode> {
+    let account = state
+        .tb_client
+        .lookup_accounts(&[account_id.as_u128()])
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .next()
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if account.code != AccountCodeType::User as u16 {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // this sends a cancelordersrequest for all the account's orders in all markets.
+    // a problem to solve later is that some orders might be in flight, we probably would want to
+    // credit the buyer/seller and forfeit the money exchanged or a different solution, we'll
+    // discuss
+
+    let symbols: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT m.symbol \
+         FROM orders o \
+         JOIN markets m ON m.market_id = o.market_id \
+         WHERE (o.base_account_id = $1 OR o.quote_account_id = $1) \
+           AND o.submission <> 'rejected' \
+           AND (o.status IS NULL OR o.status IN (1, 2, 6))",
+    )
+    .bind(account_id)
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    for symbol in symbols {
+        let resp = state
+            .engine_client
+            .cancel_orders(CancelOrdersRequest {
+                command_id: Some(tb::id().into()),
+                market_symbol: symbol,
+                account_holder: Some(account.user_data_128.into()),
+            })
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        if resp.reject_reason() != RejectReason::Unspecified {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // searches for the source account for the transfer, shouldn't fail as it was created at the
+    // ledger creation
+    let source_acc = state
+        .tb_client
+        .query_accounts(tb::QueryFilter {
+            ledger: account.ledger,
+            code: AccountCodeType::Source as u16,
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .next()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    match state
+        .tb_client
+        .create_transfers(&[tb::Transfer {
+            id: tb::id(),
+            credit_account_id: source_acc.id,
+            debit_account_id: account.id,
+            amount: 0,
+            ledger: account.ledger,
+            code: TransferCodeType::CloseAccount as u16,
+            flags: TransferFlags::Pending | tb::TransferFlags::ClosingDebit,
+            ..Default::default()
+        }])
+        .await
+    {
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(v) => match v.first() {
+            Some(r) => {
+                if r.result == CreateTransferResult::CreditAccountAlreadyClosed {
+                    println!("close_account: The source account is closed!");
+                    Err(StatusCode::INTERNAL_SERVER_ERROR)
+                } else {
+                    Ok(StatusCode::NO_CONTENT)
+                }
+            }
+            None => Ok(StatusCode::NO_CONTENT),
+        },
+    }
 }
 
 // returns information about the user

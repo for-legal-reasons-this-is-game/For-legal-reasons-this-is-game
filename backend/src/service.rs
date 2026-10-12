@@ -22,32 +22,42 @@ impl EngineClient {
     }
 
     pub async fn set_market(&self, req: SetMarketRequest) -> Result<SetMarketResponse, Status> {
-        todo!();
+        let mut client = self.inner.clone();
+        let response = client.set_market(req).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn place_order(&self, req: PlaceOrderRequest) -> Result<PlaceOrderResponse, Status> {
-        todo!()
+        let mut client = self.inner.clone();
+        let response = client.place_order(req).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn cancel_order(
         &self,
         req: CancelOrderRequest,
     ) -> Result<CancelOrderResponse, Status> {
-        todo!()
+        let mut client = self.inner.clone();
+        let response = client.cancel_order(req).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn cancel_orders(
         &self,
         req: CancelOrdersRequest,
     ) -> Result<CancelOrdersResponse, Status> {
-        todo!()
+        let mut client = self.inner.clone();
+        let response = client.cancel_orders(req).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn modify_order(
         &self,
         req: ModifyOrderRequest,
     ) -> Result<ModifyOrderResponse, Status> {
-        todo!()
+        let mut client = self.inner.clone();
+        let response = client.modify_order(req).await?;
+        Ok(response.into_inner())
     }
 
     pub async fn subscribe_events(
