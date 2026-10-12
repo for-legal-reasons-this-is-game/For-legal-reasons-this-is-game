@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
-import { type Account } from "./types/Account";
-import { api, errorMessage } from "./api";
+import { type Account } from "../types/Account";
+import { api, errorMessage } from "../api";
 
 export function Account() {
     const [accountID, setAccountID] = useState<string>("");

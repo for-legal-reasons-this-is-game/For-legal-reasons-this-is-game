@@ -1,7 +1,7 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { type Account } from "./types/Account";
-import { type AccountPayload } from "./types/AccountPayload";
-import { api, errorMessage } from "./api";
+import { type Account } from "../types/Account";
+import { type AccountPayload } from "../types/AccountPayload";
+import { api, errorMessage } from "../api";
 
 type CreateAccountProps = {
     userID: string | undefined;

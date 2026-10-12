@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
-import { type LedgerPayload } from "./types/LedgerPayload";
-import { type Ledger } from "./types/Ledger";
-import { api, errorMessage } from "./api";
+import { type LedgerPayload } from "../types/LedgerPayload";
+import { type Ledger } from "../types/Ledger";
+import { api, errorMessage } from "../api";
 
 export function CreateLedger() {
     const [formData, setFormData] = useState<LedgerPayload>({

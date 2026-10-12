@@ -1,6 +1,6 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { type User } from "./types/User";
-import { api, errorMessage } from "./api";
+import { type User } from "../types/User";
+import { api, errorMessage } from "../api";
 
 export function CreateUser() {
     const [formData, setFormData] = useState({

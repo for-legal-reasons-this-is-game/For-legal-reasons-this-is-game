@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { type User } from "./types/User";
-import { api, errorMessage } from "./api";
+import { type User } from "../types/User";
+import { api, errorMessage } from "../api";
 
 type ListUsersProps = {
     setUserID: (name: string | undefined) => void;

@@ -1,6 +1,6 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { type Position } from "./types/Position";
-import { api, errorMessage } from "./api";
+import { type Position } from "../types/Position";
+import { api, errorMessage } from "../api";
 
 export function Position() {
     const [accountID, setAccountID] = useState<string>("");

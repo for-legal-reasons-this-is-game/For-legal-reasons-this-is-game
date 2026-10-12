@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { type Ledger } from "./types/Ledger";
-import { api, errorMessage } from "./api";
+import { type Ledger } from "../types/Ledger";
+import { api, errorMessage } from "../api";
 
 function Ledger({ ledger }: { ledger: Ledger }) {
     return (

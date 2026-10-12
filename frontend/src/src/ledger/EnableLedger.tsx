@@ -1,5 +1,5 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { type Ledger } from "./types/Ledger";
+import { type Ledger } from "../types/Ledger";
 
 export function EnableLedger() {
     const [symbol, setSymbol] = useState("");
