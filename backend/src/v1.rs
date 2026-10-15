@@ -7,6 +7,7 @@ use proto::{CancelOrdersRequest, RejectReason};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{Duration, timeout};
+use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
@@ -41,13 +42,15 @@ pub struct UserPayload {
     name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct AccountPayload {
     name: String,
     ledger_symbol: String, // e.g. "USD"
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct LedgerPayload {
     symbol: String,
     name: String,
