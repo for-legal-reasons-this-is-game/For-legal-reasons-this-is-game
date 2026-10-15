@@ -3,14 +3,13 @@ FROM node:24.21-alpine AS build
 
 WORKDIR /app
 
-COPY package.json package-lock.json tsconfig.json tsconfig.node.json tsconfig.app.json vite.config.ts ./
+COPY package.json package-lock.json ./
 
-COPY index.html ./ 
-
-COPY src/ ./src
-
-RUN npm install -D vite
 RUN npm ci
+
+COPY index.html tsconfig.json tsconfig.node.json tsconfig.app.json vite.config.ts ./ 
+
+COPY src/ ./src/
 
 RUN npm run build
 
@@ -23,6 +22,4 @@ COPY server.conf /etc/nginx/conf.d/
 
 COPY --from=build /app/dist /dist/
 
-RUN sh
-
-RUN nginx
+CMD ["nginx", "-g", "daemon off;"]

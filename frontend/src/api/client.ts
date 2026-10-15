@@ -33,7 +33,8 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
     const text = await res.text();
 
     if (!res.ok) {
-        throw new ApiError(res.status, text);
+        const isHtml = res.headers.get("Content-Type")?.includes("text/html");
+        throw new ApiError(res.status, isHtml ? "" : text);
     }
     return (text ? JSON.parse(text) : undefined) as T;
 }
@@ -49,6 +50,8 @@ export const http = {
 // Turn anything caught in a try/catch into a message you can show the user.
 export function errorMessage(error: unknown): string {
     if (error instanceof ApiError) {
+        if (error.status >= 502 && error.status <= 504)
+            return "The server is unavailable. Try again shortly.";
         if (error.body) return error.body;
         if (error.status === 404) return "Not found";
         if (error.status === 400) return "Bad request";

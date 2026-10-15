@@ -18,6 +18,17 @@ include:
   - ./secret_managment/docker-compose.yaml
 
 services:
+  frontend:
+    container_name: frontend
+    build: ./frontend/
+    restart: unless-stopped
+    ports:
+      - "4343:82"
+    networks:
+      - default
+    # we shouldn't make frontend depend on backend
+    # we should handle backend requests failures in frontend
+
   backend:
     container_name: backend
     build: ./backend/
