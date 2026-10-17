@@ -100,7 +100,9 @@ pub async fn activate_system_accounts(
         };
 
         let created = match timeout(
-            Duration::from_millis(500),
+            // A fresh TB client must register with the cluster first, which can
+            // take over a second; 500ms timed out on every startup.
+            Duration::from_secs(5),
             state.tb_client.create_accounts(&[account]),
         )
         .await
