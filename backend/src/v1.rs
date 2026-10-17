@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
 };
 
+use num_traits::ToPrimitive;
 use proto::{CancelOrdersRequest, RejectReason};
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -57,6 +58,12 @@ pub struct LedgerPayload {
 #[derive(Deserialize)]
 pub struct LedgerEnabledPayload {
     enabled: bool,
+}
+
+#[derive(Deserialize)]
+pub struct DepositPayload {
+    idempotency_key: Uuid, // frontend-generated IN UUIDv7!
+    amount: Decimal, // in practice, this is sent as a string, important because of no rounding should happen
 }
 
 #[derive(Default)]
@@ -313,6 +320,185 @@ pub async fn close_account(
             }
             None => Ok(StatusCode::NO_CONTENT),
         },
+    }
+}
+
+// reopens a closed account.Returns NO CONTENT for already open accounts and when it succeeds at closing an account
+pub async fn reopen_account(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+) -> Result<StatusCode, StatusCode> {
+    let account = state
+        .tb_client
+        .lookup_accounts(&[account_id.as_u128()])
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .next()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if account.code != AccountCodeType::User as u16 {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    if !account.flags.contains(tb::AccountFlags::Closed) {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    let close_transfer = state
+        .tb_client
+        .get_account_transfers(tb::AccountFilter {
+            account_id: account.id,
+            code: TransferCodeType::CloseAccount as u16,
+            limit: 1,
+            flags: tb::AccountFilterFlags::Debits | tb::AccountFilterFlags::Reversed,
+            ..Default::default()
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .next()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match state
+        .tb_client
+        .create_transfers(&[tb::Transfer {
+            id: tb::id(),
+            pending_id: close_transfer.id,
+            flags: TransferFlags::VoidPendingTransfer,
+            ..Default::default()
+        }])
+        .await
+    {
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(v) => match v.first() {
+            Some(r) if r.result == CreateTransferResult::PendingTransferAlreadyVoided => {
+                Ok(StatusCode::NO_CONTENT)
+            }
+            Some(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+            None => Ok(StatusCode::NO_CONTENT),
+        },
+    }
+}
+
+// if a idempotency key from the front end was already used with a different deposit/transfer(so if the other fields conflict) TB will reject it
+fn is_deposit_conflict(result: &CreateTransferResult) -> bool {
+    matches!(
+        result,
+        CreateTransferResult::ExistsWithDifferentFlags
+            | CreateTransferResult::ExistsWithDifferentPendingId
+            | CreateTransferResult::ExistsWithDifferentTimeout
+            | CreateTransferResult::ExistsWithDifferentDebitAccountId
+            | CreateTransferResult::ExistsWithDifferentCreditAccountId
+            | CreateTransferResult::ExistsWithDifferentAmount
+            | CreateTransferResult::ExistsWithDifferentUserData128
+            | CreateTransferResult::ExistsWithDifferentUserData64
+            | CreateTransferResult::ExistsWithDifferentUserData32
+            | CreateTransferResult::ExistsWithDifferentLedger
+            | CreateTransferResult::ExistsWithDifferentCode
+            | CreateTransferResult::IdAlreadyFailed
+            | CreateTransferResult::CreditAccountAlreadyClosed
+    )
+}
+
+// credits an account from the ledger's source account. The idempotency key comes from frontend as UUIDv7 and
+// its there so we dont duplicate deposits on retries, returns CREATED when we succeed at making the deposit,
+// ok if its a retry of an already successful depost and  CONFLICT if there is a conflict (for example that its same key but different amount)
+pub async fn deposit(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+    Json(payload): Json<DepositPayload>,
+) -> Result<StatusCode, StatusCode> {
+    if payload.idempotency_key.is_nil() || payload.idempotency_key.as_u128() == u128::MAX {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let account = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_one(&state.pg_connections)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
+
+    // we can only fund user accounts that are active
+    if account.account_code_type != AccountCodeType::User {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if account.account_status != AccountStatus::Active {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let decimals = {
+        let cache = state
+            .ledgers
+            .read()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let ledger = cache
+            .values()
+            .find(|l| l.ledger_id == account.account_ledger_id)
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !ledger.enabled {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        ledger.decimals
+    };
+
+    // Decimal types get converted into integers with no decimals for TB.
+    if payload.amount <= Decimal::ZERO {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let smallest_units = payload
+        .amount
+        .checked_mul(Decimal::from(10u64.pow(decimals as u32)))
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    if !smallest_units.fract().is_zero() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let smallest_units = smallest_units.to_u128().ok_or(StatusCode::BAD_REQUEST)?;
+
+    let source_id: Uuid = sqlx::query_scalar(
+        "SELECT account_id FROM accounts WHERE account_ledger_id = $1 AND account_code_type = $2",
+    )
+    .bind(account.account_ledger_id)
+    .bind(AccountCodeType::Source)
+    .fetch_one(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let results = match timeout(
+        Duration::from_secs(2),
+        state.tb_client.create_transfers(&[tb::Transfer {
+            id: payload.idempotency_key.as_u128(),
+            debit_account_id: source_id.as_u128(),
+            credit_account_id: account.account_id.as_u128(),
+            amount: smallest_units,
+            ledger: account.account_ledger_id as u32,
+            code: TransferCodeType::ProvisioningFromSource as u16,
+            ..Default::default()
+        }]),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(_)) => return Err(StatusCode::BAD_GATEWAY),
+        Err(_) => return Err(StatusCode::GATEWAY_TIMEOUT),
+    };
+
+    match results.first().map(|r| &r.result) {
+        None | Some(CreateTransferResult::Ok) => Ok(StatusCode::CREATED),
+        Some(CreateTransferResult::Exists) => Ok(StatusCode::OK),
+        Some(r) if is_deposit_conflict(r) => Err(StatusCode::CONFLICT),
+        Some(
+            CreateTransferResult::OverflowsCredits | CreateTransferResult::OverflowsCreditsPosted,
+        ) => Err(StatusCode::BAD_REQUEST),
+        // this happens when the source account hasn't been created by the relay, so retrying should work
+        Some(CreateTransferResult::DebitAccountNotFound) => Err(StatusCode::SERVICE_UNAVAILABLE),
+        Some(other) => {
+            println!("deposit: unexpected tigerbeetle result {other:?}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 

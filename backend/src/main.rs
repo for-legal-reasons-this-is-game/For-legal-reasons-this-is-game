@@ -75,6 +75,8 @@ async fn main() {
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/accounts/{account_id}", get(v1::fetch_account))
         .route("/accounts/{account_id}/close", post(v1::close_account))
+        .route("/accounts/{account_id}/reopen", post(v1::reopen_account))
+        .route("/accounts/{account_id}/deposits", post(v1::deposit))
         .route(
             "/accounts/{account_id}/position",
             get(v1::fetch_account_position),
