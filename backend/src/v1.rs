@@ -627,7 +627,7 @@ pub async fn fetch_account_position(
 // gives am account's transfers, newest first, limited to a page per call (the limit part of the TransferQuery, which should be max 100 and is 50 if you dont set it)
 // when you call the endpoint the first time you dont set the cursor so you get the first page,
 // the response of that call will give you next_cursor which is a timestamp of the first element of next page,
-// so you can send it back with youre query again and you get the next page
+// so you can send it back with youre query again and you get the next page. if next_cursor is none its the last page
 pub async fn list_account_transfers(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
