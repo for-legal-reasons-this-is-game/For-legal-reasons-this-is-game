@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Json, Path, State},
+    extract::{Json, Path, Query, State},
     http::StatusCode,
 };
 
@@ -10,7 +10,10 @@ use serde::Deserialize;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-use crate::domain::{Account, AccountCodeType, AccountStatus, Ledger, Position, User};
+use crate::domain::{
+    Account, AccountCodeType, AccountStatus, Ledger, Position, Transfer, TransferDirection,
+    TransferPage, User,
+};
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
 use cn_tigerbeetle::{self as tb, CreateTransferResult, TransferFlags};
@@ -66,6 +69,12 @@ pub struct DepositPayload {
     amount: Decimal, // in practice, this is sent as a string, important because of no rounding should happen
 }
 
+#[derive(Deserialize)]
+pub struct TransferQuery {
+    limit: Option<u32>, // amount of transfers to return requested by the frontend (if none there's default of 50)
+    cursor: Option<String>, // where the page starts, nothing == first ones, Some == the one with the timestamp + the other limit - 1 amount
+}
+
 #[derive(Default)]
 struct RawBalance {
     debits_posted: i128,
@@ -78,6 +87,37 @@ struct RawBalance {
 fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
     Decimal::try_from_i128_with_scale(raw, decimals as u32)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// if a idempotency key from the front end was already used with a different deposit/transfer(so if the other fields conflict) TB will reject it
+fn is_deposit_conflict(result: &CreateTransferResult) -> bool {
+    matches!(
+        result,
+        CreateTransferResult::ExistsWithDifferentFlags
+            | CreateTransferResult::ExistsWithDifferentPendingId
+            | CreateTransferResult::ExistsWithDifferentTimeout
+            | CreateTransferResult::ExistsWithDifferentDebitAccountId
+            | CreateTransferResult::ExistsWithDifferentCreditAccountId
+            | CreateTransferResult::ExistsWithDifferentAmount
+            | CreateTransferResult::ExistsWithDifferentUserData128
+            | CreateTransferResult::ExistsWithDifferentUserData64
+            | CreateTransferResult::ExistsWithDifferentUserData32
+            | CreateTransferResult::ExistsWithDifferentLedger
+            | CreateTransferResult::ExistsWithDifferentCode
+            | CreateTransferResult::IdAlreadyFailed
+            | CreateTransferResult::CreditAccountAlreadyClosed
+    )
+}
+
+// a type name for the transfer response for each transfer so the frontend displays it
+fn transfer_kind(t: &tb::Transfer) -> &'static str {
+    match TransferCodeType::try_from(t.code as i16) {
+        Ok(TransferCodeType::Trade) => "trade",
+        Ok(TransferCodeType::FeeCollection) => "fee",
+        Ok(TransferCodeType::ProvisioningFromSource) => "deposit",
+        Ok(TransferCodeType::Hold) => "hold",
+        Ok(TransferCodeType::CloseAccount) | Err(_) => "unknown",
+    }
 }
 
 //                                                           API ENDPOINTS
@@ -381,30 +421,10 @@ pub async fn reopen_account(
     }
 }
 
-// if a idempotency key from the front end was already used with a different deposit/transfer(so if the other fields conflict) TB will reject it
-fn is_deposit_conflict(result: &CreateTransferResult) -> bool {
-    matches!(
-        result,
-        CreateTransferResult::ExistsWithDifferentFlags
-            | CreateTransferResult::ExistsWithDifferentPendingId
-            | CreateTransferResult::ExistsWithDifferentTimeout
-            | CreateTransferResult::ExistsWithDifferentDebitAccountId
-            | CreateTransferResult::ExistsWithDifferentCreditAccountId
-            | CreateTransferResult::ExistsWithDifferentAmount
-            | CreateTransferResult::ExistsWithDifferentUserData128
-            | CreateTransferResult::ExistsWithDifferentUserData64
-            | CreateTransferResult::ExistsWithDifferentUserData32
-            | CreateTransferResult::ExistsWithDifferentLedger
-            | CreateTransferResult::ExistsWithDifferentCode
-            | CreateTransferResult::IdAlreadyFailed
-            | CreateTransferResult::CreditAccountAlreadyClosed
-    )
-}
-
 // credits an account from the ledger's source account. The idempotency key comes from frontend as UUIDv7 and
 // its there so we dont duplicate deposits on retries, returns CREATED when we succeed at making the deposit,
 // ok if its a retry of an already successful depost and  CONFLICT if there is a conflict (for example that its same key but different amount)
-pub async fn deposit(
+pub async fn create_deposit(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
     Json(payload): Json<DepositPayload>,
@@ -604,7 +624,94 @@ pub async fn fetch_account_position(
     Ok(Json(position))
 }
 
-//deleting an account is ommited as tb uses transfers to do so, which will come with v2.
+// gives am account's transfers, newest first, limited to a page per call (the limit part of the TransferQuery, which should be max 100 and is 50 if you dont set it)
+// when you call the endpoint the first time you dont set the cursor so you get the first page,
+// the response of that call will give you next_cursor which is a timestamp of the first element of next page,
+// so you can send it back with youre query again and you get the next page
+pub async fn list_account_transfers(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+    Query(query): Query<TransferQuery>,
+) -> Result<Json<TransferPage>, StatusCode> {
+    let limit = query.limit.unwrap_or(50).min(100);
+    if limit == 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let timestamp_max = match query.cursor {
+        None => 0,
+        Some(c) => c.parse::<u64>().map_err(|_| StatusCode::BAD_REQUEST)?,
+    };
+
+    let account = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_one(&state.pg_connections)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
+
+    let decimals = {
+        let cache = state
+            .ledgers
+            .read()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        cache
+            .values()
+            .find(|l| l.ledger_id == account.account_ledger_id)
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+            .decimals
+    };
+
+    // i ask tb for 1 more than the page limit because i need timestamp of limit+1 to return the cursor
+    let mut transfers = match timeout(
+        Duration::from_secs(2),
+        state.tb_client.get_account_transfers(tb::AccountFilter {
+            account_id: account.account_id.as_u128(),
+            timestamp_max,
+            limit: limit + 1,
+            flags: tb::AccountFilterFlags::Debits
+                | tb::AccountFilterFlags::Credits
+                | tb::AccountFilterFlags::Reversed,
+            ..Default::default()
+        }),
+    )
+    .await
+    {
+        Ok(Ok(t)) => t,
+        Ok(Err(_)) => return Err(StatusCode::BAD_GATEWAY),
+        Err(_) => return Err(StatusCode::GATEWAY_TIMEOUT),
+    };
+
+    let next_cursor = transfers
+        .get(limit as usize)
+        .map(|t| t.timestamp.to_string());
+    transfers.truncate(limit as usize);
+
+    let items = transfers
+        .iter()
+        .filter(|t| t.code != TransferCodeType::CloseAccount as u16)
+        .map(|t| {
+            Ok(Transfer {
+                transfer_id: Uuid::from_u128(t.id),
+                direction: if t.debit_account_id == account.account_id.as_u128() {
+                    TransferDirection::Out
+                } else {
+                    TransferDirection::In
+                },
+                kind: transfer_kind(t),
+                amount: to_decimal(
+                    i128::try_from(t.amount).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                    decimals,
+                )?,
+                timestamp: t.timestamp.to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
+
+    Ok(Json(TransferPage { items, next_cursor }))
+}
 
 //lists all ledgers from cache, it's read-only so no need to look at db again
 pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledger>>, StatusCode> {
