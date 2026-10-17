@@ -11,7 +11,6 @@ export function CreateAccount({ userID }: CreateAccountProps) {
     const [formData, setFormData] = useState<AccountPayload>({
         name: "",
         ledger_symbol: "",
-        code_type: "Cash",
     });
     const [account, setAccount] = useState<Account | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -19,7 +18,7 @@ export function CreateAccount({ userID }: CreateAccountProps) {
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         setError(null);
-        if (!formData.name || !formData.ledger_symbol || !formData.code_type || !userID) {
+        if (!formData.name || !formData.ledger_symbol || !userID) {
             setError(
                 errorMessage(
                     "Empty field or no userID set. click ListUsers to set userID as last user in the list",
@@ -58,17 +57,6 @@ export function CreateAccount({ userID }: CreateAccountProps) {
                     onChange={handleChange}
                     placeholder="ledger_symbol"
                 />
-                <select>
-                    <option value={formData.code_type}>Cash</option>
-                    <option value={formData.code_type}>Crypto</option>
-                </select>
-                {/* <input type="custom-select" value={formData.code_type}></input> */}
-                {/* <input
-                    name="code_type"
-                    value={formData.code_type}
-                    onChange={handleChange}
-                    placeholder="code_type"
-                /> */}
                 <button type="submit">Create Account</button>
             </form>
 

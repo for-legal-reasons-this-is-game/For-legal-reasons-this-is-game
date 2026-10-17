@@ -26,6 +26,8 @@ export const api = {
         get: (accountId: string) => http.get<Account>(`/accounts/${seg(accountId)}`),
         position: (accountId: string) =>
             http.get<Position>(`/accounts/${seg(accountId)}/position`),
+        close: (accountId: string) =>
+            http.post<void>(`/accounts/${seg(accountId)}/close`),
     },
     ledgers: {
         list: () => http.get<Ledger[]>("/ledgers"),
