@@ -1,3 +1,4 @@
+use axum::http::StatusCode;
 use cn_tigerbeetle as tb;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -42,8 +43,17 @@ pub enum AccountStatus {
     Processing,
 }
 
-#[derive(Serialize, FromRow, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type, TS)]
+#[sqlx(type_name = "market_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 #[ts(export)]
+pub enum MarketStatus {
+    Trading,
+    CancelOnly,
+    Halted,
+}
+
+#[derive(Serialize, FromRow)]
 pub struct Account {
     pub account_id: Uuid,
     pub account_name: String,
@@ -61,6 +71,72 @@ pub struct Ledger {
     pub name: String,
     pub decimals: i16,
     pub enabled: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct MarketRow {
+    pub market_id: i32,
+    pub symbol: String,
+    pub base_ledger_id: i32,
+    pub quote_ledger_id: i32,
+    pub status: MarketStatus,
+    pub price_decimals: i16,
+    pub min_base_quantity: Decimal,
+    pub min_quote_quantity: Decimal,
+    pub quantity_step: Decimal,
+    pub price_step: Decimal,
+    pub maker_fee_bps: i32,
+    pub taker_fee_bps: i32,
+}
+
+// from i128 to Decimal type
+pub fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
+    Decimal::try_from_i128_with_scale(raw, decimals as u32)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// scales raw decimal to the decimal stored in db
+fn scale_to_decimal(raw: Decimal, decimals: i16) -> Result<Decimal, StatusCode> {
+    to_decimal(
+        raw.to_i128().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
+        decimals,
+    )
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Market {
+    pub market_id: i32,
+    pub symbol: String,
+    pub status: MarketStatus,
+    pub base_asset: Ledger,
+    pub quote_asset: Ledger,
+    pub price_decimals: i16,
+    pub min_base_quantity: Decimal,
+    pub min_quote_quantity: Decimal,
+    pub quantity_step: Decimal,
+    pub price_step: Decimal,
+    pub maker_fee_bps: i32,
+    pub taker_fee_bps: i32,
+}
+
+impl Market {
+    // builds the market from the row in the db
+    pub fn from_row(m: MarketRow, base: Ledger, quote: Ledger) -> Result<Self, StatusCode> {
+        Ok(Market {
+            market_id: m.market_id,
+            symbol: m.symbol,
+            status: m.status,
+            price_decimals: m.price_decimals,
+            min_base_quantity: scale_to_decimal(m.min_base_quantity, base.decimals)?,
+            quantity_step: scale_to_decimal(m.quantity_step, base.decimals)?,
+            min_quote_quantity: scale_to_decimal(m.min_quote_quantity, quote.decimals)?,
+            price_step: scale_to_decimal(m.price_step, m.price_decimals)?,
+            maker_fee_bps: m.maker_fee_bps,
+            taker_fee_bps: m.taker_fee_bps,
+            base_asset: base,
+            quote_asset: quote,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
