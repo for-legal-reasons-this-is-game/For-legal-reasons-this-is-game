@@ -5,7 +5,7 @@ use proto::{
     SetMarketRequest, SetMarketResponse, SubscribeEventsRequest, SubscribeMarketDataRequest,
 };
 
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use tonic::{Status, Streaming};
 
 #[allow(unused)]
@@ -16,9 +16,11 @@ pub struct EngineClient {
 
 #[allow(unused)]
 impl EngineClient {
-    pub async fn new(url: &str) -> Result<Self, tonic::transport::Error> {
-        let client = TradingEngineClient::connect(url.to_owned()).await?;
-        Ok(EngineClient { inner: client })
+    pub fn new(url: &str) -> Result<Self, tonic::transport::Error> {
+        let channel = Endpoint::from_shared(url.to_owned())?.connect_lazy();
+        Ok(EngineClient {
+            inner: TradingEngineClient::new(channel),
+        })
     }
 
     pub async fn set_market(&self, req: SetMarketRequest) -> Result<SetMarketResponse, Status> {
