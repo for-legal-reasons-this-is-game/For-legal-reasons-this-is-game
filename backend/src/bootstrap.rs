@@ -1,6 +1,6 @@
 use crate::{
     domain::{AccountCodeType, Ledger},
-    v1::AppState,
+    v1::{AppState, load_ledgers},
 };
 use cn_tigerbeetle as tb;
 use sqlx::PgConnection;
@@ -13,13 +13,7 @@ pub type BootstrapError = Box<dyn std::error::Error + Send + Sync>;
 // also creates fee and source accounts for any ledgers that dont have one (if we manually add
 // ledgers at migration time this is what makes sure that they work)
 pub async fn run(state: &AppState) -> Result<(), BootstrapError> {
-    let ledgers: Vec<Ledger> = {
-        let cache = state
-            .ledgers
-            .read()
-            .map_err(|_| "ledger cache lock poisoned")?;
-        cache.values().cloned().collect()
-    };
+    let ledgers: Vec<Ledger> = load_ledgers(&state.pg_connections).await?;
 
     for ledger in &ledgers {
         let mut tx = state.pg_connections.begin().await?;
