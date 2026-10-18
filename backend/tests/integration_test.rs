@@ -60,7 +60,10 @@ async fn create_user(c: &reqwest::Client) -> String {
         201,
     )
     .await;
-    body["user_id"].as_str().expect("user_id in body").to_string()
+    body["user_id"]
+        .as_str()
+        .expect("user_id in body")
+        .to_string()
 }
 
 /// Creates a ledger and returns its symbol.
@@ -93,11 +96,7 @@ async fn set_ledger_enabled(c: &reqwest::Client, symbol: &str, enabled: bool) {
 /// POSTs an account and returns `(status, body)`. The handler answers 201 when
 /// it manages to create the TigerBeetle account inline (within its 500ms
 /// budget) and 202 when it defers to the relay, so callers must accept both.
-async fn create_account(
-    c: &reqwest::Client,
-    user_id: &str,
-    ledger_symbol: &str,
-) -> (u16, Value) {
+async fn create_account(c: &reqwest::Client, user_id: &str, ledger_symbol: &str) -> (u16, Value) {
     let res = c
         .post(format!("{}/users/{user_id}/accounts", base()))
         .json(&json!({
@@ -159,7 +158,10 @@ async fn fetch_user_returns_created_user() {
     let id = create_user(&c).await;
 
     let body = expect_status(
-        c.get(format!("{}/users/{id}", base())).send().await.unwrap(),
+        c.get(format!("{}/users/{id}", base()))
+            .send()
+            .await
+            .unwrap(),
         200,
     )
     .await;
@@ -176,11 +178,7 @@ async fn list_users_includes_created_user() {
         200,
     )
     .await;
-    let found = body
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|u| u["user_id"] == id);
+    let found = body.as_array().unwrap().iter().any(|u| u["user_id"] == id);
     assert!(found, "created user {id} missing from list");
 }
 
@@ -230,11 +228,17 @@ async fn list_ledgers_includes_seeded_ledgers() {
     .await;
     let ledgers = body.as_array().unwrap();
 
-    let usd = ledgers.iter().find(|l| l["symbol"] == "USD").expect("USD ledger");
+    let usd = ledgers
+        .iter()
+        .find(|l| l["symbol"] == "USD")
+        .expect("USD ledger");
     assert_eq!(usd["decimals"], 2);
     assert_eq!(usd["enabled"], true);
     assert!(ledgers.iter().any(|l| l["symbol"] == "EUR"));
-    let btc = ledgers.iter().find(|l| l["symbol"] == "BTC").expect("BTC ledger");
+    let btc = ledgers
+        .iter()
+        .find(|l| l["symbol"] == "BTC")
+        .expect("BTC ledger");
     assert_eq!(btc["decimals"], 8);
 }
 
@@ -242,7 +246,10 @@ async fn list_ledgers_includes_seeded_ledgers() {
 async fn fetch_ledger_by_symbol_returns_it() {
     let c = client();
     let body = expect_status(
-        c.get(format!("{}/ledgers/USD", base())).send().await.unwrap(),
+        c.get(format!("{}/ledgers/USD", base()))
+            .send()
+            .await
+            .unwrap(),
         200,
     )
     .await;
@@ -284,7 +291,10 @@ async fn create_ledger_returns_201_and_is_visible() {
 
     // it should now be served from the in-memory cache too
     let fetched = expect_status(
-        c.get(format!("{}/ledgers/{symbol}", base())).send().await.unwrap(),
+        c.get(format!("{}/ledgers/{symbol}", base()))
+            .send()
+            .await
+            .unwrap(),
         200,
     )
     .await;
@@ -346,7 +356,10 @@ async fn set_ledger_enabled_toggles_flag() {
     assert_eq!(disabled["enabled"], false);
 
     let fetched = expect_status(
-        c.get(format!("{}/ledgers/{symbol}", base())).send().await.unwrap(),
+        c.get(format!("{}/ledgers/{symbol}", base()))
+            .send()
+            .await
+            .unwrap(),
         200,
     )
     .await;
@@ -467,7 +480,10 @@ async fn fetch_account_returns_it() {
     let account_id = body["account_id"].as_str().unwrap().to_string();
 
     let fetched = expect_status(
-        c.get(format!("{}/accounts/{account_id}", base())).send().await.unwrap(),
+        c.get(format!("{}/accounts/{account_id}", base()))
+            .send()
+            .await
+            .unwrap(),
         200,
     )
     .await;
@@ -605,8 +621,15 @@ async fn assert_system_accounts_ready(pool: &PgPool, tb: &tb::Client, symbol: &s
     );
 
     let ids: Vec<u128> = accounts.iter().map(|(_, _, id)| id.as_u128()).collect();
-    let found = tb.lookup_accounts(&ids).await.expect("lookup system accounts");
-    assert_eq!(found.len(), 2, "system accounts of {symbol} missing in tigerbeetle");
+    let found = tb
+        .lookup_accounts(&ids)
+        .await
+        .expect("lookup system accounts");
+    assert_eq!(
+        found.len(),
+        2,
+        "system accounts of {symbol} missing in tigerbeetle"
+    );
     for account in found {
         match account.code {
             2 => assert_eq!(
@@ -624,7 +647,9 @@ async fn create_active_account(c: &reqwest::Client, symbol: &str) -> (u128, u32)
     let user_id = create_user(c).await;
     let (_, body) = create_account(c, &user_id, symbol).await;
     let account_id = body["account_id"].as_str().expect("account_id").to_string();
-    let ledger_id = body["account_ledger_id"].as_u64().expect("account_ledger_id") as u32;
+    let ledger_id = body["account_ledger_id"]
+        .as_u64()
+        .expect("account_ledger_id") as u32;
     wait_for_active(c, &account_id).await;
     (Uuid::parse_str(&account_id).unwrap().as_u128(), ledger_id)
 }
@@ -726,14 +751,24 @@ async fn source_account_funds_user_and_goes_negative() {
         }])
         .await
         .expect("send transfer");
-    assert!(results.is_empty(), "deposit rejected: {:?}", results[0].result);
+    assert!(
+        results.is_empty(),
+        "deposit rejected: {:?}",
+        results[0].result
+    );
 
     let accounts = tb
         .lookup_accounts(&[source_account, user_account])
         .await
         .expect("lookup accounts");
-    let source = accounts.iter().find(|a| a.id == source_account).expect("source account");
-    let user = accounts.iter().find(|a| a.id == user_account).expect("user account");
+    let source = accounts
+        .iter()
+        .find(|a| a.id == source_account)
+        .expect("source account");
+    let user = accounts
+        .iter()
+        .find(|a| a.id == user_account)
+        .expect("user account");
     assert_eq!((source.debits_posted, source.credits_posted), (100, 0));
     assert_eq!((user.debits_posted, user.credits_posted), (0, 100));
 

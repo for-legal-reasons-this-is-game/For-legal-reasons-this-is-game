@@ -1,7 +1,4 @@
-use crate::{
-    domain::AccountCodeType,
-    v1::AppState,
-};
+use crate::{domain::AccountCodeType, v1::AppState};
 use cn_tigerbeetle::{self as tb};
 use sqlx::{self};
 use tokio::time::{Duration, timeout};
