@@ -9,8 +9,8 @@ use backend::{
     v1::{self, AppState},
 };
 use sqlx::postgres::PgPoolOptions;
-use tokio::signal::unix::{SignalKind, signal};
 use std::sync::Arc;
+use tokio::signal::unix::{SignalKind, signal};
 
 use cn_tigerbeetle as tb;
 
@@ -83,6 +83,8 @@ async fn main() {
         .route("/ledgers", post(v1::create_ledger))
         .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
+        .route("/markets", get(v1::list_markets))
+        .route("/markets/{symbol}", get(v1::fetch_market))
         .with_state(state);
 
     let router = Router::<()>::new().nest("/api/v1", v1);

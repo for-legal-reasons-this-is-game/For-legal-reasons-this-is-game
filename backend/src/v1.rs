@@ -11,8 +11,8 @@ use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::domain::{
-    Account, AccountCodeType, AccountStatus, Ledger, Position, Transfer, TransferDirection,
-    TransferPage, User,
+    Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Position, Transfer,
+    TransferDirection, TransferPage, User, to_decimal,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -92,12 +92,6 @@ struct RawBalance {
     credits_posted: i128,
     debits_pending: i128,
     credits_pending: i128,
-}
-
-// from i128 to Decimal type
-fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
-    Decimal::try_from_i128_with_scale(raw, decimals as u32)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 // if a idempotency key from the front end was already used with a different deposit/transfer(so if the other fields conflict) TB will reject it
@@ -225,7 +219,7 @@ pub async fn create_account(
 
     // timeout is needed for tb calls. the tb client does not implement timeouts
     match timeout(
-        Duration::from_millis(500),
+        Duration::from_secs(2),
         state.tb_client.create_accounts(&[tb_account]),
     )
     .await
@@ -580,7 +574,7 @@ pub async fn fetch_account_position(
         RawBalance::default()
     } else {
         match timeout(
-            Duration::from_millis(500),
+            Duration::from_secs(2),
             state
                 .tb_client
                 .lookup_accounts(&[account.account_id.as_u128()]),
@@ -784,4 +778,68 @@ pub async fn set_ledger_enabled(
     })?;
 
     Ok(Json(updated))
+}
+
+// lists all markets
+pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Market>>, StatusCode> {
+    let market_rows = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets ORDER BY market_id",
+    )
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let ledgers = load_ledgers(&state.pg_connections)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let markets = market_rows
+        .into_iter()
+        .map(|m| {
+            let base = ledgers
+                .iter()
+                .find(|l| l.ledger_id == m.base_ledger_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+                .clone();
+            let quote = ledgers
+                .iter()
+                .find(|l| l.ledger_id == m.quote_ledger_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+                .clone();
+            Market::from_row(m, base, quote)
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
+    Ok(Json(markets))
+}
+
+// fetches a specific market by its symbol
+pub async fn fetch_market(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Result<Json<Market>, StatusCode> {
+    let m = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                   min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                   maker_fee_bps, taker_fee_bps \
+            FROM markets WHERE symbol = $1",
+    )
+    .bind(symbol)
+    .fetch_optional(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(Market::from_row(m, base, quote)?))
 }
