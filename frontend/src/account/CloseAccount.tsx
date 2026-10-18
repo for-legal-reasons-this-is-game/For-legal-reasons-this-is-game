@@ -1,20 +1,26 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
-// import { errorMessage, api, ApiError } from "../api";
-import { useRequest } from "../api";
+import { api, useRequest } from "../api";
 
 export function CloseAccount() {
     const [accountID, setAccountID] = useState<string>("");
-    const close = useRequest(accountID.trim());
+    const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState<boolean>(false);
+    const close = useRequest(() => api.accounts.close(accountID.trim()));
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
 
+        setError(null);
+        setSuccess(false);
         if (!accountID.trim()) {
-            // setError("AccountID field can't be empty");
+            setError("AccountID field can't be empsty");
             return;
         }
-        await close.run();
-        // await close;
+        if (await close.run()) {
+            setError(close.error);
+        } else {
+            setSuccess(true);
+        }
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
@@ -34,8 +40,8 @@ export function CloseAccount() {
                     Close Account
                 </button>
             </form>
-            {close.error && <div style={{ color: "red" }}>{close.error}</div>}
-            {/* {close.success && <div style={{ color: "green" }}>{success}</div>} */}
+            {error && <div style={{ color: "red" }}>{close.error}</div>}
+            {success && <div style={{ color: "green" }}>{success}</div>}
         </div>
     );
 }
