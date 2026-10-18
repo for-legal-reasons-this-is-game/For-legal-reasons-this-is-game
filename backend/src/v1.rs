@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Position, Transfer,
-    TransferDirection, TransferPage, User,
+    TransferDirection, TransferPage, User, to_decimal,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -94,12 +94,6 @@ struct RawBalance {
     credits_pending: i128,
 }
 
-// from i128 to Decimal type
-fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
-    Decimal::try_from_i128_with_scale(raw, decimals as u32)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
 // if a idempotency key from the front end was already used with a different deposit/transfer(so if the other fields conflict) TB will reject it
 fn is_deposit_conflict(result: &CreateTransferResult) -> bool {
     matches!(
@@ -131,13 +125,6 @@ fn transfer_kind(t: &tb::Transfer) -> &'static str {
     }
 }
 
-// scales raw decimal to the decimal stored in db
-fn scale_to_decimal(raw: Decimal, decimals: i16) -> Result<Decimal, StatusCode> {
-    to_decimal(
-        raw.to_i128().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
-        decimals,
-    )
-}
 //                                                           API ENDPOINTS
 //create user and write it to postgress. returns the user details, or an error if it fails.
 pub async fn create_user(
@@ -811,7 +798,7 @@ pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Mark
 
     let markets = market_rows
         .into_iter()
-        .map(|m| -> Result<Market, StatusCode> {
+        .map(|m| {
             let base = ledgers
                 .iter()
                 .find(|l| l.ledger_id == m.base_ledger_id)
@@ -822,20 +809,7 @@ pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Mark
                 .find(|l| l.ledger_id == m.quote_ledger_id)
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
                 .clone();
-            Ok(Market {
-                market_id: m.market_id,
-                symbol: m.symbol,
-                status: m.status,
-                price_decimals: m.price_decimals,
-                min_base_quantity: scale_to_decimal(m.min_base_quantity, base.decimals)?,
-                quantity_step: scale_to_decimal(m.quantity_step, base.decimals)?,
-                min_quote_quantity: scale_to_decimal(m.min_quote_quantity, quote.decimals)?,
-                price_step: scale_to_decimal(m.price_step, m.price_decimals)?,
-                maker_fee_bps: m.maker_fee_bps,
-                taker_fee_bps: m.taker_fee_bps,
-                base_asset: base,
-                quote_asset: quote,
-            })
+            Market::from_row(m, base, quote)
         })
         .collect::<Result<Vec<_>, StatusCode>>()?;
     Ok(Json(markets))
@@ -867,18 +841,5 @@ pub async fn fetch_market(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(Market {
-        market_id: m.market_id,
-        symbol: m.symbol,
-        status: m.status,
-        price_decimals: m.price_decimals,
-        min_base_quantity: scale_to_decimal(m.min_base_quantity, base.decimals)?,
-        quantity_step: scale_to_decimal(m.quantity_step, base.decimals)?,
-        min_quote_quantity: scale_to_decimal(m.min_quote_quantity, quote.decimals)?,
-        price_step: scale_to_decimal(m.price_step, m.price_decimals)?,
-        maker_fee_bps: m.maker_fee_bps,
-        taker_fee_bps: m.taker_fee_bps,
-        base_asset: base,
-        quote_asset: quote,
-    }))
+    Ok(Json(Market::from_row(m, base, quote)?))
 }
