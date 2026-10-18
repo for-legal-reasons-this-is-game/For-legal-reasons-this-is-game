@@ -63,6 +63,28 @@ pub struct Ledger {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransferDirection {
+    In,  // money came into this account
+    Out, // money left this account
+}
+
+#[derive(Serialize)]
+pub struct Transfer {
+    pub transfer_id: Uuid,
+    pub direction: TransferDirection,
+    pub kind: &'static str,
+    pub amount: Decimal,
+    pub timestamp: String,
+}
+
+#[derive(Serialize)]
+pub struct TransferPage {
+    pub items: Vec<Transfer>,
+    pub next_cursor: Option<String>, // None means this was the last page
+}
+
 #[derive(
     Debug,
     Clone,
