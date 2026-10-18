@@ -11,8 +11,8 @@ use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::domain::{
-    Account, AccountCodeType, AccountStatus, Ledger, Position, Transfer, TransferDirection,
-    TransferPage, User,
+    Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Position, Transfer,
+    TransferDirection, TransferPage, User,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -131,6 +131,13 @@ fn transfer_kind(t: &tb::Transfer) -> &'static str {
     }
 }
 
+// scales raw decimal to the decimal stored in db
+fn scale_to_decimal(raw: Decimal, decimals: i16) -> Result<Decimal, StatusCode> {
+    to_decimal(
+        raw.to_i128().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
+        decimals,
+    )
+}
 //                                                           API ENDPOINTS
 //create user and write it to postgress. returns the user details, or an error if it fails.
 pub async fn create_user(
@@ -225,7 +232,7 @@ pub async fn create_account(
 
     // timeout is needed for tb calls. the tb client does not implement timeouts
     match timeout(
-        Duration::from_millis(500),
+        Duration::from_secs(2),
         state.tb_client.create_accounts(&[tb_account]),
     )
     .await
@@ -580,7 +587,7 @@ pub async fn fetch_account_position(
         RawBalance::default()
     } else {
         match timeout(
-            Duration::from_millis(500),
+            Duration::from_secs(2),
             state
                 .tb_client
                 .lookup_accounts(&[account.account_id.as_u128()]),
@@ -784,4 +791,94 @@ pub async fn set_ledger_enabled(
     })?;
 
     Ok(Json(updated))
+}
+
+// lists all markets
+pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Market>>, StatusCode> {
+    let market_rows = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets ORDER BY market_id",
+    )
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let ledgers = load_ledgers(&state.pg_connections)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let markets = market_rows
+        .into_iter()
+        .map(|m| -> Result<Market, StatusCode> {
+            let base = ledgers
+                .iter()
+                .find(|l| l.ledger_id == m.base_ledger_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+                .clone();
+            let quote = ledgers
+                .iter()
+                .find(|l| l.ledger_id == m.quote_ledger_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+                .clone();
+            Ok(Market {
+                market_id: m.market_id,
+                symbol: m.symbol,
+                status: m.status,
+                price_decimals: m.price_decimals,
+                min_base_quantity: scale_to_decimal(m.min_base_quantity, base.decimals)?,
+                quantity_step: scale_to_decimal(m.quantity_step, base.decimals)?,
+                min_quote_quantity: scale_to_decimal(m.min_quote_quantity, quote.decimals)?,
+                price_step: scale_to_decimal(m.price_step, m.price_decimals)?,
+                maker_fee_bps: m.maker_fee_bps,
+                taker_fee_bps: m.taker_fee_bps,
+                base_asset: base,
+                quote_asset: quote,
+            })
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
+    Ok(Json(markets))
+}
+
+// fetches a specific market by its symbol
+pub async fn fetch_market(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Result<Json<Market>, StatusCode> {
+    let m = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                   min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                   maker_fee_bps, taker_fee_bps \
+            FROM markets WHERE symbol = $1",
+    )
+    .bind(symbol)
+    .fetch_optional(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(Market {
+        market_id: m.market_id,
+        symbol: m.symbol,
+        status: m.status,
+        price_decimals: m.price_decimals,
+        min_base_quantity: scale_to_decimal(m.min_base_quantity, base.decimals)?,
+        quantity_step: scale_to_decimal(m.quantity_step, base.decimals)?,
+        min_quote_quantity: scale_to_decimal(m.min_quote_quantity, quote.decimals)?,
+        price_step: scale_to_decimal(m.price_step, m.price_decimals)?,
+        maker_fee_bps: m.maker_fee_bps,
+        taker_fee_bps: m.taker_fee_bps,
+        base_asset: base,
+        quote_asset: quote,
+    }))
 }

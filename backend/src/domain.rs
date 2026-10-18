@@ -33,6 +33,15 @@ pub enum AccountStatus {
     Processing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type)]
+#[sqlx(type_name = "market_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum MarketStatus {
+    Trading,
+    CancelOnly,
+    Halted,
+}
+
 #[derive(Serialize, FromRow)]
 pub struct Account {
     pub account_id: Uuid,
@@ -50,6 +59,38 @@ pub struct Ledger {
     pub name: String,
     pub decimals: i16,
     pub enabled: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct MarketRow {
+    pub market_id: i32,
+    pub symbol: String,
+    pub base_ledger_id: i32,
+    pub quote_ledger_id: i32,
+    pub status: MarketStatus,
+    pub price_decimals: i16,
+    pub min_base_quantity: Decimal,
+    pub min_quote_quantity: Decimal,
+    pub quantity_step: Decimal,
+    pub price_step: Decimal,
+    pub maker_fee_bps: i32,
+    pub taker_fee_bps: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Market {
+    pub market_id: i32,
+    pub symbol: String,
+    pub status: MarketStatus,
+    pub base_asset: Ledger,
+    pub quote_asset: Ledger,
+    pub price_decimals: i16,
+    pub min_base_quantity: Decimal,
+    pub min_quote_quantity: Decimal,
+    pub quantity_step: Decimal,
+    pub price_step: Decimal,
+    pub maker_fee_bps: i32,
+    pub taker_fee_bps: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
