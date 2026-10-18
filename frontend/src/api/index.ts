@@ -10,6 +10,7 @@ import type { LedgerPayload } from "../types/LedgerPayload";
 import type { UserPayload } from "../types/UserPayload";
 
 export { ApiError, errorMessage } from "./client";
+export { useRequest } from "./useRequest";
 
 // encodeURIComponent so a symbol like "BTC/USD" can't break the URL.
 const seg = encodeURIComponent;
