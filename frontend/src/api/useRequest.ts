@@ -24,9 +24,9 @@ export function useRequest<T>(request: () => Promise<T>) {
         }
     }
     return {
-        run,
+        data,
         error,
         loading,
-        data,
+        run,
     };
 }

@@ -7,7 +7,7 @@ import { Ledgers } from "./ledger/Ledgers";
 import { Account } from "./account/Account";
 import { Position } from "./account/Position";
 import { EnableLedger } from "./ledger/EnableLedger";
-import { Ledger } from "./ledger/Ledger";
+import { LedgerLookup } from "./ledger/LedgerLookup";
 import { CloseAccount } from "./account/CloseAccount";
 
 function App() {
@@ -96,7 +96,7 @@ function App() {
             {createLedger && <CreateLedger />}
             {ledgers && <Ledgers />}
             {enableLedger && <EnableLedger />}
-            {ledger && <Ledger />}
+            {ledger && <LedgerLookup />}
             {closeAccount && <CloseAccount />}
         </div>
     );

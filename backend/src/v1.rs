@@ -368,7 +368,7 @@ pub async fn close_account(
     }
 }
 
-// reopens a closed account.Returns NO CONTENT for already open accounts and when it succeeds at closing an account
+// reopens a closed account.Returns NO CONTENT for already open accounts and when it succeeds at reopening an account
 pub async fn reopen_account(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,

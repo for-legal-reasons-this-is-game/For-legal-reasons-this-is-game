@@ -9,7 +9,7 @@ export function CreateLedger() {
         name: "",
         decimals: 2,
     });
-    // null = nothing created yet; no need for a fake "empty" Ledger
+
     const [ledger, setLedger] = useState<Ledger | null>(null);
     const [error, setError] = useState<string | null>(null);
 
