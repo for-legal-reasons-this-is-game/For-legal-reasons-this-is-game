@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { errorMessage } from "./client";
 
-type Result<T> = { ok: true; data: T | null } | { ok: false; error: string };
+type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 export function useRequest<T>(request: () => Promise<T>) {
     const [error, setError] = useState<string | null>(null);
