@@ -1,30 +1,32 @@
 import { useState } from "react";
-import { ApiError, errorMessage } from "../api";
+import { errorMessage } from "./client";
 
-export function useRequest<T>(request: () => Promise<T> | void) {
+type Result<T> = { ok: true; data: T | null } | { ok: false; error: string };
+
+export function useRequest<T>(request: () => Promise<T>) {
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
+    const [data, setData] = useState<T>();
 
-    async function run(): Promise<boolean> {
+    async function run(): Promise<Result<T>> {
         setError(null);
         try {
             setLoading(true);
-            await request();
+            const res = await request();
+            setData(res);
+            return { ok: true, data: res };
         } catch (e) {
-            if (e instanceof ApiError) {
-                if (e.status === 404) setError("No Account with this ID");
-                else if (e.status === 401) setError("Only User Accounts can be closed");
-                else setError(errorMessage(e));
-            } else setError(errorMessage(e));
-            return true;
+            const message = errorMessage(e);
+            setError(message);
+            return { ok: false, error: message };
         } finally {
             setLoading(false);
         }
-        return true;
     }
     return {
         run,
         error,
         loading,
+        data,
     };
 }

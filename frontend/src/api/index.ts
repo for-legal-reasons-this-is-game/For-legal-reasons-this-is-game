@@ -11,6 +11,7 @@ import type { UserPayload } from "../types/UserPayload";
 
 export { ApiError, errorMessage } from "./client";
 export { useRequest } from "./useRequest";
+export { useFetch } from "./useFetch";
 
 // encodeURIComponent so a symbol like "BTC/USD" can't break the URL.
 const seg = encodeURIComponent;
