@@ -6,7 +6,6 @@ import { CreateLedger } from "./ledger/CreateLedger";
 import { Ledgers } from "./ledger/Ledgers";
 import { Account } from "./account/Account";
 import { Position } from "./account/Position";
-import { EnableLedger } from "./ledger/EnableLedger";
 import { LedgerLookup } from "./ledger/LedgerLookup";
 import { CloseAccount } from "./account/CloseAccount";
 
@@ -19,7 +18,6 @@ function App() {
     const [ledgers, setLedgers] = useState(false);
     const [account, setAccount] = useState(false);
     const [accountPosition, setAccountPosition] = useState(false);
-    const [enableLedger, setSetLedgerEnabled] = useState(false);
     const [ledger, setLedger] = useState(false);
     const [closeAccount, setCloseAccount] = useState(false);
 
@@ -77,12 +75,6 @@ function App() {
             </button>
             <br />
             <button
-                style={{ background: enableLedger ? "green" : "grey" }}
-                onClick={() => setSetLedgerEnabled(!enableLedger)}>
-                Enable Ledger
-            </button>
-            <br />
-            <button
                 style={{ background: ledger ? "green" : "grey" }}
                 onClick={() => setLedger(!ledger)}>
                 Get Ledger
@@ -95,7 +87,6 @@ function App() {
             {accountPosition && <Position />}
             {createLedger && <CreateLedger />}
             {ledgers && <Ledgers />}
-            {enableLedger && <EnableLedger />}
             {ledger && <LedgerLookup />}
             {closeAccount && <CloseAccount />}
         </div>
