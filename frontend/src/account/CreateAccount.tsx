@@ -20,9 +20,7 @@ export function CreateAccount({ userID }: CreateAccountProps) {
         setError(null);
         if (!formData.name || !formData.ledger_symbol || !userID) {
             setError(
-                errorMessage(
-                    "Empty field or no userID set. click ListUsers to set userID as last user in the list",
-                ),
+                "Empty field or no userID set. click ListUsers to set userID",
             );
             return;
         }

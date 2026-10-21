@@ -17,7 +17,7 @@ export function CreateLedger() {
         event.preventDefault();
         setError(null);
         if (!formData.symbol || !formData.name) {
-            setError(errorMessage("Can't have empty fields"));
+            setError("Can't have empty fields");
             return;
         }
         try {

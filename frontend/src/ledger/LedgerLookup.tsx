@@ -1,6 +1,6 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { api, ApiError, errorMessage } from "../api";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { api, errorMessage } from "../api";
+import { useQuery } from "@tanstack/react-query";
 
 export function LedgerLookup() {
     const [symbol, setSymbol] = useState("");
@@ -16,7 +16,8 @@ export function LedgerLookup() {
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!symbol.trim()) {
-            setValidationError("Symbol field can't be emoty");
+            setValidationError("Symbol field can't be empty");
+            return;
         }
         setSubmittedSymbol(symbol.trim());
     }
@@ -38,9 +39,9 @@ export function LedgerLookup() {
             {validationError && <div style={{ color: "red" }}>{validationError}</div>}
             {isError && (
                 <div style={{ color: "red" }}>
-                    {error instanceof ApiError && error.status === 404
-                        ? "A ledger with this symbol doesn't exist"
-                        : errorMessage(error.message)}
+                    {errorMessage(error, {
+                        404: "A ledger with this symbol doesn't exist",
+                    })}
                 </div>
             )}
             {isFetching && <div>Loading...</div>}

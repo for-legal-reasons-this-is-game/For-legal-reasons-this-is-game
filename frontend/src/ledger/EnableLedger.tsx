@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function EnableLedger({ symbol, enabled }: { symbol: string; enabled: boolean }) {
@@ -19,7 +19,7 @@ export function EnableLedger({ symbol, enabled }: { symbol: string; enabled: boo
                 type="button">
                 {enabled ? "Disable" : "Enable"}
             </button>
-            {isError && <div style={{ color: "red" }}>{error.message}</div>}
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
             {isPending && <div>Loading...</div>}
         </>
     );

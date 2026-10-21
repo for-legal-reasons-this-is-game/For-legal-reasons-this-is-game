@@ -34,7 +34,7 @@ export function Ledgers() {
             <h3>List of Ledgers</h3>
             <button onClick={() => refetch()}>Refresh</button>
             {isError && (
-                <div style={{ color: "red" }}> {errorMessage(error.message)} </div>
+                <div style={{ color: "red" }}> {errorMessage(error)} </div>
             )}
             {(isPending || isFetching) && <div>Loading...</div>}
             {data?.map((ledger) => (

@@ -22,7 +22,7 @@ export function CreateUser() {
             !formData.passwordConfirmation ||
             formData.password != formData.passwordConfirmation
         ) {
-            setError(errorMessage("Empty field or mismatching password fields"));
+            setError("Empty field or mismatching password fields");
             return;
         }
         try {

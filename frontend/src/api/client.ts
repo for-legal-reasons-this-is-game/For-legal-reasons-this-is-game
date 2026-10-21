@@ -1,19 +1,31 @@
 // Thin wrapper around fetch: one place for the base URL, JSON headers,
 // status checking and error shaping. Components never call fetch directly.
+//
+// Every failure in request() is thrown as an ApiError, never as a raw
+// TypeError/SyntaxError. That's what makes the TanStack Query declaration in
+// react-query.d.ts (`defaultError: ApiError`) true, so `error.status` is safe.
 
 // '' in dev: the Vite proxy forwards /api to the backend (see vite.config.ts).
 // Set VITE_API_BASE at build time if the API lives on another origin.
 const API_BASE: string = import.meta.env.VITE_API_BASE ?? "";
 
-// Thrown for any non-2xx response. `body` is whatever text the server sent,
-// e.g. axum's "Failed to deserialize the JSON body..." on a 422.
+// network:          no response at all (backend/proxy unreachable, offline, CORS)
+// http:             the server answered with a non-2xx status
+// invalid-response: a 2xx whose body isn't the JSON we expected
+export type ApiErrorKind = "network" | "http" | "invalid-response";
+
 export class ApiError extends Error {
+    kind: ApiErrorKind;
+    // HTTP status; 0 when there was no response (kind "network").
     status: number;
+    // Text the server sent, e.g. axum's "Failed to deserialize the JSON body..."
+    // on a 422. Empty when there was none, or when it was an HTML error page.
     body: string;
 
-    constructor(status: number, body: string) {
-        super(body ? `${status}: ${body}` : `HTTP ${status}`);
+    constructor(kind: ApiErrorKind, status: number, body = "", cause?: unknown) {
+        super(body ? `${status}: ${body}` : `${kind} error (${status})`, { cause });
         this.name = "ApiError";
+        this.kind = kind;
         this.status = status;
         this.body = body;
     }
@@ -22,21 +34,31 @@ export class ApiError extends Error {
 type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${API_BASE}/api/v1${path}`, {
-        method,
-        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-
-    // Read as text first: our backend sends empty bodies on errors (and could on 204),
-    // and res.json() throws on an empty string.
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+        res = await fetch(`${API_BASE}/api/v1${path}`, {
+            method,
+            headers:
+                body !== undefined ? { "Content-Type": "application/json" } : undefined,
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+        text = await res.text();
+    } catch (e) {
+        throw new ApiError("network", 0, "", e);
+    }
 
     if (!res.ok) {
         const isHtml = res.headers.get("Content-Type")?.includes("text/html");
-        throw new ApiError(res.status, isHtml ? "" : text);
+        throw new ApiError("http", res.status, isHtml ? "" : text);
     }
-    return (text ? JSON.parse(text) : undefined) as T;
+
+    if (!text) return undefined as T;
+    try {
+        return JSON.parse(text) as T;
+    } catch (e) {
+        throw new ApiError("invalid-response", res.status, "", e);
+    }
 }
 
 export const http = {
@@ -47,17 +69,31 @@ export const http = {
     delete: <T>(path: string) => request<T>("DELETE", path),
 };
 
-// Turn anything caught in a try/catch into a message you can show the user.
-export function errorMessage(error: unknown): string {
-    if (error instanceof ApiError) {
-        if (error.status >= 502 && error.status <= 504)
-            return "The server is unavailable. Try again shortly.";
-        if (error.body) return error.body;
-        if (error.status === 404) return "Not found";
-        if (error.status === 400) return "Bad request";
-        return `Server error (${error.status})`;
+// Per-status wording for one screen, e.g. { 404: "No ledger with this symbol" }.
+export type ErrorOverrides = Partial<Record<number, string>>;
+
+// Turn any error into a message you can show the user. Pass `overrides` for
+// statuses that need wording specific to the screen.
+export function errorMessage(error: unknown, overrides: ErrorOverrides = {}): string {
+    if (!(error instanceof ApiError)) {
+        // Not from request(): a bug in our own code. Show something rather than nothing.
+        return error instanceof Error ? error.message : String(error);
     }
-    if (error instanceof TypeError)
-        return "Can't reach the server. Is the backend running?";
-    return String(error);
+
+    switch (error.kind) {
+        case "network":
+            return "Can't reach the server. Is the backend running?";
+        case "invalid-response":
+            return "The server sent an unexpected response.";
+        case "http": {
+            const override = overrides[error.status];
+            if (override) return override;
+            if (error.status >= 502 && error.status <= 504)
+                return "The server is unavailable. Try again shortly.";
+            if (error.body) return error.body;
+            if (error.status === 404) return "Not found";
+            if (error.status === 400) return "Bad request";
+            return `Server error (${error.status})`;
+        }
+    }
 }
