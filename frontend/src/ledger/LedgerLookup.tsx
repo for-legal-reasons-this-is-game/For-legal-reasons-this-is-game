@@ -1,48 +1,56 @@
-import { useState, type FormEvent, type ChangeEvent } from "react";
-import { api, useRequest } from "../api";
+import { type FormEvent, type ChangeEvent, useState } from "react";
+import { api, ApiError, errorMessage } from "../api";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 export function LedgerLookup() {
     const [symbol, setSymbol] = useState("");
-    // only for form validation; the request's own error lives in the hook
+    const [submittedSymbol, setSubmittedSymbol] = useState("");
     const [validationError, setValidationError] = useState<string | null>(null);
-    const lookup = useRequest(() => api.ledgers.get(symbol.trim()));
+
+    const { isError, isFetching, isSuccess, data, error } = useQuery({
+        queryKey: ["ledgers", submittedSymbol],
+        queryFn: () => api.ledgers.get(submittedSymbol),
+        enabled: !!submittedSymbol,
+    });
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-
         if (!symbol.trim()) {
-            setValidationError("Symbol field can't be empty");
-            return;
+            setValidationError("Symbol field can't be emoty");
         }
-        setValidationError(null);
-        await lookup.run();
+        setSubmittedSymbol(symbol.trim());
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
+        setValidationError(null);
         setSymbol(event.target.value);
     }
-
-    const error = validationError ?? lookup.error;
-    const ledger = lookup.data;
 
     return (
         <>
             <h3>Ledger</h3>
             <form onSubmit={handleSubmit}>
                 <input value={symbol} onChange={handleChange} placeholder="Symbol" />
-                <button disabled={lookup.loading} type="submit">
+                <button disabled={isFetching} type="submit">
                     Get Ledger
                 </button>
             </form>
-            {error && <div style={{ color: "red" }}>{error}</div>}
-            {/* !error: the hook keeps the last ledger when a newer lookup fails */}
-            {ledger && !error && (
+            {validationError && <div style={{ color: "red" }}>{validationError}</div>}
+            {isError && (
+                <div style={{ color: "red" }}>
+                    {error instanceof ApiError && error.status === 404
+                        ? "A ledger with this symbol doesn't exist"
+                        : errorMessage(error.message)}
+                </div>
+            )}
+            {isFetching && <div>Loading...</div>}
+            {data && isSuccess && (
                 <>
-                    <div>Name: {ledger.name} </div>
-                    <div>Ledger ID: {ledger.ledger_id} </div>
-                    <div>Symbol: {ledger.symbol} </div>
-                    <div>Decimals: {ledger.decimals} </div>
-                    <div>Status: {ledger.enabled ? "Enabled" : "Disabled"} </div>
+                    <div>Name: {data.name} </div>
+                    <div>Ledger ID: {data.ledger_id} </div>
+                    <div>Symbol: {data.symbol} </div>
+                    <div>Decimals: {data.decimals} </div>
+                    <div>Status: {data.enabled ? "Enabled" : "Disabled"} </div>
                 </>
             )}
         </>
