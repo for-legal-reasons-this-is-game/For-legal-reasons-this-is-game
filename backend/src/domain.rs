@@ -5,6 +5,8 @@ use num_traits::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+// #[derive(TS)] + #[ts(export)] generate TypeScript types for the frontend
+// (`cargo test export_bindings` writes them to bindings/)
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -174,8 +176,8 @@ pub struct TransferPage {
     TS,
 )]
 #[repr(i16)]
-// #[serde(try_from = "i16", into = "i16")]
-#[ts(export)]
+#[serde(try_from = "i16", into = "i16")]
+#[ts(export, as = "i16")]
 pub enum AccountCodeType {
     User = 1,
     Fee = 2,

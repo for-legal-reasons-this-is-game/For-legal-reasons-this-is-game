@@ -15,7 +15,6 @@ use tokio::signal::unix::{SignalKind, signal};
 use cn_tigerbeetle as tb;
 
 use std::env;
-use tower_http::cors::CorsLayer;
 
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
@@ -86,8 +85,7 @@ async fn main() {
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .route("/markets", get(v1::list_markets))
         .route("/markets/{symbol}", get(v1::fetch_market))
-        .with_state(state)
-        .layer(CorsLayer::permissive());
+        .with_state(state);
 
     let router = Router::<()>::new().nest("/api/v1", v1);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();

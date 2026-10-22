@@ -1,7 +1,7 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { UserPayload } from "../types/UserPayload";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function CreateUser() {
     const [formData, setFormData] = useState<UserPayload>({
@@ -9,8 +9,10 @@ export function CreateUser() {
     });
     const [validationError, setValidationError] = useState<string | null>(null);
 
+    const queryClient = useQueryClient();
     const { isPending, isError, isSuccess, data, error, mutate } = useMutation({
         mutationFn: (payload: UserPayload) => api.users.create(payload),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
     });
 
     function handleSubmit(event: FormEvent<HTMLFormElement>) {

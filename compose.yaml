@@ -5,7 +5,8 @@ x-tigerbeetle-common: &tigerbeetle-common
     - "seccomp=unconfined"
   cap_add:
     - IPC_LOCK
-  # 1 GiB journal + grid cache + working set - allocates ~2.3GiB during init
+  # 1 GiB journal + grid cache + working set - allocates ~2.3GiB during init,
+  # so 2g got the replicas OOM-killed and restarting
   mem_limit: 3g
   entrypoint: ["tini", "--", "sh", "-c"]
 
@@ -18,6 +19,9 @@ include:
   - ./secret_managment/docker-compose.yaml
 
 services:
+  # Production build of the React app served by nginx (frontend/Dockerfile).
+  # nginx also proxies /api/* to backend:8000 (frontend/server.conf), so the
+  # browser only talks to this one origin. Open http://localhost:4343.
   frontend:
     container_name: frontend
     build: ./frontend/

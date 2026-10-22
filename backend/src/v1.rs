@@ -8,6 +8,8 @@ use proto::{CancelOrdersRequest, RejectReason};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{Duration, timeout};
+// #[derive(TS)] + #[ts(export)] generate TypeScript types for the frontend
+// (`cargo test export_bindings` writes them to bindings/)
 use ts_rs::TS;
 use uuid::Uuid;
 
