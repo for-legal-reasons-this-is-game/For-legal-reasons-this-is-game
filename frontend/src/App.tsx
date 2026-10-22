@@ -3,9 +3,9 @@ import { CreateUser } from "./user/CreateUser";
 import { ListUsers } from "./user/ListUsers";
 import { CreateAccount } from "./account/CreateAccount";
 import { CreateLedger } from "./ledger/CreateLedger";
-import { Ledgers } from "./ledger/Ledgers";
-import { Account } from "./account/Account";
-import { Position } from "./account/Position";
+import { ListLedgers } from "./ledger/ListLedgers";
+import { AccountLookup } from "./account/AccountLookup";
+import { PositionLookup } from "./account/PositionLookup";
 import { LedgerLookup } from "./ledger/LedgerLookup";
 import { CloseAccount } from "./account/CloseAccount";
 
@@ -83,10 +83,10 @@ function App() {
             {createUser && <CreateUser />}
             {users && <ListUsers setUserID={setUserID} />}
             {createAccount && <CreateAccount userID={userID} />}
-            {account && <Account />}
-            {accountPosition && <Position />}
+            {account && <AccountLookup />}
+            {accountPosition && <PositionLookup />}
             {createLedger && <CreateLedger />}
-            {ledgers && <Ledgers />}
+            {ledgers && <ListLedgers />}
             {ledger && <LedgerLookup />}
             {closeAccount && <CloseAccount />}
         </div>

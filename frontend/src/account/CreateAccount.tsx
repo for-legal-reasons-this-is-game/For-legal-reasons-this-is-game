@@ -20,13 +20,16 @@ export function CreateAccount({ userID }: { userID: string }) {
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
 
-        if (!formData.name || !formData.ledger_symbol || !userID) {
+        if (!formData.name.trim() || !formData.ledger_symbol.trim() || !userID) {
             setValidationError(
                 "Empty field or no userID set. click ListUsers to set userID",
             );
             return;
         }
-        mutate(formData);
+        mutate({
+            ...formData,
+            name: formData.name.trim(),
+        });
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {

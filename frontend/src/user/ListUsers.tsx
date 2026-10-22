@@ -1,5 +1,6 @@
 import { type User } from "../types/User";
-import { api, useFetch } from "../api";
+import { api, errorMessage } from "../api";
+import { useQuery } from "@tanstack/react-query";
 
 function User({ user, setUserID }: { user: User; setUserID: (id: string) => void }) {
     return (
@@ -14,14 +15,17 @@ function User({ user, setUserID }: { user: User; setUserID: (id: string) => void
 }
 
 export function ListUsers({ setUserID }: { setUserID: (id: string) => void }) {
-    const { data, error, loading, refresh } = useFetch(() => api.users.list());
+    const { isFetching, isError, data, error, refetch } = useQuery({
+        queryKey: ["users"],
+        queryFn: () => api.users.list(),
+    });
 
     return (
         <>
             <h3>Users</h3>
-            <button onClick={refresh}>refresh</button>
-            {loading && <div>Loading...</div>}
-            {error && <div style={{ color: "red" }}>{error}</div>}
+            <button onClick={() => refetch()}>Refresh</button>
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isFetching && <div>Loading...</div>}
             {data?.map((user) => {
                 return (
                     <div key={user.user_id}>

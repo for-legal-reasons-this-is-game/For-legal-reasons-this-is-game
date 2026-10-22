@@ -23,10 +23,10 @@ function Ledger({ ledger }: { ledger: Ledger }) {
     );
 }
 
-export function Ledgers() {
+export function ListLedgers() {
     const { isError, isFetching, data, error, refetch } = useQuery({
         queryKey: ["ledgers"],
-        queryFn: api.ledgers.list,
+        queryFn: () => api.ledgers.list(),
     });
 
     return (

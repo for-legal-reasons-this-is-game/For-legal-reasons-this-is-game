@@ -1,19 +1,21 @@
-import { useState, type FormEvent, type ChangeEvent } from "react";
+import { type FormEvent, type ChangeEvent, useState } from "react";
 import { api, errorMessage } from "../api";
 import { useQuery } from "@tanstack/react-query";
 
-export function Account() {
+export function PositionLookup() {
+    // TODO: put PositionLookup in Account or AccountList, and pass to it AccounID
     const [accountID, setAccountID] = useState<string>("");
     const [submittedAccountID, setSubmittedAccountID] = useState("");
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const { isFetching, isError, isSuccess, data, error } = useQuery({
-        queryKey: ["account", submittedAccountID],
-        queryFn: () => api.accounts.get(submittedAccountID),
+        queryKey: ["position", submittedAccountID],
+        queryFn: () => api.accounts.position(submittedAccountID),
         enabled: !!submittedAccountID,
     });
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+
         if (!accountID.trim()) {
             setValidationError("AccountID field can't be empty");
             return;
@@ -28,28 +30,30 @@ export function Account() {
 
     return (
         <>
-            <h3>Account</h3>
+            <h3>Account Position</h3>
             <form onSubmit={handleSubmit}>
                 <input
                     onChange={handleChange}
                     value={accountID}
                     placeholder="AccountID"
                 />
-                <button type="submit">Get Account</button>
+                <button type="submit">Get Account Position</button>
             </form>
-
             {validationError && <div style={{ color: "red" }}>{validationError}</div>}
             {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
             {isFetching && <div>Loading...</div>}
             {isSuccess && (
                 <>
-                    <div>Received account...</div>
-                    <div>Name: {data.account_name} </div>
-                    <div>ID: {data.account_id} </div>
-                    <div>Code Type: {data.account_code_type} </div>
-                    <div>Ledger ID: {data.account_ledger_id} </div>
-                    <div>Status: {data.account_status} </div>
-                    <div>User ID: {data.account_user_id} </div>
+                    <div>Received Position...</div>
+                    <div>Account ID: {data.account_id} </div>
+                    <div>Account Status: {data.account_status} </div>
+                    <div>Symbol: {data.symbol} </div>
+                    <div>Decimals ID: {data.decimals} </div>
+                    <div>Debits Posted: {data.debits_posted} </div>
+                    <div>Credits Posted: {data.credits_posted} </div>
+                    <div>Debits Pending: {data.debits_pending} </div>
+                    <div>Credits Pending: {data.credits_pending} </div>
+                    <div>Net Posted: {data.net_posted} </div>
                 </>
             )}
         </>

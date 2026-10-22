@@ -20,11 +20,15 @@ export function CreateLedger() {
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
 
-        if (!formData.symbol || !formData.name || formData.decimals < 0) {
+        if (!formData.symbol.trim() || !formData.name.trim() || formData.decimals < 0) {
             setValidationError("Can't have empty fields");
             return;
         }
-        mutate(formData);
+        mutate({
+            ...formData,
+            symbol: formData.symbol.trim(),
+            name: formData.name.trim(),
+        });
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {

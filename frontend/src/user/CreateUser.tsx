@@ -1,38 +1,33 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { type User } from "../types/User";
 import { api, errorMessage } from "../api";
+import type { UserPayload } from "../types/UserPayload";
+import { useMutation } from "@tanstack/react-query";
 
 export function CreateUser() {
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<UserPayload>({
         name: "",
-        email: "",
-        password: "",
-        passwordConfirmation: "",
     });
-    const [user, setUser] = useState<User | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [validationError, setValidationError] = useState<string | null>(null);
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const { isPending, isError, isSuccess, data, error, mutate } = useMutation({
+        mutationFn: (payload: UserPayload) => api.users.create(payload),
+    });
+
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        setError(null);
-        if (
-            !formData.name ||
-            !formData.email ||
-            !formData.password ||
-            !formData.passwordConfirmation ||
-            formData.password != formData.passwordConfirmation
-        ) {
-            setError("Empty field or mismatching password fields");
+
+        if (!formData.name.trim()) {
+            setValidationError("Name field can't be empty");
             return;
         }
-        try {
-            setUser(await api.users.create(formData));
-        } catch (e) {
-            setError(errorMessage(e));
-        }
+        mutate({
+            ...formData,
+            name: formData.name.trim(),
+        });
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
+        setValidationError(null);
         const { name, value } = event.target;
         setFormData((prev) => ({
             ...prev,
@@ -50,34 +45,18 @@ export function CreateUser() {
                     onChange={handleChange}
                     placeholder="User Name"
                 />
-                <input
-                    name="email"
-                    value={formData.email}
-                    onChange={handleChange}
-                    placeholder="Email"
-                />
-                <input
-                    name="password"
-                    type="password"
-                    value={formData.password}
-                    onChange={handleChange}
-                    placeholder="Password"
-                />
-                <input
-                    name="passwordConfirmation"
-                    type="password"
-                    value={formData.passwordConfirmation}
-                    onChange={handleChange}
-                    placeholder="Password Confirmation"
-                />
-                <button type="submit">Create User</button>
+                <button disabled={isPending} type="submit">
+                    Create User
+                </button>
             </form>
-            {error && <div style={{ color: "red" }}>{error}</div>}
-            {user && (
+            {validationError && <div style={{ color: "red" }}>{validationError}</div>}
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isPending && <div>Loading...</div>}
+            {isSuccess && (
                 <div>
                     <div>Created User...</div>
-                    <div>name: {user.user_name}</div>
-                    <div>id: {user.user_id}</div>
+                    <div>name: {data.user_name}</div>
+                    <div>id: {data.user_id}</div>
                 </div>
             )}
         </div>
