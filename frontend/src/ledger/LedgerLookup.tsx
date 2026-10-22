@@ -13,8 +13,9 @@ export function LedgerLookup() {
         enabled: !!submittedSymbol,
     });
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+
         if (!symbol.trim()) {
             setValidationError("Symbol field can't be empty");
             return;
@@ -32,9 +33,7 @@ export function LedgerLookup() {
             <h3>Ledger</h3>
             <form onSubmit={handleSubmit}>
                 <input value={symbol} onChange={handleChange} placeholder="Symbol" />
-                <button disabled={isFetching} type="submit">
-                    Get Ledger
-                </button>
+                <button type="submit">Get Ledger</button>
             </form>
             {validationError && <div style={{ color: "red" }}>{validationError}</div>}
             {isError && (
@@ -45,7 +44,7 @@ export function LedgerLookup() {
                 </div>
             )}
             {isFetching && <div>Loading...</div>}
-            {data && isSuccess && (
+            {isSuccess && (
                 <>
                     <div>Name: {data.name} </div>
                     <div>Ledger ID: {data.ledger_id} </div>

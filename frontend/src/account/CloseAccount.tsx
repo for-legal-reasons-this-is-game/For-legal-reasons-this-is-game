@@ -1,30 +1,34 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
-import { api, useRequest } from "../api";
+import { api, errorMessage } from "../api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function CloseAccount() {
+    // TODO: put CloseAccount in Account or AccountList component and pass to it AccountID
     const [accountID, setAccountID] = useState<string>("");
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
-    const close = useRequest<void>(() => api.accounts.close(accountID.trim()));
+    const [validationError, setValidationError] = useState<string | null>(null);
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const queryClient = useQueryClient();
+    const { isPending, isError, isSuccess, variables, error, mutate } = useMutation({
+        mutationFn: (id: string) => api.accounts.close(id),
+        onSuccess: (_data, id) =>
+            Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["account", id] }),
+                queryClient.invalidateQueries({ queryKey: ["position", id] }),
+            ]),
+    });
+
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
 
-        setError(null);
-        setSuccess(null);
         if (!accountID.trim()) {
-            setError("AccountID field can't be empty");
+            setValidationError("AccountID field can't be empty");
             return;
         }
-        const res = await close.run();
-        if (res.ok) {
-            setSuccess(`Closed Account (${accountID})`);
-        } else {
-            setError(res.error);
-        }
+        mutate(accountID.trim());
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
+        setValidationError(null);
         setAccountID(event.target.value);
     }
 
@@ -37,12 +41,17 @@ export function CloseAccount() {
                     value={accountID}
                     placeholder="AccountID"
                 />
-                <button disabled={close.loading} type="submit">
+                <button disabled={isPending} type="submit">
                     Close Account
                 </button>
             </form>
-            {error && <div style={{ color: "red" }}>{error}</div>}
-            {success && <div style={{ color: "green" }}>{success}</div>}
+            {validationError && <div style={{ color: "red" }}>{validationError}</div>}
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isSuccess && (
+                <div style={{ color: "green" }}>
+                    {`Closed account ${variables} successfully`}
+                </div>
+            )}
         </div>
     );
 }

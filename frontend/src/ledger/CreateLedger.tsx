@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
 import { type LedgerPayload } from "../types/LedgerPayload";
-import { type Ledger } from "../types/Ledger";
 import { api, errorMessage } from "../api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function CreateLedger() {
     const [formData, setFormData] = useState<LedgerPayload>({
@@ -9,26 +9,27 @@ export function CreateLedger() {
         name: "",
         decimals: 2,
     });
+    const [validationError, setValidationError] = useState<string | null>(null);
 
-    const [ledger, setLedger] = useState<Ledger | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const queryClient = useQueryClient();
+    const { isPending, isError, isSuccess, data, error, mutate } = useMutation({
+        mutationFn: (payload: LedgerPayload) => api.ledgers.create(payload),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ledgers"] }),
+    });
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        setError(null);
-        if (!formData.symbol || !formData.name) {
-            setError("Can't have empty fields");
+
+        if (!formData.symbol || !formData.name || formData.decimals < 0) {
+            setValidationError("Can't have empty fields");
             return;
         }
-        try {
-            setLedger(await api.ledgers.create(formData));
-        } catch (e) {
-            setError(errorMessage(e));
-        }
+        mutate(formData);
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
         const { name, value } = event.target;
+        setValidationError(null);
         setFormData((prev) => ({
             ...prev,
             [name]: name === "decimals" ? Number(value) : value,
@@ -58,18 +59,21 @@ export function CreateLedger() {
                     onChange={handleChange}
                     placeholder="Decimals"
                 />
-                <button type="submit">Create Ledger</button>
+                <button disabled={isPending} type="submit">
+                    Create Ledger
+                </button>
             </form>
 
-            {error && <div style={{ color: "red" }}>{error}</div>}
-            {ledger && (
+            {validationError && <div style={{ color: "red" }}>{validationError}</div>}
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isSuccess && (
                 <div>
                     <div>Created Ledger: </div>
-                    <div>Name: {ledger.name}</div>
-                    <div>Symbol: {ledger.symbol}</div>
-                    <div>Decimals: {ledger.decimals}</div>
-                    <div>Ledger ID: {ledger.ledger_id}</div>
-                    <div>Enabled: {ledger.enabled ? "true" : "false"}</div>
+                    <div>Name: {data.name}</div>
+                    <div>Symbol: {data.symbol}</div>
+                    <div>Decimals: {data.decimals}</div>
+                    <div>Ledger ID: {data.ledger_id}</div>
+                    <div>Enabled: {data.enabled ? "true" : "false"}</div>
                 </div>
             )}
         </>

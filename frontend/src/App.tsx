@@ -10,7 +10,7 @@ import { LedgerLookup } from "./ledger/LedgerLookup";
 import { CloseAccount } from "./account/CloseAccount";
 
 function App() {
-    const [userID, setUserID] = useState<string | undefined>(undefined);
+    const [userID, setUserID] = useState<string>("");
     const [createUser, setCreateUser] = useState(false);
     const [users, setUsers] = useState(false);
     const [createAccount, setCreateAccount] = useState(false);

@@ -1,17 +1,7 @@
 import { type User } from "../types/User";
 import { api, useFetch } from "../api";
 
-type ListUsersProps = {
-    setUserID: (id: string | undefined) => void;
-};
-
-function User({
-    user,
-    setUserID,
-}: {
-    user: User;
-    setUserID: (id: string | undefined) => void;
-}) {
+function User({ user, setUserID }: { user: User; setUserID: (id: string) => void }) {
     return (
         <>
             <span>user: {user.user_name}</span>
@@ -23,7 +13,7 @@ function User({
     );
 }
 
-export function ListUsers({ setUserID }: ListUsersProps) {
+export function ListUsers({ setUserID }: { setUserID: (id: string) => void }) {
     const { data, error, loading, refresh } = useFetch(() => api.users.list());
 
     return (

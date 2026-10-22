@@ -1,24 +1,28 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
-import { type Account } from "../types/Account";
 import { api, errorMessage } from "../api";
+import { useQuery } from "@tanstack/react-query";
 
 export function Account() {
     const [accountID, setAccountID] = useState<string>("");
-    const [account, setAccount] = useState<Account | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [submittedAccountID, setSubmittedAccountID] = useState("");
+    const [validationError, setValidationError] = useState<string | null>(null);
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const { isFetching, isError, isSuccess, data, error } = useQuery({
+        queryKey: ["account", submittedAccountID],
+        queryFn: () => api.accounts.get(submittedAccountID),
+        enabled: !!submittedAccountID,
+    });
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        setError(null);
-        try {
-            if (!accountID) throw Error("AccountID field can't be empty");
-            setAccount(await api.accounts.get(accountID));
-        } catch (e) {
-            setError(errorMessage(e));
+        if (!accountID.trim()) {
+            setValidationError("AccountID field can't be empty");
+            return;
         }
+        setSubmittedAccountID(accountID.trim());
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
+        setValidationError(null);
         setAccountID(event.target.value);
     }
 
@@ -26,20 +30,26 @@ export function Account() {
         <>
             <h3>Account</h3>
             <form onSubmit={handleSubmit}>
-                <input onChange={handleChange} placeholder="AccountID" />
+                <input
+                    onChange={handleChange}
+                    value={accountID}
+                    placeholder="AccountID"
+                />
                 <button type="submit">Get Account</button>
             </form>
 
-            {error && <div style={{ color: "red" }}>{error}</div>}
-            {account && (
+            {validationError && <div style={{ color: "red" }}>{validationError}</div>}
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isFetching && <div>Loading...</div>}
+            {isSuccess && (
                 <>
                     <div>Received account...</div>
-                    <div>Name: {account.account_name} </div>
-                    <div>ID: {account.account_id} </div>
-                    <div>Code Type: {account.account_code_type} </div>
-                    <div>Ledger ID: {account.account_ledger_id} </div>
-                    <div>Status: {account.account_status} </div>
-                    <div>User ID: {account.account_user_id} </div>
+                    <div>Name: {data.account_name} </div>
+                    <div>ID: {data.account_id} </div>
+                    <div>Code Type: {data.account_code_type} </div>
+                    <div>Ledger ID: {data.account_ledger_id} </div>
+                    <div>Status: {data.account_status} </div>
+                    <div>User ID: {data.account_user_id} </div>
                 </>
             )}
         </>

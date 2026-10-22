@@ -24,7 +24,7 @@ function Ledger({ ledger }: { ledger: Ledger }) {
 }
 
 export function Ledgers() {
-    const { isError, isPending, isFetching, data, error, refetch } = useQuery({
+    const { isError, isFetching, data, error, refetch } = useQuery({
         queryKey: ["ledgers"],
         queryFn: api.ledgers.list,
     });
@@ -33,10 +33,8 @@ export function Ledgers() {
         <div>
             <h3>List of Ledgers</h3>
             <button onClick={() => refetch()}>Refresh</button>
-            {isError && (
-                <div style={{ color: "red" }}> {errorMessage(error)} </div>
-            )}
-            {(isPending || isFetching) && <div>Loading...</div>}
+            {isError && <div style={{ color: "red" }}> {errorMessage(error)} </div>}
+            {isFetching && <div>Loading...</div>}
             {data?.map((ledger) => (
                 <div key={ledger.ledger_id}>
                     <Ledger ledger={ledger} />

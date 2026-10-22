@@ -1,37 +1,36 @@
 import { type FormEvent, type ChangeEvent, useState } from "react";
-import { type Account } from "../types/Account";
 import { type AccountPayload } from "../types/AccountPayload";
 import { api, errorMessage } from "../api";
+import { useMutation } from "@tanstack/react-query";
 
-type CreateAccountProps = {
-    userID: string | undefined;
-};
-
-export function CreateAccount({ userID }: CreateAccountProps) {
+export function CreateAccount({ userID }: { userID: string }) {
+    // TODO: put CreateAccount in each User in User's list
+    // TODO: To make a parent User component that has Account control, maybe create
+    //      ListAccounts endpoint, takes UserID, returns that user's accounts
     const [formData, setFormData] = useState<AccountPayload>({
         name: "",
         ledger_symbol: "",
     });
-    const [account, setAccount] = useState<Account | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [validationError, setValidationError] = useState<string | null>(null);
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const { isPending, isError, isSuccess, data, error, mutate } = useMutation({
+        mutationFn: (payload: AccountPayload) => api.users.createAccount(userID, payload),
+    });
+
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        setError(null);
+
         if (!formData.name || !formData.ledger_symbol || !userID) {
-            setError(
+            setValidationError(
                 "Empty field or no userID set. click ListUsers to set userID",
             );
             return;
         }
-        try {
-            setAccount(await api.users.createAccount(userID, formData));
-        } catch (e) {
-            setError(errorMessage(e));
-        }
+        mutate(formData);
     }
 
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
+        setValidationError(null);
         const { name, value } = event.target;
         setFormData((prev) => ({
             ...prev,
@@ -55,19 +54,22 @@ export function CreateAccount({ userID }: CreateAccountProps) {
                     onChange={handleChange}
                     placeholder="ledger_symbol"
                 />
-                <button type="submit">Create Account</button>
+                <button disabled={isPending} type="submit">
+                    Create Account
+                </button>
             </form>
 
-            {error && <div style={{ color: "red" }}>{error}</div>}
-            {account && (
+            {validationError && <div style={{ color: "red" }}>{validationError}</div>}
+            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isSuccess && (
                 <div>
                     <div>Created Account: </div>
-                    <div>Acc ID: {account.account_id}</div>
-                    <div>Acc Name: {account.account_name}</div>
-                    <div>Ledger ID: {account.account_ledger_id}</div>
-                    <div>Code Type: {account.account_code_type}</div>
-                    <div>Status: {account.account_status}</div>
-                    <div>User ID: {account.account_user_id}</div>
+                    <div>Acc ID: {data.account_id}</div>
+                    <div>Acc Name: {data.account_name}</div>
+                    <div>Ledger ID: {data.account_ledger_id}</div>
+                    <div>Code Type: {data.account_code_type}</div>
+                    <div>Status: {data.account_status}</div>
+                    <div>User ID: {data.account_user_id}</div>
                 </div>
             )}
         </div>
