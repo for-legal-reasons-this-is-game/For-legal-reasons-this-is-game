@@ -5,8 +5,9 @@ x-tigerbeetle-common: &tigerbeetle-common
     - "seccomp=unconfined"
   cap_add:
     - IPC_LOCK
-  # 1 GiB journal + grid cache + working set - 1536m gets OOM-killed
-  mem_limit: 2g
+  # 1 GiB journal + grid cache + working set - allocates ~2.3GiB during init,
+  # so 2g got the replicas OOM-killed and restarting
+  mem_limit: 3g
   entrypoint: ["tini", "--", "sh", "-c"]
 
 # -----------------------------------------------------------------------------
@@ -18,6 +19,20 @@ include:
   - ./secret_managment/docker-compose.yaml
 
 services:
+  # Production build of the React app served by nginx (frontend/Dockerfile).
+  # nginx also proxies /api/* to backend:8000 (frontend/server.conf), so the
+  # browser only talks to this one origin. Open http://localhost:4343.
+  frontend:
+    container_name: frontend
+    build: ./frontend/
+    restart: unless-stopped
+    ports:
+      - "4343:82"
+    networks:
+      - default
+    # we shouldn't make frontend depend on backend
+    # we should handle backend requests failures in frontend
+
   backend:
     container_name: backend
     # context is the repo root so the build can reach ../proto;
@@ -32,9 +47,13 @@ services:
       - "seccomp=unconfined"
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    # entrypoint.sh wraps this in `infisical run --`, so DATABASE_URL,
-    # TB_CLUSTER_ID, TB_IP_ADRESSES, ... all come from Infisical at runtime.
+    # The image has no Infisical CLI and reads its config from the process
+    # environment, so pass it in here from .env.
     command: ["./backend"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      TB_CLUSTER_ID: ${TB_CLUSTER_ID}
+      TB_IP_ADRESSES: ${TB_IP_ADRESSES}
     volumes:
       - infisical_shared:/shared:ro
     networks:

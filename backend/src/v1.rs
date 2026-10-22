@@ -8,6 +8,9 @@ use proto::{CancelOrdersRequest, RejectReason};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{Duration, timeout};
+// #[derive(TS)] + #[ts(export)] generate TypeScript types for the frontend
+// (`cargo test export_bindings` writes them to bindings/)
+use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::domain::{
@@ -56,13 +59,15 @@ pub struct UserPayload {
     name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct AccountPayload {
     name: String,
     ledger_symbol: String, // e.g. "USD"
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct LedgerPayload {
     symbol: String,
     name: String,
@@ -365,7 +370,7 @@ pub async fn close_account(
     }
 }
 
-// reopens a closed account.Returns NO CONTENT for already open accounts and when it succeeds at closing an account
+// reopens a closed account.Returns NO CONTENT for already open accounts and when it succeeds at reopening an account
 pub async fn reopen_account(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
