@@ -8,6 +8,9 @@ import type { Position } from "../types/Position";
 import type { Ledger } from "../types/Ledger";
 import type { LedgerPayload } from "../types/LedgerPayload";
 import type { UserPayload } from "../types/UserPayload";
+import type { DepositPayload } from "../types/DepositPayload";
+import type { TransferQuery } from "../types/TransferQuery";
+import type { TransferPage } from "../types/TransferPage";
 
 export { ApiError, errorMessage } from "./client";
 
@@ -28,6 +31,14 @@ export const api = {
             http.get<Position>(`/accounts/${seg(accountId)}/position`),
         close: (accountId: string) =>
             http.post<void>(`/accounts/${seg(accountId)}/close`),
+        reopen: (accountId: string) =>
+            http.post<void>(`/accounts/${seg(accountId)}/reopen`),
+        deposit: (accountId: string, payload: DepositPayload) =>
+            http.post<void>(`/accounts/${seg(accountId)}/deposit}`, payload),
+        transfers: (accountId: string, query: TransferQuery) =>
+            http.get<TransferPage>(
+                `/accounts/${seg(accountId)}/transfers?limit=${query.limit ? (query.limit > 0 ? query.limit : "") : ""}&cursor=${query.cursor ? query.cursor : ""}`,
+            ),
     },
     ledgers: {
         list: () => http.get<Ledger[]>("/ledgers"),

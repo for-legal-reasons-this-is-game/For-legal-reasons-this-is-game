@@ -12,7 +12,8 @@
   "dependencies": {
     "@tanstack/react-query": "^5.104.5",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "uuidv7": "^1.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

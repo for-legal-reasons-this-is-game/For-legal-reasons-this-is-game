@@ -1,6 +1,8 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
 import { api, errorMessage } from "../api";
 import { useQuery } from "@tanstack/react-query";
+import { CreateDeposit } from "./CreateDeposit";
+import { ListAccountTransfers } from "./ListAccountTransfers";
 
 export function AccountLookup() {
     const [accountID, setAccountID] = useState<string>("");
@@ -8,7 +10,7 @@ export function AccountLookup() {
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const { isFetching, isError, isSuccess, data, error } = useQuery({
-        queryKey: ["account", submittedAccountID],
+        queryKey: ["transfers", "account", submittedAccountID],
         queryFn: () => api.accounts.get(submittedAccountID),
         enabled: !!submittedAccountID,
     });
@@ -50,6 +52,8 @@ export function AccountLookup() {
                     <div>Ledger ID: {data.account_ledger_id} </div>
                     <div>Status: {data.account_status} </div>
                     <div>User ID: {data.account_user_id} </div>
+                    <CreateDeposit accountID={data.account_id} />
+                    <ListAccountTransfers accountID={data.account_id} />
                 </>
             )}
         </>

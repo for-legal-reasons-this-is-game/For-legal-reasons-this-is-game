@@ -79,13 +79,16 @@ pub struct LedgerEnabledPayload {
     enabled: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct DepositPayload {
     idempotency_key: Uuid, // frontend-generated IN UUIDv7!
+    #[ts(type = "string")]
     amount: Decimal, // in practice, this is sent as a string, important because of no rounding should happen
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct TransferQuery {
     limit: Option<u32>, // amount of transfers to return requested by the frontend (if none there's default of 50)
     cursor: Option<String>, // where the page starts, nothing == first ones, Some == the one with the timestamp + the other limit - 1 amount
