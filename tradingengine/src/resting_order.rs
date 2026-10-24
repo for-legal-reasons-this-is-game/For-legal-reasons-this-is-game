@@ -2,7 +2,7 @@ use crate::error::{EngineError, Result};
 use crate::ids::{IdempotencyKey, OrderId, SeqNo, UserId};
 use crate::order::{OrderStatus, Side};
 use crate::price::Price;
-use crate::quantity::Quantity;
+use crate::quantity::BaseQuantity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestingOrder {
@@ -10,8 +10,8 @@ pub struct RestingOrder {
     user_id: UserId,
     side: Side,
     price: Price,
-    qty_original: Quantity,
-    qty_remaining: Quantity,
+    qty_original: BaseQuantity,
+    qty_remaining: BaseQuantity,
     status: OrderStatus,
     seq_no: SeqNo,
     idempotency_key: IdempotencyKey,
@@ -23,7 +23,7 @@ impl RestingOrder {
         user_id: UserId,
         side: Side,
         price: Price,
-        qty_original: Quantity,
+        qty_original: BaseQuantity,
         seq_no: SeqNo,
         idempotency_key: IdempotencyKey,
     ) -> Result<Self> {
@@ -42,7 +42,7 @@ impl RestingOrder {
         })
     }
 
-    pub fn fill(&mut self, quantity: Quantity) -> Result<()> {
+    pub fn fill(&mut self, quantity: BaseQuantity) -> Result<()> {
         let quantity = quantity.require_positive()?;
         if quantity > self.qty_remaining {
             return Err(EngineError::FillExceedsRemaining);
@@ -85,11 +85,11 @@ impl RestingOrder {
         self.price
     }
 
-    pub const fn qty_original(&self) -> Quantity {
+    pub const fn qty_original(&self) -> BaseQuantity {
         self.qty_original
     }
 
-    pub const fn qty_remaining(&self) -> Quantity {
+    pub const fn qty_remaining(&self) -> BaseQuantity {
         self.qty_remaining
     }
 

@@ -9,6 +9,9 @@ pub enum EngineError {
     OrderNotFound,
     OrderNotLive,
     Overflow,
+    DecimalsOutOfRange,
+    TimestampOutOfRange,
+    RequiredFieldAbsent,
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -31,6 +34,18 @@ impl std::fmt::Display for EngineError {
             Self::OrderNotFound => write!(f, "no order with this id is in the book"),
             Self::OrderNotLive => write!(f, "the order is already in a terminal state"),
             Self::Overflow => write!(f, "arithmetic overflow"),
+            Self::DecimalsOutOfRange => write!(
+                f,
+                "price_decimals + base_decimals - quote_decimals must be between 0 and {}",
+                crate::quote::QuoteScale::MAX_EXPONENT
+            ),
+            Self::TimestampOutOfRange => write!(
+                f,
+                "timestamp must be a valid time between 1970 and the year 2554"
+            ),
+            Self::RequiredFieldAbsent => {
+                write!(f, "a required message field was not set")
+            }
         }
     }
 }

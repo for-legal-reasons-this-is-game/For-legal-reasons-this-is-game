@@ -1,14 +1,14 @@
 pub mod book;
 pub mod error;
+pub mod fee;
 pub mod ids;
 pub mod order;
 pub mod price;
 pub mod quantity;
+pub mod quote;
 pub mod resting_order;
-
 pub mod service;
-pub const SCALE: u32 = 8;
+pub mod timestamp;
+pub mod wire;
 
-pub const ONE: u128 = 100_000_000;
-
-const _: () = assert!(ONE == 10u128.pow(SCALE));
+mod wide;

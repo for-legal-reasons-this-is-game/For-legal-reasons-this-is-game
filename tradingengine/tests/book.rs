@@ -1,10 +1,11 @@
-use tradingengine::ONE;
+// One whole unit at 8 decimals. A test fixture only: scale is per market now.
+const ONE: u128 = 100_000_000;
 use tradingengine::book::Book;
 use tradingengine::error::EngineError;
 use tradingengine::ids::{IdempotencyKey, OrderId, SeqNo, UserId};
 use tradingengine::order::{OrderStatus, Side};
 use tradingengine::price::Price;
-use tradingengine::quantity::Quantity;
+use tradingengine::quantity::BaseQuantity;
 use tradingengine::resting_order::RestingOrder;
 
 fn order(id: u64, side: Side, whole_price: u128) -> RestingOrder {
@@ -13,7 +14,7 @@ fn order(id: u64, side: Side, whole_price: u128) -> RestingOrder {
         UserId::new(u128::from(id)),
         side,
         Price::from_minor_units(whole_price * ONE).expect("valid price"),
-        Quantity::from_minor_units(10),
+        BaseQuantity::from_minor_units(10),
         SeqNo::new(id),
         IdempotencyKey::new(&format!("order-{id}")).expect("valid idempotency key"),
     )
@@ -351,15 +352,15 @@ fn sized(id: u64, side: Side, whole_price: u128, quantity: u128) -> RestingOrder
         UserId::new(u128::from(id)),
         side,
         Price::from_minor_units(whole_price * ONE).expect("valid price"),
-        Quantity::from_minor_units(quantity),
+        BaseQuantity::from_minor_units(quantity),
         SeqNo::new(id),
         IdempotencyKey::new(&format!("order-{id}")).expect("valid idempotency key"),
     )
     .expect("valid resting order")
 }
 
-fn qty(minor_units: u128) -> Quantity {
-    Quantity::from_minor_units(minor_units)
+fn qty(minor_units: u128) -> BaseQuantity {
+    BaseQuantity::from_minor_units(minor_units)
 }
 
 #[test]
