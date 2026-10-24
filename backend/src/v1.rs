@@ -283,7 +283,7 @@ pub async fn close_account(
         .tb_client
         .lookup_accounts(&[account_id.as_u128()])
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -318,7 +318,7 @@ pub async fn close_account(
                 account_holder: Some(account.user_data_128.into()),
             })
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
         if resp.reject_reason() != RejectReason::Unspecified {
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -336,10 +336,10 @@ pub async fn close_account(
             ..Default::default()
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match state
         .tb_client
@@ -355,7 +355,7 @@ pub async fn close_account(
         }])
         .await
     {
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_GATEWAY),
         Ok(v) => match v.first() {
             Some(r) => {
                 if r.result == CreateTransferResult::CreditAccountAlreadyClosed {
@@ -379,7 +379,7 @@ pub async fn reopen_account(
         .tb_client
         .lookup_accounts(&[account_id.as_u128()])
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -402,7 +402,7 @@ pub async fn reopen_account(
             ..Default::default()
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -417,7 +417,7 @@ pub async fn reopen_account(
         }])
         .await
     {
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_GATEWAY),
         Ok(v) => match v.first() {
             Some(r) if r.result == CreateTransferResult::PendingTransferAlreadyVoided => {
                 Ok(StatusCode::NO_CONTENT)
@@ -569,7 +569,6 @@ pub async fn fetch_user(
         .map(Json)
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
-            sqlx::Error::InvalidArgument(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         })
 }
