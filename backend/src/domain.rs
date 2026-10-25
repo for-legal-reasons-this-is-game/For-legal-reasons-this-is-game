@@ -248,3 +248,232 @@ impl From<TransferCodeType> for i16 {
         value.to_i16().expect("enum variants always fit in i16")
     }
 }
+
+// enums for serializing the proto enums
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Side {
+    Buy = 1,
+    Sell = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OrderType {
+    Limit = 1,
+    Market = 2,
+    StopLimit = 3,
+    StopMarket = 4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TimeInForce {
+    Gtc = 1,
+    Gtd = 2,
+    Ioc = 3,
+    Fok = 4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TriggerDirection {
+    LastAtOrAbove = 1,
+    LastAtOrBelow = 2,
+}
+
+// the engine's view of the order
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OrderStatus {
+    New = 1,
+    PartiallyFilled = 2,
+    Filled = 3,
+    Cancelled = 4,
+    Expired = 5,
+    PendingTrigger = 6,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CancelReason {
+    UserRequest = 1,
+    IocRemainder = 2,
+    IocNoFill = 3,
+    FokNoFullFill = 4,
+    SelfTrade = 5,
+    ProtectionPrice = 6,
+    Admin = 7,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[repr(i16)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RejectReason {
+    UnknownMarket = 1,
+    BadQuantity = 2,
+    BadPrice = 3,
+    BadOrderParams = 4,
+    UnknownOrder = 5,
+    OrderNotWorking = 6,
+    NotOrderOwner = 7,
+    DuplicateCommand = 8,
+    Unsupported = 9,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type, TS)]
+#[sqlx(type_name = "order_submission", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Submission {
+    Reserving,
+    Sent,
+    Accepted,
+    Rejected,
+}
+
+// how an order comes from sql
+#[derive(Debug, sqlx::FromRow)]
+pub struct OrderRow {
+    pub order_id: Uuid,
+    pub idempotency_key: Uuid,
+    pub user_id: Uuid,
+    pub market_id: i32,
+    pub base_account_id: Uuid,
+    pub quote_account_id: Uuid,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+    pub base_quantity: Option<Decimal>,
+    pub quote_quantity: Option<Decimal>,
+    pub limit_price: Option<Decimal>,
+    pub trigger_price: Option<Decimal>,
+    pub trigger_direction: Option<TriggerDirection>,
+    pub protection_price: Option<Decimal>,
+    pub expire_time: Option<String>,
+    pub maker_fee_bps: i32,
+    pub taker_fee_bps: i32,
+    pub reserved_amount: Decimal,
+    pub submission: Submission,
+    pub reject_reason: Option<RejectReason>,
+    pub reject_detail: Option<String>,
+    pub status: Option<OrderStatus>,
+    pub cancel_reason: Option<CancelReason>,
+    pub filled_base_quantity: Decimal,
+    pub filled_quote_quantity: Decimal,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// the actual box to return
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct Order {
+    pub order_id: Uuid,
+    pub idempotency_key: Uuid,
+    pub user_id: Uuid,
+    pub market: String,
+    pub base_account_id: Uuid,
+    pub quote_account_id: Uuid,
+
+    pub side: Side,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+
+    // exactly one of these two is set
+    #[ts(type = "string | null")]
+    pub base_quantity: Option<Decimal>,
+    #[ts(type = "string | null")]
+    pub quote_quantity: Option<Decimal>,
+
+    #[ts(type = "string | null")]
+    pub limit_price: Option<Decimal>,
+    #[ts(type = "string | null")]
+    pub trigger_price: Option<Decimal>,
+    pub trigger_direction: Option<TriggerDirection>,
+    #[ts(type = "string | null")]
+    pub protection_price: Option<Decimal>,
+    pub expire_time: Option<String>,
+
+    pub maker_fee_bps: i32,
+    pub taker_fee_bps: i32,
+    // in the quote asset for a buy, in the base asset for a sell
+    #[ts(type = "string")]
+    pub reserved_amount: Decimal,
+    pub submission: Submission,
+    pub reject_reason: Option<RejectReason>,
+    pub reject_detail: Option<String>,
+
+    pub status: Option<OrderStatus>,
+    pub cancel_reason: Option<CancelReason>,
+    #[ts(type = "string")]
+    pub filled_base_quantity: Decimal,
+    #[ts(type = "string")]
+    pub filled_quote_quantity: Decimal,
+
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// same as scale_to_decimal, for the columns that can be null
+fn scale_option(raw: Option<Decimal>, decimals: i16) -> Result<Option<Decimal>, StatusCode> {
+    raw.map(|r| scale_to_decimal(r, decimals)).transpose()
+}
+
+impl Order {
+    // builds the order from the row in the db
+    pub fn from_row(
+        o: OrderRow,
+        market: &MarketRow,
+        base: &Ledger,
+        quote: &Ledger,
+    ) -> Result<Self, StatusCode> {
+        let reserved_decimals = match o.side {
+            Side::Buy => quote.decimals,
+            Side::Sell => base.decimals,
+        };
+        Ok(Order {
+            order_id: o.order_id,
+            idempotency_key: o.idempotency_key,
+            user_id: o.user_id,
+            market: market.symbol.clone(),
+            base_account_id: o.base_account_id,
+            quote_account_id: o.quote_account_id,
+            side: o.side,
+            order_type: o.order_type,
+            time_in_force: o.time_in_force,
+            base_quantity: scale_option(o.base_quantity, base.decimals)?,
+            quote_quantity: scale_option(o.quote_quantity, quote.decimals)?,
+            limit_price: scale_option(o.limit_price, market.price_decimals)?,
+            trigger_price: scale_option(o.trigger_price, market.price_decimals)?,
+            trigger_direction: o.trigger_direction,
+            protection_price: scale_option(o.protection_price, market.price_decimals)?,
+            expire_time: o.expire_time,
+            maker_fee_bps: o.maker_fee_bps,
+            taker_fee_bps: o.taker_fee_bps,
+            reserved_amount: scale_to_decimal(o.reserved_amount, reserved_decimals)?,
+            submission: o.submission,
+            reject_reason: o.reject_reason,
+            reject_detail: o.reject_detail,
+            status: o.status,
+            cancel_reason: o.cancel_reason,
+            filled_base_quantity: scale_to_decimal(o.filled_base_quantity, base.decimals)?,
+            filled_quote_quantity: scale_to_decimal(o.filled_quote_quantity, quote.decimals)?,
+            created_at: o.created_at,
+            updated_at: o.updated_at,
+        })
+    }
+}
