@@ -18,8 +18,8 @@ use std::env;
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
 async fn main() {
-    // TB_CLUSTER_ID / TB_IP_ADRESSES are injected by `infisical run --` via
-    // backend/entrypoint.sh (see secret management setup).
+    // TB_CLUSTER_ID / TB_IP_ADRESSES come from the process environment
+    // (e.g. a K8s Secret via envFrom).
     let tb_client = Arc::new(
         tb::Client::new(
             env::var("TB_CLUSTER_ID")
@@ -74,6 +74,7 @@ async fn main() {
         .route("/users/{user_id}/accounts", post(v1::create_account))
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/accounts/{account_id}", get(v1::fetch_account))
+        .route("/accounts/{account_id}/close", post(v1::close_account))
         .route(
             "/accounts/{account_id}/position",
             get(v1::fetch_account_position),

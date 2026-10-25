@@ -93,3 +93,37 @@ impl From<AccountCodeType> for i16 {
         value.to_i16().expect("enum variants always fit in i16")
     }
 }
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, Deserialize, sqlx::Type,
+)]
+#[repr(i16)]
+#[serde(try_from = "i16", into = "i16")]
+pub enum TransferCodeType {
+    Trade = 1,
+    FeeCollection = 2,
+    ProvisioningFromSource = 3,
+    Hold = 4,
+    CloseAccount = 5,
+}
+
+impl TryFrom<i16> for TransferCodeType {
+    type Error = String;
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        TransferCodeType::from_i16(value)
+            .ok_or_else(|| format!("invalid TransferCodeType{}", value))
+    }
+}
+
+impl From<TransferCodeType> for u16 {
+    fn from(value: TransferCodeType) -> Self {
+        value.to_u16().expect("enum variants always fit in u16")
+    }
+}
+
+impl From<TransferCodeType> for i16 {
+    fn from(value: TransferCodeType) -> Self {
+        value.to_i16().expect("enum variants always fit in i16")
+    }
+}

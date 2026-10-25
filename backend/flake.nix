@@ -64,6 +64,10 @@
       # native-tls backend) can find libssl.so.3 / libcrypto.so.3 at runtime.
       LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [pkgs.openssl];
 
+      # Use the distro dynamic linker instead of the Nix store INTERP, so the
+      # binary runs in a normal glibc image (e.g. debian) without patchelf.
+      RUSTFLAGS = "-C link-arg=-Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2";
+
       shellHook = ''
         echo "$(rustc --version)  |  $(cargo --version)"
       '';
