@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Order, OrderPage, OrderRow,
-    OrderStatus, Position, Trade, TradePage, TradeRow, Transfer, TransferDirection, TransferPage,
-    User, to_decimal,
+    OrderStatus, Position, Ticker, TickerStats, Trade, TradePage, TradeRow, Transfer,
+    TransferDirection, TransferPage, User, to_decimal,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -1371,4 +1371,54 @@ pub async fn list_market_trades(
         .collect::<Result<Vec<_>, StatusCode>>()?;
 
     Ok(Json(TradePage { items, next_cursor }))
+}
+
+// 24 hour summary of a market (by symbol), computed from its trades
+pub async fn fetch_market_ticker(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Result<Json<Ticker>, StatusCode> {
+    let m = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE symbol = $1",
+    )
+    .bind(symbol)
+    .fetch_optional(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let t = sqlx::query_as::<_, TickerStats>(
+        r#"SELECT
+               (SELECT price FROM trades WHERE market_id = $1
+                ORDER BY engine_time DESC, trade_id DESC LIMIT 1) AS last_price,
+               w.open, w.high, w.low, w.base_volume, w.quote_volume, w.trade_count
+           FROM (
+               SELECT (array_agg(price ORDER BY engine_time ASC, trade_id ASC))[1] AS open,
+                      max(price) AS high,
+                      min(price) AS low,
+                      COALESCE(sum(base_quantity), 0) AS base_volume,
+                      COALESCE(sum(quote_quantity), 0) AS quote_volume,
+                      count(*) AS trade_count
+               FROM trades
+               WHERE market_id = $1 AND engine_time >= now() - interval '24 hours'
+           ) w"#,
+    )
+    .bind(m.market_id)
+    .fetch_one(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(Ticker::from_row(t, &m, &base, &quote)?))
 }

@@ -557,3 +557,81 @@ pub struct TradePage {
     pub items: Vec<Trade>,
     pub next_cursor: Option<String>, // None means this was the last page
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct TickerStats {
+    pub last_price: Option<Decimal>,
+    pub open: Option<Decimal>,
+    pub high: Option<Decimal>,
+    pub low: Option<Decimal>,
+    pub base_volume: Decimal,
+    pub quote_volume: Decimal,
+    pub trade_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct Ticker {
+    pub market: String,
+    // price of the latest trade ever, null only if the market never traded
+    #[ts(type = "string | null")]
+    pub last_price: Option<Decimal>,
+    // the next five are null when there were no trades in the window
+    #[ts(type = "string | null")]
+    pub open: Option<Decimal>,
+    #[ts(type = "string | null")]
+    pub high: Option<Decimal>,
+    #[ts(type = "string | null")]
+    pub low: Option<Decimal>,
+    // last_price - open
+    #[ts(type = "string | null")]
+    pub change: Option<Decimal>,
+
+    // change / open * 100
+    #[ts(type = "string | null")]
+    pub change_percent: Option<Decimal>,
+
+    #[ts(type = "string")]
+    pub base_volume: Decimal,
+    #[ts(type = "string")]
+    pub quote_volume: Decimal,
+    #[ts(type = "number")]
+    pub trade_count: i64,
+}
+
+impl Ticker {
+    pub fn from_row(
+        t: TickerStats,
+        market: &MarketRow,
+        base: &Ledger,
+        quote: &Ledger,
+    ) -> Result<Self, StatusCode> {
+        let last_price = scale_option(t.last_price, market.price_decimals)?;
+        let open = scale_option(t.open, market.price_decimals)?;
+
+        let (change, change_percent) = match (last_price, open) {
+            (Some(last), Some(open)) => {
+                let change = last - open;
+                let percent = change
+                    .checked_div(open)
+                    .and_then(|r| r.checked_mul(Decimal::ONE_HUNDRED))
+                    .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+                (Some(change), Some(percent))
+            }
+            _ => (None, None),
+        };
+
+        Ok(Ticker {
+            market: market.symbol.clone(),
+            last_price,
+            open,
+            high: scale_option(t.high, market.price_decimals)?,
+            low: scale_option(t.low, market.price_decimals)?,
+            change,
+            change_percent,
+            base_volume: scale_to_decimal(t.base_volume, base.decimals)?,
+            quote_volume: scale_to_decimal(t.quote_volume, quote.decimals)?,
+            trade_count: t.trade_count,
+        })
+    }
+}
