@@ -550,3 +550,10 @@ impl Trade {
         })
     }
 }
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct TradePage {
+    pub items: Vec<Trade>,
+    pub next_cursor: Option<String>, // None means this was the last page
+}

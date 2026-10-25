@@ -87,6 +87,7 @@ async fn main() {
         .route("/markets", get(v1::list_markets))
         .route("/markets/{symbol}", get(v1::fetch_market))
         .route("/markets/{symbol}/orders", get(v1::list_market_orders))
+        .route("/markets/{symbol}/trades", get(v1::list_market_trades))
         .route("/orders/{order_id}", get(v1::fetch_order))
         .route("/orders/{order_id}/trades", get(v1::list_order_trades))
         .with_state(state);
