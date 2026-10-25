@@ -86,6 +86,7 @@ async fn main() {
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .route("/markets", get(v1::list_markets))
         .route("/markets/{symbol}", get(v1::fetch_market))
+        .route("/markets/{symbol}/orders", get(v1::list_market_orders))
         .route("/orders/{order_id}", get(v1::fetch_order))
         .with_state(state);
 

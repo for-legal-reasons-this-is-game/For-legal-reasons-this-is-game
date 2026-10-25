@@ -111,6 +111,13 @@ pub struct OrderQuery {
     cursor: Option<String>, // the next_cursor of the previous page, nothing == first page
 }
 
+#[derive(Deserialize)]
+pub struct MarketOrderQuery {
+    status: Option<OrderStatusFilter>, // status of the order, none == all of them
+    limit: Option<u32>,                // same as in transferquery: default 50, max 100
+    cursor: Option<String>, // the next_cursor of the previous page, nothing == first page
+}
+
 #[derive(Default)]
 struct RawBalance {
     debits_posted: i128,
@@ -1095,6 +1102,120 @@ pub async fn list_user_orders(
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
             Order::from_row(o, m, base, quote)
         })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
+
+    Ok(Json(OrderPage { items, next_cursor }))
+}
+
+// gives the orders of a market (by symbol), newest first
+// status can be used to filter, it can also be "open" which is every order that can still trade
+// returns the page + next cursor
+pub async fn list_market_orders(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+    Query(query): Query<MarketOrderQuery>,
+) -> Result<Json<OrderPage>, StatusCode> {
+    let limit = query.limit.unwrap_or(50).min(100);
+    if limit == 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let (cursor_time, cursor_id) = match query.cursor {
+        None => (None, None),
+        Some(c) => {
+            let (time, id) = c.split_once('_').ok_or(StatusCode::BAD_REQUEST)?;
+            let id = id.parse::<Uuid>().map_err(|_| StatusCode::BAD_REQUEST)?;
+            (Some(time.to_string()), Some(id))
+        }
+    };
+
+    let (status, open_only) = match query.status {
+        None => (None, false),
+        Some(OrderStatusFilter::Open) => (None, true),
+        Some(OrderStatusFilter::New) => (Some(OrderStatus::New as i16), false),
+        Some(OrderStatusFilter::PartiallyFilled) => {
+            (Some(OrderStatus::PartiallyFilled as i16), false)
+        }
+        Some(OrderStatusFilter::Filled) => (Some(OrderStatus::Filled as i16), false),
+        Some(OrderStatusFilter::Cancelled) => (Some(OrderStatus::Cancelled as i16), false),
+        Some(OrderStatusFilter::Expired) => (Some(OrderStatus::Expired as i16), false),
+        Some(OrderStatusFilter::PendingTrigger) => {
+            (Some(OrderStatus::PendingTrigger as i16), false)
+        }
+    };
+
+    let m = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE symbol = $1",
+    )
+    .bind(symbol)
+    .fetch_optional(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut rows = sqlx::query_as::<_, OrderRow>(
+        r#"SELECT order_id, idempotency_key, user_id, market_id, base_account_id,
+                  quote_account_id, side, order_type, time_in_force, base_quantity,
+                  quote_quantity, limit_price, trigger_price, trigger_direction,
+                  protection_price,
+                  to_char(expire_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS expire_time,
+                  maker_fee_bps, taker_fee_bps, reserved_amount, submission, reject_reason,
+                  reject_detail, status, cancel_reason, filled_base_quantity,
+                  filled_quote_quantity,
+                  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS created_at,
+                  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS updated_at
+           FROM orders
+           WHERE market_id = $1
+             AND ($2::smallint IS NULL OR status = $2)
+             AND (NOT $3::bool
+                  OR (submission <> 'rejected' AND (status IS NULL OR status IN (1, 2, 6))))
+             AND ($4::text IS NULL
+                  OR (created_at, order_id) < ($4::text::timestamptz, $5::uuid))
+           ORDER BY orders.created_at DESC, orders.order_id DESC
+           LIMIT $6"#,
+    )
+    .bind(m.market_id)
+    .bind(status)
+    .bind(open_only)
+    .bind(cursor_time)
+    .bind(cursor_id)
+    .bind(i64::from(limit) + 1)
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(
+        |e| match e.as_database_error().and_then(|d| d.code()).as_deref() {
+            Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        },
+    )?;
+
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next_cursor = if has_more {
+        rows.last()
+            .map(|o| format!("{}_{}", o.created_at, o.order_id))
+    } else {
+        None
+    };
+
+    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let items = rows
+        .into_iter()
+        .map(|o| Order::from_row(o, &m, &base, &quote))
         .collect::<Result<Vec<_>, StatusCode>>()?;
 
     Ok(Json(OrderPage { items, next_cursor }))
