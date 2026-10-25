@@ -477,3 +477,10 @@ impl Order {
         })
     }
 }
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct OrderPage {
+    pub items: Vec<Order>,
+    pub next_cursor: Option<String>, // None means this was the last page
+}

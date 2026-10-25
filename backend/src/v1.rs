@@ -14,8 +14,8 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::domain::{
-    Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Order, OrderRow, Position,
-    Transfer, TransferDirection, TransferPage, User, to_decimal,
+    Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Order, OrderPage, OrderRow,
+    OrderStatus, Position, Transfer, TransferDirection, TransferPage, User, to_decimal,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -89,6 +89,26 @@ pub struct DepositPayload {
 pub struct TransferQuery {
     limit: Option<u32>, // amount of transfers to return requested by the frontend (if none there's default of 50)
     cursor: Option<String>, // where the page starts, nothing == first ones, Some == the one with the timestamp + the other limit - 1 amount
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderStatusFilter {
+    Open,
+    New,
+    PartiallyFilled,
+    Filled,
+    Cancelled,
+    Expired,
+    PendingTrigger,
+}
+
+#[derive(Deserialize)]
+pub struct OrderQuery {
+    market: Option<String>,            // symbol of the market, none == all of them
+    status: Option<OrderStatusFilter>, // status of the order, none == all of them
+    limit: Option<u32>,                // same as in transferquery: default 50, max 100
+    cursor: Option<String>, // the next_cursor of the previous page, nothing == first page
 }
 
 #[derive(Default)]
@@ -930,4 +950,152 @@ pub async fn fetch_order(
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(Order::from_row(o, &m, &base, &quote)?))
+}
+
+// gives a user's orders, newest first
+// market (a symbol) and status can be used to filter, status can also be "open" which is every order that can still trade
+// returns the page + next cursor
+pub async fn list_user_orders(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    Query(query): Query<OrderQuery>,
+) -> Result<Json<OrderPage>, StatusCode> {
+    let limit = query.limit.unwrap_or(50).min(100);
+    if limit == 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let (cursor_time, cursor_id) = match query.cursor {
+        None => (None, None),
+        Some(c) => {
+            let (time, id) = c.split_once('_').ok_or(StatusCode::BAD_REQUEST)?;
+            let id = id.parse::<Uuid>().map_err(|_| StatusCode::BAD_REQUEST)?;
+            (Some(time.to_string()), Some(id))
+        }
+    };
+
+    let (status, open_only) = match query.status {
+        None => (None, false),
+        Some(OrderStatusFilter::Open) => (None, true),
+        Some(OrderStatusFilter::New) => (Some(OrderStatus::New as i16), false),
+        Some(OrderStatusFilter::PartiallyFilled) => {
+            (Some(OrderStatus::PartiallyFilled as i16), false)
+        }
+        Some(OrderStatusFilter::Filled) => (Some(OrderStatus::Filled as i16), false),
+        Some(OrderStatusFilter::Cancelled) => (Some(OrderStatus::Cancelled as i16), false),
+        Some(OrderStatusFilter::Expired) => (Some(OrderStatus::Expired as i16), false),
+        Some(OrderStatusFilter::PendingTrigger) => {
+            (Some(OrderStatus::PendingTrigger as i16), false)
+        }
+    };
+
+    let user_exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM users WHERE user_id = $1)")
+            .bind(user_id)
+            .fetch_one(&state.pg_connections)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !user_exists {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let market_id = match query.market {
+        None => None,
+        Some(symbol) => Some(
+            sqlx::query_scalar::<_, i32>("SELECT market_id FROM markets WHERE symbol = $1")
+                .bind(symbol)
+                .fetch_optional(&state.pg_connections)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::NOT_FOUND)?,
+        ),
+    };
+
+    let mut rows = sqlx::query_as::<_, OrderRow>(
+        r#"SELECT order_id, idempotency_key, user_id, market_id, base_account_id,
+                  quote_account_id, side, order_type, time_in_force, base_quantity,
+                  quote_quantity, limit_price, trigger_price, trigger_direction,
+                  protection_price,
+                  to_char(expire_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS expire_time,
+                  maker_fee_bps, taker_fee_bps, reserved_amount, submission, reject_reason,
+                  reject_detail, status, cancel_reason, filled_base_quantity,
+                  filled_quote_quantity,
+                  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS created_at,
+                  to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS updated_at
+           FROM orders
+           WHERE user_id = $1
+             AND ($2::int IS NULL OR market_id = $2)
+             AND ($3::smallint IS NULL OR status = $3)
+             AND (NOT $4::bool
+                  OR (submission <> 'rejected' AND (status IS NULL OR status IN (1, 2, 6))))
+             AND ($5::text IS NULL
+                  OR (created_at, order_id) < ($5::text::timestamptz, $6::uuid))
+           ORDER BY orders.created_at DESC, orders.order_id DESC
+           LIMIT $7"#,
+    )
+    .bind(user_id)
+    .bind(market_id)
+    .bind(status)
+    .bind(open_only)
+    .bind(cursor_time)
+    .bind(cursor_id)
+    .bind(i64::from(limit) + 1)
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(
+        |e| match e.as_database_error().and_then(|d| d.code()).as_deref() {
+            Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        },
+    )?;
+
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next_cursor = if has_more {
+        rows.last()
+            .map(|o| format!("{}_{}", o.created_at, o.order_id))
+    } else {
+        None
+    };
+
+    let mut market_ids: Vec<i32> = rows.iter().map(|o| o.market_id).collect();
+    market_ids.sort_unstable();
+    market_ids.dedup();
+    let markets = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE market_id = ANY($1)",
+    )
+    .bind(&market_ids)
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ledgers = load_ledgers(&state.pg_connections)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let items = rows
+        .into_iter()
+        .map(|o| {
+            let m = markets
+                .iter()
+                .find(|m| m.market_id == o.market_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+            let base = ledgers
+                .iter()
+                .find(|l| l.ledger_id == m.base_ledger_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+            let quote = ledgers
+                .iter()
+                .find(|l| l.ledger_id == m.quote_ledger_id)
+                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+            Order::from_row(o, m, base, quote)
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
+
+    Ok(Json(OrderPage { items, next_cursor }))
 }
