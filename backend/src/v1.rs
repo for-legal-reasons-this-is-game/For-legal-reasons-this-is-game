@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Order, OrderPage, OrderRow,
-    OrderStatus, Position, Transfer, TransferDirection, TransferPage, User, to_decimal,
+    OrderStatus, Position, Trade, TradeRow, Transfer, TransferDirection, TransferPage, User,
+    to_decimal,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -1219,4 +1220,62 @@ pub async fn list_market_orders(
         .collect::<Result<Vec<_>, StatusCode>>()?;
 
     Ok(Json(OrderPage { items, next_cursor }))
+}
+
+// gives every trade an order took part in (as buyer or seller), oldest first
+pub async fn list_order_trades(
+    State(state): State<AppState>,
+    Path(order_id): Path<Uuid>,
+) -> Result<Json<Vec<Trade>>, StatusCode> {
+    let market_id =
+        sqlx::query_scalar::<_, i32>("SELECT market_id FROM orders WHERE order_id = $1")
+            .bind(order_id)
+            .fetch_optional(&state.pg_connections)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+    let m = sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE market_id = $1",
+    )
+    .bind(market_id)
+    .fetch_one(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let rows = sqlx::query_as::<_, TradeRow>(
+        r#"SELECT trade_id, market_id, buyer_order_id, seller_order_id, price, base_quantity,
+                  quote_quantity, buyer_fee, seller_fee, taker_side, engine_epoch,
+                  engine_sequence,
+                  to_char(engine_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS engine_time,
+                  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                      AS created_at
+           FROM trades
+           WHERE buyer_order_id = $1 OR seller_order_id = $1
+           ORDER BY trades.engine_time ASC, engine_epoch ASC, engine_sequence ASC"#,
+    )
+    .bind(order_id)
+    .fetch_all(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let trades = rows
+        .into_iter()
+        .map(|t| Trade::from_row(t, &m, &base, &quote))
+        .collect::<Result<Vec<_>, StatusCode>>()?;
+
+    Ok(Json(trades))
 }

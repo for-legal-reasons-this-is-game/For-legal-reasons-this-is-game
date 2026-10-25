@@ -88,6 +88,7 @@ async fn main() {
         .route("/markets/{symbol}", get(v1::fetch_market))
         .route("/markets/{symbol}/orders", get(v1::list_market_orders))
         .route("/orders/{order_id}", get(v1::fetch_order))
+        .route("/orders/{order_id}/trades", get(v1::list_order_trades))
         .with_state(state);
 
     let router = Router::<()>::new().nest("/api/v1", v1);

@@ -484,3 +484,69 @@ pub struct OrderPage {
     pub items: Vec<Order>,
     pub next_cursor: Option<String>, // None means this was the last page
 }
+
+// how a trade comes from sql
+#[derive(Debug, sqlx::FromRow)]
+pub struct TradeRow {
+    pub trade_id: Uuid,
+    pub market_id: i32,
+    pub buyer_order_id: Uuid,
+    pub seller_order_id: Uuid,
+    pub price: Decimal,
+    pub base_quantity: Decimal,
+    pub quote_quantity: Decimal,
+    pub buyer_fee: Decimal,
+    pub seller_fee: Decimal,
+    pub taker_side: Side,
+    pub engine_epoch: i64,
+    pub engine_sequence: i64,
+    pub engine_time: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct Trade {
+    pub trade_id: Uuid,
+    pub market: String,
+    pub buyer_order_id: Uuid,
+    pub seller_order_id: Uuid,
+    #[ts(type = "string")]
+    pub price: Decimal,
+    #[ts(type = "string")]
+    pub base_quantity: Decimal,
+    #[ts(type = "string")]
+    pub quote_quantity: Decimal,
+    #[ts(type = "string")]
+    pub buyer_fee: Decimal,
+    #[ts(type = "string")]
+    pub seller_fee: Decimal,
+    pub taker_side: Side,
+    pub engine_time: String,
+    pub created_at: String,
+}
+
+impl Trade {
+    // builds the trade from the row in the db
+    pub fn from_row(
+        t: TradeRow,
+        market: &MarketRow,
+        base: &Ledger,
+        quote: &Ledger,
+    ) -> Result<Self, StatusCode> {
+        Ok(Trade {
+            trade_id: t.trade_id,
+            market: market.symbol.clone(),
+            buyer_order_id: t.buyer_order_id,
+            seller_order_id: t.seller_order_id,
+            price: scale_to_decimal(t.price, market.price_decimals)?,
+            base_quantity: scale_to_decimal(t.base_quantity, base.decimals)?,
+            quote_quantity: scale_to_decimal(t.quote_quantity, quote.decimals)?,
+            buyer_fee: scale_to_decimal(t.buyer_fee, quote.decimals)?,
+            seller_fee: scale_to_decimal(t.seller_fee, quote.decimals)?,
+            taker_side: t.taker_side,
+            engine_time: t.engine_time,
+            created_at: t.created_at,
+        })
+    }
+}
