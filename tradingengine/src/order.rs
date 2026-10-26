@@ -20,8 +20,8 @@ impl Side {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderKind {
-    Market,
-    Limit { price: Price },
+    Market,                 // will take any available price
+    Limit { price: Price }, // will only be filled at this price or better
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

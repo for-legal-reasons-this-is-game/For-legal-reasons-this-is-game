@@ -1,8 +1,8 @@
 use crate::error::{EngineError, Result};
 
+// from_minor_units is the smallest value a currency cents for euro and usd, satoshi for btc
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Price(u128);
-
 impl Price {
     pub fn from_minor_units(minor_units: u128) -> Result<Self> {
         if minor_units > 0 {

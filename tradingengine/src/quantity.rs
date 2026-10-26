@@ -1,11 +1,22 @@
+// the engine holds 2 types of quantities in each trade as per market rule of
+// pairs example: btc-usd
+// base quantity (BTC) is the first part of the pair and quote quantity (usd) is the second
+// the two are in tandem while opening an order based off of the price value
+// when buying the client has the quote part of the market and recieves base in exchange
+// when sell the client has the base part and recieves quote
+
 use crate::error::{EngineError, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BaseQuantity(u128);
 
 impl BaseQuantity {
+    // quantities can be zero after being filled
     pub const ZERO: BaseQuantity = BaseQuantity(0);
 
+    // minor units in case of quanity means a whole number including the
+    // smallest decimal value a currency can hold 5 dollars are saved as 500
+    // this scale is set only once per market
     pub fn from_minor_units(minor_units: u128) -> BaseQuantity {
         BaseQuantity(minor_units)
     }
