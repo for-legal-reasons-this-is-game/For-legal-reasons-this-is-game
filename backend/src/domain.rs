@@ -226,6 +226,7 @@ pub enum TransferCodeType {
     ProvisioningFromSource = 3,
     Hold = 4,
     CloseAccount = 5,
+    Refund = 6, // what is left of an order's hold account goes back to the user
 }
 
 impl TryFrom<i16> for TransferCodeType {
@@ -632,6 +633,47 @@ impl Ticker {
             base_volume: scale_to_decimal(t.base_volume, base.decimals)?,
             quote_volume: scale_to_decimal(t.quote_volume, quote.decimals)?,
             trade_count: t.trade_count,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct BookLevel {
+    #[ts(type = "string")]
+    pub price: Decimal,
+    // total resting base quantity at this price
+    #[ts(type = "string")]
+    pub quantity: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct OrderBook {
+    pub market: String,
+    pub bids: Vec<BookLevel>, // highest price first
+    pub asks: Vec<BookLevel>, // lowest price first
+}
+
+impl OrderBook {
+    // builds the book from the raw (price, quantity) levels the engine sent
+    pub fn from_levels(
+        market: &MarketRow,
+        base: &Ledger,
+        bids: &[(u128, u128)],
+        asks: &[(u128, u128)],
+    ) -> Result<Self, StatusCode> {
+        let level = |&(price, quantity): &(u128, u128)| -> Result<BookLevel, StatusCode> {
+            let raw = |v: u128| i128::try_from(v).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+            Ok(BookLevel {
+                price: to_decimal(raw(price)?, market.price_decimals)?,
+                quantity: to_decimal(raw(quantity)?, base.decimals)?,
+            })
+        };
+        Ok(OrderBook {
+            market: market.symbol.clone(),
+            bids: bids.iter().map(level).collect::<Result<_, _>>()?,
+            asks: asks.iter().map(level).collect::<Result<_, _>>()?,
         })
     }
 }

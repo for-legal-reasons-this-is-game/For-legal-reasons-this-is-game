@@ -14,9 +14,9 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::domain::{
-    Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Order, OrderPage, OrderRow,
-    OrderStatus, Position, Ticker, TickerStats, Trade, TradePage, TradeRow, Transfer,
-    TransferDirection, TransferPage, User, to_decimal,
+    Account, AccountCodeType, AccountStatus, Ledger, Market, MarketRow, Order, OrderBook,
+    OrderPage, OrderRow, OrderStatus, Position, Ticker, TickerStats, Trade, TradePage, TradeRow,
+    Transfer, TransferDirection, TransferPage, User, to_decimal,
 };
 use crate::service::EngineClient;
 use crate::{bootstrap, domain::TransferCodeType};
@@ -29,6 +29,8 @@ pub struct AppState {
     pub pg_connections: PgPool,
     pub tb_client: Arc<tb::Client>,
     pub engine_client: EngineClient,
+    // the order book of each market as this pod last heard it from the engine (see marketdata.rs)
+    pub books: crate::marketdata::Books,
 }
 
 pub async fn load_ledgers(pool: &PgPool) -> sqlx::Result<Vec<Ledger>> {
@@ -313,6 +315,7 @@ fn transfer_kind(t: &tb::Transfer) -> &'static str {
         Ok(TransferCodeType::FeeCollection) => "fee",
         Ok(TransferCodeType::ProvisioningFromSource) => "deposit",
         Ok(TransferCodeType::Hold) => "hold",
+        Ok(TransferCodeType::Refund) => "refund",
         Ok(TransferCodeType::CloseAccount) | Err(_) => "unknown",
     }
 }
@@ -1366,4 +1369,27 @@ pub async fn fetch_market_ticker(
     let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     Ok(Json(Ticker::from_row(t, &m, &base, &quote)?))
+}
+
+// the order book of a market (by symbol), best prices first. It's the copy this pod keeps from the
+// engine's market data stream, so it's 503 until the first snapshot arrives or while the stream is down
+pub async fn fetch_market_book(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Result<Json<OrderBook>, StatusCode> {
+    let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (bids, asks) = {
+        let books = state.books.read().unwrap_or_else(|e| e.into_inner());
+        let book = books
+            .get(&m.symbol)
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        (book.bids(), book.asks())
+    };
+
+    let (base, _quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
+    Ok(Json(OrderBook::from_levels(&m, &base, &bids, &asks)?))
 }

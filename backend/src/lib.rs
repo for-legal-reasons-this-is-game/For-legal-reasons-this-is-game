@@ -1,6 +1,11 @@
 pub mod bootstrap;
+pub mod consumer;
 pub mod domain;
 pub mod hmac_utils;
+pub mod leader;
+pub mod marketdata;
+pub mod recovery;
 pub mod relay;
 pub mod service;
+pub mod settlement;
 pub mod v1;

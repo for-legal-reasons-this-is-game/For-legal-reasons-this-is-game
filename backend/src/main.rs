@@ -4,7 +4,7 @@ use axum::{
 };
 
 use backend::{
-    bootstrap, relay,
+    bootstrap, leader, marketdata, relay,
     service::EngineClient,
     v1::{self, AppState},
 };
@@ -53,6 +53,7 @@ async fn main() {
         pg_connections,
         tb_client,
         engine_client,
+        books: Default::default(),
     };
 
     bootstrap::run(&state)
@@ -61,6 +62,12 @@ async fn main() {
 
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
+
+    // every pod serves HTTP and keeps its own order book, but only one of them (whoever holds the
+    // advisory lock) reads the engine's event stream. Both stop when `stop_tx` says so.
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let leader_task = tokio::task::spawn(leader::run(state.clone(), stop_rx.clone()));
+    let market_data_task = tokio::task::spawn(marketdata::run(state.clone(), stop_rx));
 
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
@@ -86,6 +93,7 @@ async fn main() {
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .route("/markets", get(v1::list_markets))
         .route("/markets/{symbol}", get(v1::fetch_market))
+        .route("/markets/{symbol}/book", get(v1::fetch_market_book))
         .route("/markets/{symbol}/orders", get(v1::list_market_orders))
         .route("/markets/{symbol}/trades", get(v1::list_market_trades))
         .route("/markets/{symbol}/ticker", get(v1::fetch_market_ticker))
@@ -97,15 +105,23 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
     println!("Server running on 0.0.0.0:8000");
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(stop_tx))
         .await
         .unwrap();
+
+    // the consumer finishes its batch (and gives up the lock) before the process exits
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let _ = leader_task.await;
+        let _ = market_data_task.await;
+    })
+    .await;
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(stop_tx: tokio::sync::watch::Sender<bool>) {
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = sigterm.recv() => {}
     }
+    let _ = stop_tx.send(true);
 }
