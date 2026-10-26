@@ -30,9 +30,6 @@ spec:
               REPLICA_INDEX=$(echo "${HOSTNAME}" | awk -F'-' '{print $NF}')
               DATA_FILE="/var/lib/tigerbeetle/cluster_0_${REPLICA_INDEX}.tigerbeetle"
 
-              # Stagger disk formatting by 5s per replica to avoid choking local SSD
-              sleep $((REPLICA_INDEX * 5))
-
               if [ ! -f "${DATA_FILE}" ]; then
                 /tigerbeetle format \
                   --cluster=0 \
