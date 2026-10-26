@@ -124,6 +124,90 @@ pub async fn fetch_market_ledgers(
     Ok((base, quote))
 }
 
+// limit of a page: default 50, max 100, 0 makes no sense
+fn page_limit(limit: Option<u32>) -> Result<u32, StatusCode> {
+    match limit.unwrap_or(50).min(100) {
+        0 => Err(StatusCode::BAD_REQUEST),
+        limit => Ok(limit),
+    }
+}
+
+// splits the cursor the client sends back ("<timestamp>_<uuid>") into its two parts
+fn parse_cursor_pg(cursor: Option<String>) -> Result<(Option<String>, Option<Uuid>), StatusCode> {
+    match cursor {
+        None => Ok((None, None)),
+        Some(c) => {
+            let (time, id) = c.split_once('_').ok_or(StatusCode::BAD_REQUEST)?;
+            let id = id.parse::<Uuid>().map_err(|_| StatusCode::BAD_REQUEST)?;
+            Ok((Some(time.to_string()), Some(id)))
+        }
+    }
+}
+
+// gives (status to filter by, only open orders) from what the client asked for
+fn order_status_filter(filter: Option<OrderStatusFilter>) -> (Option<i16>, bool) {
+    match filter {
+        None => (None, false),
+        Some(OrderStatusFilter::Open) => (None, true),
+        Some(OrderStatusFilter::New) => (Some(OrderStatus::New as i16), false),
+        Some(OrderStatusFilter::PartiallyFilled) => {
+            (Some(OrderStatus::PartiallyFilled as i16), false)
+        }
+        Some(OrderStatusFilter::Filled) => (Some(OrderStatus::Filled as i16), false),
+        Some(OrderStatusFilter::Cancelled) => (Some(OrderStatus::Cancelled as i16), false),
+        Some(OrderStatusFilter::Expired) => (Some(OrderStatus::Expired as i16), false),
+        Some(OrderStatusFilter::PendingTrigger) => {
+            (Some(OrderStatus::PendingTrigger as i16), false)
+        }
+    }
+}
+
+// postgres rejecting the cursor's timestamp is the client's fault, anything else is ours
+fn page_query_error(e: sqlx::Error) -> StatusCode {
+    match e.as_database_error().and_then(|d| d.code()).as_deref() {
+        Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+// the rows were asked for with limit + 1: cuts the extra one off and, if there was one,
+// gives the cursor of the next page (built from the last row that stays)
+fn next_page_cursor<T>(
+    rows: &mut Vec<T>,
+    limit: u32,
+    cursor_of: impl Fn(&T) -> String,
+) -> Option<String> {
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    if has_more {
+        rows.last().map(cursor_of)
+    } else {
+        None
+    }
+}
+
+// gives the ledger an account lives in. It has to exist, an account can't point to a missing ledger
+pub async fn fetch_account_ledger(pool: &PgPool, account: &Account) -> Result<Ledger, StatusCode> {
+    fetch_ledger_by_id(pool, account.account_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// looks for the (base, quote) ledgers of a market in an already loaded list of ledgers
+fn find_market_ledgers<'a>(
+    ledgers: &'a [Ledger],
+    market: &MarketRow,
+) -> Result<(&'a Ledger, &'a Ledger), StatusCode> {
+    let find = |ledger_id| {
+        ledgers
+            .iter()
+            .find(|l| l.ledger_id == ledger_id)
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+    };
+    Ok((find(market.base_ledger_id)?, find(market.quote_ledger_id)?))
+}
+
 #[derive(Deserialize)]
 pub struct UserPayload {
     name: String,
@@ -560,10 +644,7 @@ pub async fn create_deposit(
         return Err(StatusCode::CONFLICT);
     }
 
-    let ledger = fetch_ledger_by_id(&state.pg_connections, account.account_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ledger = fetch_account_ledger(&state.pg_connections, &account).await?;
     if !ledger.enabled {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -706,10 +787,7 @@ pub async fn fetch_account_position(
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         })?;
 
-    let ledger = fetch_ledger_by_id(&state.pg_connections, account.account_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ledger = fetch_account_ledger(&state.pg_connections, &account).await?;
     let (symbol, decimals) = (ledger.symbol, ledger.decimals);
     let balance: RawBalance = if account.account_status == AccountStatus::Processing {
         RawBalance::default()
@@ -764,10 +842,7 @@ pub async fn list_account_transfers(
     Path(account_id): Path<Uuid>,
     Query(query): Query<TransferQuery>,
 ) -> Result<Json<TransferPage>, StatusCode> {
-    let limit = query.limit.unwrap_or(50).min(100);
-    if limit == 0 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    let limit = page_limit(query.limit)?;
 
     let timestamp_max = match query.cursor {
         None => 0,
@@ -783,10 +858,8 @@ pub async fn list_account_transfers(
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         })?;
 
-    let decimals = fetch_ledger_by_id(&state.pg_connections, account.account_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+    let decimals = fetch_account_ledger(&state.pg_connections, &account)
+        .await?
         .decimals;
 
     // i ask tb for 1 more than the page limit because i need timestamp of limit+1 to return the cursor
@@ -934,17 +1007,8 @@ pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Mark
     let markets = market_rows
         .into_iter()
         .map(|m| {
-            let base = ledgers
-                .iter()
-                .find(|l| l.ledger_id == m.base_ledger_id)
-                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
-                .clone();
-            let quote = ledgers
-                .iter()
-                .find(|l| l.ledger_id == m.quote_ledger_id)
-                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
-                .clone();
-            Market::from_row(m, base, quote)
+            let (base, quote) = find_market_ledgers(&ledgers, &m)?;
+            Market::from_row(m, base.clone(), quote.clone())
         })
         .collect::<Result<Vec<_>, StatusCode>>()?;
     Ok(Json(markets))
@@ -1010,34 +1074,11 @@ pub async fn list_user_orders(
     Path(user_id): Path<Uuid>,
     Query(query): Query<OrderQuery>,
 ) -> Result<Json<OrderPage>, StatusCode> {
-    let limit = query.limit.unwrap_or(50).min(100);
-    if limit == 0 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    let limit = page_limit(query.limit)?;
 
-    let (cursor_time, cursor_id) = match query.cursor {
-        None => (None, None),
-        Some(c) => {
-            let (time, id) = c.split_once('_').ok_or(StatusCode::BAD_REQUEST)?;
-            let id = id.parse::<Uuid>().map_err(|_| StatusCode::BAD_REQUEST)?;
-            (Some(time.to_string()), Some(id))
-        }
-    };
+    let (cursor_time, cursor_id) = parse_cursor_pg(query.cursor)?;
 
-    let (status, open_only) = match query.status {
-        None => (None, false),
-        Some(OrderStatusFilter::Open) => (None, true),
-        Some(OrderStatusFilter::New) => (Some(OrderStatus::New as i16), false),
-        Some(OrderStatusFilter::PartiallyFilled) => {
-            (Some(OrderStatus::PartiallyFilled as i16), false)
-        }
-        Some(OrderStatusFilter::Filled) => (Some(OrderStatus::Filled as i16), false),
-        Some(OrderStatusFilter::Cancelled) => (Some(OrderStatus::Cancelled as i16), false),
-        Some(OrderStatusFilter::Expired) => (Some(OrderStatus::Expired as i16), false),
-        Some(OrderStatusFilter::PendingTrigger) => {
-            (Some(OrderStatus::PendingTrigger as i16), false)
-        }
-    };
+    let (status, open_only) = order_status_filter(query.status);
 
     let user_exists =
         sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM users WHERE user_id = $1)")
@@ -1095,21 +1136,11 @@ pub async fn list_user_orders(
     .bind(i64::from(limit) + 1)
     .fetch_all(&state.pg_connections)
     .await
-    .map_err(
-        |e| match e.as_database_error().and_then(|d| d.code()).as_deref() {
-            Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-    )?;
+    .map_err(page_query_error)?;
 
-    let has_more = rows.len() > limit as usize;
-    rows.truncate(limit as usize);
-    let next_cursor = if has_more {
-        rows.last()
-            .map(|o| format!("{}_{}", o.created_at, o.order_id))
-    } else {
-        None
-    };
+    let next_cursor = next_page_cursor(&mut rows, limit, |o| {
+        format!("{}_{}", o.created_at, o.order_id)
+    });
 
     let mut market_ids: Vec<i32> = rows.iter().map(|o| o.market_id).collect();
     market_ids.sort_unstable();
@@ -1128,14 +1159,7 @@ pub async fn list_user_orders(
                 .iter()
                 .find(|m| m.market_id == o.market_id)
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-            let base = ledgers
-                .iter()
-                .find(|l| l.ledger_id == m.base_ledger_id)
-                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-            let quote = ledgers
-                .iter()
-                .find(|l| l.ledger_id == m.quote_ledger_id)
-                .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+            let (base, quote) = find_market_ledgers(&ledgers, m)?;
             Order::from_row(o, m, base, quote)
         })
         .collect::<Result<Vec<_>, StatusCode>>()?;
@@ -1151,34 +1175,11 @@ pub async fn list_market_orders(
     Path(symbol): Path<String>,
     Query(query): Query<MarketOrderQuery>,
 ) -> Result<Json<OrderPage>, StatusCode> {
-    let limit = query.limit.unwrap_or(50).min(100);
-    if limit == 0 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    let limit = page_limit(query.limit)?;
 
-    let (cursor_time, cursor_id) = match query.cursor {
-        None => (None, None),
-        Some(c) => {
-            let (time, id) = c.split_once('_').ok_or(StatusCode::BAD_REQUEST)?;
-            let id = id.parse::<Uuid>().map_err(|_| StatusCode::BAD_REQUEST)?;
-            (Some(time.to_string()), Some(id))
-        }
-    };
+    let (cursor_time, cursor_id) = parse_cursor_pg(query.cursor)?;
 
-    let (status, open_only) = match query.status {
-        None => (None, false),
-        Some(OrderStatusFilter::Open) => (None, true),
-        Some(OrderStatusFilter::New) => (Some(OrderStatus::New as i16), false),
-        Some(OrderStatusFilter::PartiallyFilled) => {
-            (Some(OrderStatus::PartiallyFilled as i16), false)
-        }
-        Some(OrderStatusFilter::Filled) => (Some(OrderStatus::Filled as i16), false),
-        Some(OrderStatusFilter::Cancelled) => (Some(OrderStatus::Cancelled as i16), false),
-        Some(OrderStatusFilter::Expired) => (Some(OrderStatus::Expired as i16), false),
-        Some(OrderStatusFilter::PendingTrigger) => {
-            (Some(OrderStatus::PendingTrigger as i16), false)
-        }
-    };
+    let (status, open_only) = order_status_filter(query.status);
 
     let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
         .await
@@ -1217,21 +1218,11 @@ pub async fn list_market_orders(
     .bind(i64::from(limit) + 1)
     .fetch_all(&state.pg_connections)
     .await
-    .map_err(
-        |e| match e.as_database_error().and_then(|d| d.code()).as_deref() {
-            Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-    )?;
+    .map_err(page_query_error)?;
 
-    let has_more = rows.len() > limit as usize;
-    rows.truncate(limit as usize);
-    let next_cursor = if has_more {
-        rows.last()
-            .map(|o| format!("{}_{}", o.created_at, o.order_id))
-    } else {
-        None
-    };
+    let next_cursor = next_page_cursor(&mut rows, limit, |o| {
+        format!("{}_{}", o.created_at, o.order_id)
+    });
 
     let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
@@ -1295,19 +1286,9 @@ pub async fn list_market_trades(
     Path(symbol): Path<String>,
     Query(query): Query<MarketTradeQuery>,
 ) -> Result<Json<TradePage>, StatusCode> {
-    let limit = query.limit.unwrap_or(50).min(100);
-    if limit == 0 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    let limit = page_limit(query.limit)?;
 
-    let (cursor_time, cursor_id) = match query.cursor {
-        None => (None, None),
-        Some(c) => {
-            let (time, id) = c.split_once('_').ok_or(StatusCode::BAD_REQUEST)?;
-            let id = id.parse::<Uuid>().map_err(|_| StatusCode::BAD_REQUEST)?;
-            (Some(time.to_string()), Some(id))
-        }
-    };
+    let (cursor_time, cursor_id) = parse_cursor_pg(query.cursor)?;
 
     let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
         .await
@@ -1335,21 +1316,11 @@ pub async fn list_market_trades(
     .bind(i64::from(limit) + 1)
     .fetch_all(&state.pg_connections)
     .await
-    .map_err(
-        |e| match e.as_database_error().and_then(|d| d.code()).as_deref() {
-            Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-    )?;
+    .map_err(page_query_error)?;
 
-    let has_more = rows.len() > limit as usize;
-    rows.truncate(limit as usize);
-    let next_cursor = if has_more {
-        rows.last()
-            .map(|t| format!("{}_{}", t.engine_time, t.trade_id))
-    } else {
-        None
-    };
+    let next_cursor = next_page_cursor(&mut rows, limit, |t| {
+        format!("{}_{}", t.engine_time, t.trade_id)
+    });
 
     let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
