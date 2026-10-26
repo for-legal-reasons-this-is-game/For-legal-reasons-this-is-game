@@ -55,6 +55,75 @@ pub async fn fetch_ledger_by_id(pool: &PgPool, ledger_id: i32) -> sqlx::Result<O
     .await
 }
 
+pub async fn load_markets(pool: &PgPool) -> sqlx::Result<Vec<MarketRow>> {
+    sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets ORDER BY market_id",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn fetch_market_by_symbol(
+    pool: &PgPool,
+    symbol: &str,
+) -> sqlx::Result<Option<MarketRow>> {
+    sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE symbol = $1",
+    )
+    .bind(symbol)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn fetch_market_by_id(pool: &PgPool, market_id: i32) -> sqlx::Result<Option<MarketRow>> {
+    sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE market_id = $1",
+    )
+    .bind(market_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn fetch_markets_by_ids(
+    pool: &PgPool,
+    market_ids: &[i32],
+) -> sqlx::Result<Vec<MarketRow>> {
+    sqlx::query_as::<_, MarketRow>(
+        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps \
+         FROM markets WHERE market_id = ANY($1)",
+    )
+    .bind(market_ids)
+    .fetch_all(pool)
+    .await
+}
+
+// gives the (base, quote) ledgers of a market. Both have to exist, a market can't point to a missing ledger
+pub async fn fetch_market_ledgers(
+    pool: &PgPool,
+    market: &MarketRow,
+) -> Result<(Ledger, Ledger), StatusCode> {
+    let base = fetch_ledger_by_id(pool, market.base_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let quote = fetch_ledger_by_id(pool, market.quote_ledger_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((base, quote))
+}
+
 #[derive(Deserialize)]
 pub struct UserPayload {
     name: String,
@@ -854,15 +923,9 @@ pub async fn set_ledger_enabled(
 
 // lists all markets
 pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Market>>, StatusCode> {
-    let market_rows = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets ORDER BY market_id",
-    )
-    .fetch_all(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let market_rows = load_markets(&state.pg_connections)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let ledgers = load_ledgers(&state.pg_connections)
         .await
@@ -892,26 +955,12 @@ pub async fn fetch_market(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
 ) -> Result<Json<Market>, StatusCode> {
-    let m = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                   min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                   maker_fee_bps, taker_fee_bps \
-            FROM markets WHERE symbol = $1",
-    )
-    .bind(symbol)
-    .fetch_optional(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     Ok(Json(Market::from_row(m, base, quote)?))
 }
@@ -943,25 +992,12 @@ pub async fn fetch_order(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
 
-    let m = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets WHERE market_id = $1",
-    )
-    .bind(o.market_id)
-    .fetch_one(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let m = fetch_market_by_id(&state.pg_connections, o.market_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     Ok(Json(Order::from_row(o, &m, &base, &quote)?))
 }
@@ -1078,16 +1114,9 @@ pub async fn list_user_orders(
     let mut market_ids: Vec<i32> = rows.iter().map(|o| o.market_id).collect();
     market_ids.sort_unstable();
     market_ids.dedup();
-    let markets = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets WHERE market_id = ANY($1)",
-    )
-    .bind(&market_ids)
-    .fetch_all(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let markets = fetch_markets_by_ids(&state.pg_connections, &market_ids)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let ledgers = load_ledgers(&state.pg_connections)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1151,17 +1180,10 @@ pub async fn list_market_orders(
         }
     };
 
-    let m = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets WHERE symbol = $1",
-    )
-    .bind(symbol)
-    .fetch_optional(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let mut rows = sqlx::query_as::<_, OrderRow>(
         r#"SELECT order_id, idempotency_key, user_id, market_id, base_account_id,
@@ -1211,14 +1233,7 @@ pub async fn list_market_orders(
         None
     };
 
-    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     let items = rows
         .into_iter()
@@ -1241,25 +1256,12 @@ pub async fn list_order_trades(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::NOT_FOUND)?;
 
-    let m = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets WHERE market_id = $1",
-    )
-    .bind(market_id)
-    .fetch_one(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let m = fetch_market_by_id(&state.pg_connections, market_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     let rows = sqlx::query_as::<_, TradeRow>(
         r#"SELECT trade_id, market_id, buyer_order_id, seller_order_id, price, base_quantity,
@@ -1307,17 +1309,10 @@ pub async fn list_market_trades(
         }
     };
 
-    let m = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets WHERE symbol = $1",
-    )
-    .bind(symbol)
-    .fetch_optional(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let mut rows = sqlx::query_as::<_, TradeRow>(
         r#"SELECT trade_id, market_id, buyer_order_id, seller_order_id, price, base_quantity,
@@ -1356,14 +1351,7 @@ pub async fn list_market_trades(
         None
     };
 
-    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     let items = rows
         .into_iter()
@@ -1378,17 +1366,10 @@ pub async fn fetch_market_ticker(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
 ) -> Result<Json<Ticker>, StatusCode> {
-    let m = sqlx::query_as::<_, MarketRow>(
-        "SELECT market_id, symbol, base_ledger_id, quote_ledger_id, status, price_decimals, \
-                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
-                maker_fee_bps, taker_fee_bps \
-         FROM markets WHERE symbol = $1",
-    )
-    .bind(symbol)
-    .fetch_optional(&state.pg_connections)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    let m = fetch_market_by_symbol(&state.pg_connections, &symbol)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let t = sqlx::query_as::<_, TickerStats>(
         r#"SELECT
@@ -1411,14 +1392,7 @@ pub async fn fetch_market_ticker(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let base = fetch_ledger_by_id(&state.pg_connections, m.base_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let quote = fetch_ledger_by_id(&state.pg_connections, m.quote_ledger_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &m).await?;
 
     Ok(Json(Ticker::from_row(t, &m, &base, &quote)?))
 }
