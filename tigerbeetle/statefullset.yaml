@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tigerbeetle
+  namespace: tigerbeetle
+spec:
+  serviceName: "tb-node-0"
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: tigerbeetle
+  template:
+    metadata:
+      labels:
+        app: tigerbeetle
+    spec:
+      initContainers:
+        - name: format-data-file
+          image: ghcr.io/tigerbeetle/tigerbeetle:latest
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              REPLICA_INDEX=$(echo "${HOSTNAME}" | awk -F'-' '{print $NF}')
+              DATA_FILE="/var/lib/tigerbeetle/cluster_0_${REPLICA_INDEX}.tigerbeetle"
+
+              # Stagger disk formatting by 5s per replica to avoid choking local SSD
+              sleep $((REPLICA_INDEX * 5))
+
+              if [ ! -f "${DATA_FILE}" ]; then
+                /tigerbeetle format \
+                  --cluster=0 \
+                  --replica="${REPLICA_INDEX}" \
+                  --replica-count=3 \
+                  --development \
+                  "${DATA_FILE}"
+              fi
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: tb-data
+              mountPath: /var/lib/tigerbeetle
+      containers:
+        - name: tigerbeetle
+          image: ghcr.io/tigerbeetle/tigerbeetle:latest
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              REPLICA_INDEX=$(echo "${HOSTNAME}" | awk -F'-' '{print $NF}')
+              DATA_FILE="/var/lib/tigerbeetle/cluster_0_${REPLICA_INDEX}.tigerbeetle"
+
+              # Kubernetes automatically injects TB_NODE_X_SERVICE_HOST with the static IPv4 of each Service!
+              ADDRESSES="${TB_NODE_0_SERVICE_HOST}:3000,${TB_NODE_1_SERVICE_HOST}:3000,${TB_NODE_2_SERVICE_HOST}:3000"
+              echo "Starting replica ${REPLICA_INDEX} with static IPs: ${ADDRESSES}"
+
+              exec /tigerbeetle start \
+                --addresses="${ADDRESSES}" \
+                --cache-grid=2500MiB\
+                --development \
+                "${DATA_FILE}"
+          ports:
+            - containerPort: 3000
+              name: peer
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "2500Mi"
+            limits:
+              cpu: "500m"
+              memory: "2500Mi"
+          volumeMounts:
+            - name: tb-data
+              mountPath: /var/lib/tigerbeetle
+  volumeClaimTemplates:
+    - metadata:
+        name: tb-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
