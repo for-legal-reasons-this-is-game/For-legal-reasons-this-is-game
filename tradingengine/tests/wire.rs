@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use proto::{Id, Market, Timestamp as WireTimestamp, Uint128};
 
 use tradingengine::error::EngineError;
@@ -5,7 +7,6 @@ use tradingengine::fee::FeeBps;
 use tradingengine::price::Price;
 use tradingengine::quantity::{BaseQuantity, QuoteQuantity};
 use tradingengine::quote::QuoteScale;
-use tradingengine::timestamp::Timestamp;
 use tradingengine::wire::{required, required_id};
 
 fn wire(value: u128) -> Uint128 {
@@ -24,21 +25,28 @@ fn market(base_decimals: u32, quote_decimals: u32, price_decimals: u32) -> Marke
 
 #[test]
 fn an_absent_field_is_not_a_zero() {
+    fn base_from_field(field: Option<Uint128>) -> Result<BaseQuantity, EngineError> {
+        Ok(BaseQuantity::from(required(field)?))
+    }
+    fn price_from_field(field: Option<Uint128>) -> Result<Price, EngineError> {
+        Price::try_from(required(field)?)
+    }
+
     let absent: Option<Uint128> = None;
     let zero = Some(wire(0));
 
     assert_eq!(
-        BaseQuantity::try_from(absent),
+        base_from_field(absent),
         Err(EngineError::RequiredFieldAbsent)
     );
-    assert_eq!(BaseQuantity::try_from(zero), Ok(BaseQuantity::ZERO));
+    assert_eq!(base_from_field(zero), Ok(BaseQuantity::ZERO));
 
     // A price rejects both, but for two different reasons.
     assert_eq!(
-        Price::try_from(absent),
+        price_from_field(absent),
         Err(EngineError::RequiredFieldAbsent)
     );
-    assert_eq!(Price::try_from(zero), Err(EngineError::PriceNotPositive));
+    assert_eq!(price_from_field(zero), Err(EngineError::PriceNotPositive));
 }
 
 #[test]
@@ -85,7 +93,7 @@ fn quantities_accept_zero_and_round_trip() {
 
 #[test]
 fn a_zero_quantity_converts_but_is_not_a_valid_order_size() {
-    let quantity = BaseQuantity::try_from(Some(wire(0))).unwrap();
+    let quantity = BaseQuantity::from(wire(0));
     assert_eq!(
         quantity.require_positive(),
         Err(EngineError::QuantityNotPositive)
@@ -114,43 +122,30 @@ fn a_fee_rate_round_trips_and_accepts_zero() {
 fn a_timestamp_round_trips_through_seconds_and_nanos() {
     for (seconds, nanos) in [(0i64, 0i32), (1_758_000_000, 123), (0, 999_999_999)] {
         let wire_value = WireTimestamp { seconds, nanos };
-        let engine = Timestamp::try_from(wire_value).unwrap();
+        let time = SystemTime::try_from(wire_value).unwrap();
         assert_eq!(
-            engine.unix_nanos(),
-            seconds as u64 * 1_000_000_000 + nanos as u64
+            time,
+            UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32)
         );
 
-        let back = WireTimestamp::from(engine);
+        let back = WireTimestamp::from(time);
         assert_eq!((back.seconds, back.nanos), (seconds, nanos));
     }
 }
 
 #[test]
-fn a_timestamp_the_engine_cannot_hold_is_rejected() {
-    let before_1970 = WireTimestamp {
-        seconds: -1,
+fn a_timestamp_the_system_clock_cannot_hold_is_rejected() {
+    fn convert(wire_value: WireTimestamp) -> Result<SystemTime, EngineError> {
+        Ok(SystemTime::try_from(wire_value)?)
+    }
+
+    // i64::MIN seconds cannot be negated, so SystemTime cannot represent it.
+    let too_far_in_the_past = WireTimestamp {
+        seconds: i64::MIN,
         nanos: 0,
     };
     assert_eq!(
-        Timestamp::try_from(before_1970),
-        Err(EngineError::TimestampOutOfRange)
-    );
-
-    let a_whole_second_of_nanos = WireTimestamp {
-        seconds: 0,
-        nanos: 1_000_000_000,
-    };
-    assert_eq!(
-        Timestamp::try_from(a_whole_second_of_nanos),
-        Err(EngineError::TimestampOutOfRange)
-    );
-
-    let past_u64_nanos = WireTimestamp {
-        seconds: i64::MAX,
-        nanos: 0,
-    };
-    assert_eq!(
-        Timestamp::try_from(past_u64_nanos),
+        convert(too_far_in_the_past),
         Err(EngineError::TimestampOutOfRange)
     );
 }
@@ -158,19 +153,7 @@ fn a_timestamp_the_engine_cannot_hold_is_rejected() {
 #[test]
 fn an_absent_timestamp_is_rejected_when_required() {
     let absent: Option<WireTimestamp> = None;
-    assert_eq!(
-        Timestamp::try_from(absent),
-        Err(EngineError::RequiredFieldAbsent)
-    );
-}
-
-#[test]
-fn the_largest_timestamp_the_engine_holds_still_splits_correctly() {
-    let engine = Timestamp::from_unix_nanos(u64::MAX);
-    let back = WireTimestamp::from(engine);
-    assert_eq!(back.seconds, (u64::MAX / 1_000_000_000) as i64);
-    assert_eq!(back.nanos, (u64::MAX % 1_000_000_000) as i32);
-    assert_eq!(Timestamp::try_from(back), Ok(engine));
+    assert_eq!(required(absent), Err(EngineError::RequiredFieldAbsent));
 }
 
 #[test]
@@ -212,27 +195,25 @@ fn a_market_the_formula_cannot_serve_is_rejected() {
 }
 
 #[test]
-fn a_whole_order_priced_from_wire_values() {
-    let scale = QuoteScale::try_from(&market(8, 2, 2)).unwrap();
+fn a_whole_order_priced_from_wire_values() -> Result<(), EngineError> {
+    let scale = QuoteScale::try_from(&market(8, 2, 2))?;
 
     let limit_price: Option<Uint128> = Some(wire(2_900_000));
     let base_quantity: Option<Uint128> = Some(wire(12_345));
     let taker_fee_bps: u32 = 10;
 
-    let price = Price::try_from(limit_price).unwrap();
-    let base = BaseQuantity::try_from(base_quantity)
-        .unwrap()
-        .require_positive()
-        .unwrap();
+    let price = Price::try_from(required(limit_price)?)?;
+    let base = BaseQuantity::from(required(base_quantity)?).require_positive()?;
 
     // 2_900_000 * 12_345 / 10^8 = 358.005, floored to 358 cents.
-    let quote = scale.quote_for(price, base).unwrap();
+    let quote = scale.quote_for(price, base)?;
     assert_eq!(quote, QuoteQuantity::from_minor_units(358));
 
     // 10 bps of 358 is 0.358, floored to 0.
-    let fee = FeeBps::from(taker_fee_bps).fee_on(quote).unwrap();
+    let fee = FeeBps::from(taker_fee_bps).fee_on(quote)?;
     assert_eq!(fee, QuoteQuantity::ZERO);
 
     assert_eq!(u128::from(Uint128::from(quote)), 358);
     assert_eq!(u128::from(Uint128::from(fee)), 0);
+    Ok(())
 }

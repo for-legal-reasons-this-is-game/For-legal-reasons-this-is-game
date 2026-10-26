@@ -1,19 +1,20 @@
-use proto::{Id, Market, Timestamp as WireTimestamp, Uint128};
+use proto::{Id, Market, TimestampError, Uint128};
 
 use crate::error::{EngineError, Result};
 use crate::fee::FeeBps;
 use crate::price::Price;
 use crate::quantity::{BaseQuantity, QuoteQuantity};
 use crate::quote::QuoteScale;
-use crate::timestamp::Timestamp;
 
-// proto3 delivers a message field that was never sent and one sent as its zero
-// value identically, as None, so absence is its own rejection.
+// some incoming field from backend comes as and option the required()
+// makes sure these fields are not empty and if they are they are rejecte
+// a field make come in as some(0) and is accepted here but is rejected
+// down the line by the responsible field for example price(0) is
+// rejected but quantity(0) is sometimes accepted
 pub fn required<T>(field: Option<T>) -> Result<T> {
     field.ok_or(EngineError::RequiredFieldAbsent)
 }
 
-// Raw, because the typed identifiers are Layer 1 and still pre-#21.
 pub fn required_id(field: Option<Id>) -> Result<u128> {
     Ok(required(field)?.into())
 }
@@ -26,33 +27,17 @@ impl TryFrom<Uint128> for Price {
     }
 }
 
-impl TryFrom<Option<Uint128>> for Price {
-    type Error = EngineError;
-
-    fn try_from(field: Option<Uint128>) -> Result<Price> {
-        required(field)?.try_into()
-    }
-}
-
 impl From<Price> for Uint128 {
     fn from(price: Price) -> Uint128 {
         price.minor_units().into()
     }
 }
 
-// Infallible: a zero quantity is meaningful on the wire, and only a request
-// quantity has to be positive. That check is `require_positive`.
+// Zero cna be inserted in case of this value and is checked down the line
+// if the zero value is correct or not
 impl From<Uint128> for BaseQuantity {
     fn from(value: Uint128) -> BaseQuantity {
         BaseQuantity::from_minor_units(value.into())
-    }
-}
-
-impl TryFrom<Option<Uint128>> for BaseQuantity {
-    type Error = EngineError;
-
-    fn try_from(field: Option<Uint128>) -> Result<BaseQuantity> {
-        Ok(required(field)?.into())
     }
 }
 
@@ -65,14 +50,6 @@ impl From<BaseQuantity> for Uint128 {
 impl From<Uint128> for QuoteQuantity {
     fn from(value: Uint128) -> QuoteQuantity {
         QuoteQuantity::from_minor_units(value.into())
-    }
-}
-
-impl TryFrom<Option<Uint128>> for QuoteQuantity {
-    type Error = EngineError;
-
-    fn try_from(field: Option<Uint128>) -> Result<QuoteQuantity> {
-        Ok(required(field)?.into())
     }
 }
 
@@ -94,33 +71,11 @@ impl From<FeeBps> for u32 {
     }
 }
 
-impl TryFrom<WireTimestamp> for Timestamp {
-    type Error = EngineError;
-
-    fn try_from(value: WireTimestamp) -> Result<Timestamp> {
-        Timestamp::from_unix_parts(value.seconds, value.nanos)
-    }
-}
-
-impl TryFrom<Option<WireTimestamp>> for Timestamp {
-    type Error = EngineError;
-
-    fn try_from(field: Option<WireTimestamp>) -> Result<Timestamp> {
-        required(field)?.try_into()
-    }
-}
-
-impl From<Timestamp> for WireTimestamp {
-    fn from(timestamp: Timestamp) -> WireTimestamp {
-        const NANOS_PER_SECOND: u64 = 1_000_000_000;
-        let nanos = timestamp.unix_nanos();
-
-        // Both casts are lossless. The engine's range stops at the year 2554,
-        // so the seconds fit an i64, and the remainder is below one second.
-        WireTimestamp {
-            seconds: (nanos / NANOS_PER_SECOND) as i64,
-            nanos: (nanos % NANOS_PER_SECOND) as i32,
-        }
+// Timestamps use std::time::SystemTime and the conversions prost-types already has.
+// This only turns its error into ours so `SystemTime::try_from(...)?` works in the engine.
+impl From<TimestampError> for EngineError {
+    fn from(_: TimestampError) -> EngineError {
+        EngineError::TimestampOutOfRange
     }
 }
 
