@@ -15,23 +15,26 @@ export function CreateDeposit({ accountID }: { accountID: string }) {
     const queryClient = useQueryClient();
     const { isPending, isError, isSuccess, variables, error, mutate } = useMutation({
         mutationFn: (payload: DepositPayload) => api.accounts.deposit(accountID, payload),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["position"] }),
+        onSuccess: (_data, id) =>
+            Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["position", id] }),
+                queryClient.invalidateQueries({
+                    queryKey: ["transfers", "account", accountID],
+                }),
+            ]),
     });
 
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
 
-        setFormData((prev) => ({
-            ...prev,
-            idempotency_key: uuidv7(),
-        }));
-        if (!formData.idempotency_key.trim() || !formData.amount.trim()) {
+        if (!formData.amount.trim()) {
             setValidationError("Amount field can't be empty");
             return;
         }
+        const idempotency_key = uuidv7();
         mutate({
             ...formData,
-            idempotency_key: formData.idempotency_key.trim(),
+            idempotency_key: idempotency_key,
             amount: formData.amount.trim(),
         });
     }

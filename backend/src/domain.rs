@@ -105,7 +105,8 @@ fn scale_to_decimal(raw: Decimal, decimals: i16) -> Result<Decimal, StatusCode> 
     )
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
 pub struct Market {
     pub market_id: i32,
     pub symbol: String,
@@ -113,9 +114,13 @@ pub struct Market {
     pub base_asset: Ledger,
     pub quote_asset: Ledger,
     pub price_decimals: i16,
+    #[ts(type = "string")]
     pub min_base_quantity: Decimal,
+    #[ts(type = "string")]
     pub min_quote_quantity: Decimal,
+    #[ts(type = "string")]
     pub quantity_step: Decimal,
+    #[ts(type = "string")]
     pub price_step: Decimal,
     pub maker_fee_bps: i32,
     pub taker_fee_bps: i32,

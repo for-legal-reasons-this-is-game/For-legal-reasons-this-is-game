@@ -5,14 +5,16 @@ import { CreateDeposit } from "./CreateDeposit";
 import { ListAccountTransfers } from "./ListAccountTransfers";
 import { ReopenAccount } from "./ReopenAccount";
 import { CloseAccount } from "./CloseAccount";
+import { PositionLookup } from "./PositionLookup";
 
 export function AccountLookup() {
     const [accountID, setAccountID] = useState<string>("");
     const [submittedAccountID, setSubmittedAccountID] = useState("");
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [positionLookup, setPositionLookup] = useState(false);
 
     const { isFetching, isError, isSuccess, data, error } = useQuery({
-        queryKey: ["transfers", "account", submittedAccountID],
+        queryKey: ["account", submittedAccountID],
         queryFn: () => api.accounts.get(submittedAccountID),
         enabled: !!submittedAccountID,
     });
@@ -54,6 +56,13 @@ export function AccountLookup() {
                     <div>Code Type: {data.account_code_type} </div>
                     <div>Ledger ID: {data.account_ledger_id} </div>
                     <div>Status: {data.account_status} </div>
+                    <button
+                        style={{ background: positionLookup ? "green" : "grey" }}
+                        onClick={() => setPositionLookup(!positionLookup)}>
+                        Position Lookup
+                    </button>
+                    <br />
+                    {positionLookup && <PositionLookup accountID={data.account_id} />}
                     <CloseAccount accountID={data.account_id} />
                     <ReopenAccount accountID={data.account_id} />
                     <CreateDeposit accountID={data.account_id} />

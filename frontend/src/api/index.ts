@@ -11,6 +11,7 @@ import type { UserPayload } from "../types/UserPayload";
 import type { DepositPayload } from "../types/DepositPayload";
 import type { TransferQuery } from "../types/TransferQuery";
 import type { TransferPage } from "../types/TransferPage";
+import type { Market } from "../types/Market";
 
 export { ApiError, errorMessage } from "./client";
 
@@ -46,5 +47,9 @@ export const api = {
         create: (payload: LedgerPayload) => http.post<Ledger>("/ledgers", payload),
         setEnabled: (symbol: string, enabled: boolean) =>
             http.patch<Ledger>(`/ledgers/${seg(symbol)}`, { enabled }),
+    },
+    markets: {
+        list: () => http.get<Market[]>("/markets"),
+        get: (symbol: string) => http.get<Market>(`/markets/${seg(symbol)}`),
     },
 };

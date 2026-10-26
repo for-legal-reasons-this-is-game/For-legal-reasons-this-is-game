@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ChangeEvent } from "react";
+import { useState, type ChangeEvent } from "react";
 import { api, errorMessage } from "../api";
 import { useQuery } from "@tanstack/react-query";
 import { type Transfer } from "../types/Transfer";
@@ -17,8 +17,6 @@ function Transfer({ transfer }: { transfer: Transfer }) {
 }
 
 export function ListAccountTransfers({ accountID }: { accountID: string }) {
-    // TODO: Do we even need this state? just use accountID directly
-    const [submittedAccountID, setSubmittedAccountID] = useState("");
     const [query, setQuery] = useState<TransferQuery>({
         limit: null,
         cursor: null,
@@ -26,19 +24,9 @@ export function ListAccountTransfers({ accountID }: { accountID: string }) {
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const { isFetching, isError, isSuccess, data, error } = useQuery({
-        queryKey: ["transfers", "account", submittedAccountID, query],
-        queryFn: () => api.accounts.transfers(submittedAccountID, query),
-        enabled: !!submittedAccountID || !!query.cursor || !!query.limit,
+        queryKey: ["transfers", "account", accountID, query],
+        queryFn: () => api.accounts.transfers(accountID, query),
     });
-
-    function handleSubmit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        if (!accountID.trim()) {
-            setValidationError("AccountID field can't be empty");
-            return;
-        }
-        setSubmittedAccountID(accountID.trim());
-    }
 
     function handleChange(event: ChangeEvent<HTMLSelectElement>) {
         setValidationError(null);
@@ -52,41 +40,39 @@ export function ListAccountTransfers({ accountID }: { accountID: string }) {
     return (
         <>
             <h3>Account Transfers for account __{accountID}__</h3>
-            <form onSubmit={handleSubmit}>
-                <select onChange={handleChange}>
-                    <option itemType="number" value="10">
-                        10
-                    </option>
-                    <option itemType="number" value="20">
-                        20
-                    </option>
-                    <option itemType="number" value="30">
-                        30
-                    </option>
-                    <option itemType="number" value="40">
-                        40
-                    </option>
-                    <option itemType="number" value="50">
-                        50
-                    </option>
-                    <option itemType="number" value="60">
-                        60
-                    </option>
-                    <option itemType="number" value="70">
-                        70
-                    </option>
-                    <option itemType="number" value="80">
-                        80
-                    </option>
-                    <option itemType="number" value="90">
-                        90
-                    </option>
-                    <option itemType="number" value="100">
-                        100
-                    </option>
-                </select>
-                <button type="submit">Get Transfers</button>
-            </form>
+            <div>Transfers</div>
+            <select onChange={handleChange}>
+                <option itemType="number" value="10">
+                    10
+                </option>
+                <option itemType="number" value="20">
+                    20
+                </option>
+                <option itemType="number" value="30">
+                    30
+                </option>
+                <option itemType="number" value="40">
+                    40
+                </option>
+                <option itemType="number" value="50">
+                    50
+                </option>
+                <option itemType="number" value="60">
+                    60
+                </option>
+                <option itemType="number" value="70">
+                    70
+                </option>
+                <option itemType="number" value="80">
+                    80
+                </option>
+                <option itemType="number" value="90">
+                    90
+                </option>
+                <option itemType="number" value="100">
+                    100
+                </option>
+            </select>
 
             {validationError && <div style={{ color: "red" }}>{validationError}</div>}
             {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}

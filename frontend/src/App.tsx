@@ -1,13 +1,17 @@
 import { useState } from "react";
+
 import { CreateUser } from "./user/CreateUser";
 import { ListUsers } from "./user/ListUsers";
+
 import { CreateAccount } from "./account/CreateAccount";
+import { AccountLookup } from "./account/AccountLookup";
+
 import { CreateLedger } from "./ledger/CreateLedger";
 import { ListLedgers } from "./ledger/ListLedgers";
-import { AccountLookup } from "./account/AccountLookup";
-import { PositionLookup } from "./account/PositionLookup";
 import { LedgerLookup } from "./ledger/LedgerLookup";
-import { CloseAccount } from "./account/CloseAccount";
+
+import { MarketLookup } from "./market/MarketLookup";
+import { ListMarkets } from "./market/ListMarkets";
 
 function App() {
     const [userID, setUserID] = useState<string>("");
@@ -17,9 +21,9 @@ function App() {
     const [createLedger, setCreateLedger] = useState(false);
     const [ledgers, setLedgers] = useState(false);
     const [account, setAccount] = useState(false);
-    const [accountPosition, setAccountPosition] = useState(false);
     const [ledger, setLedger] = useState(false);
-    const [closeAccount, setCloseAccount] = useState(false);
+    const [marketLookup, setMarketLookup] = useState(false);
+    const [listMarkets, setListMarkets] = useState(false);
 
     return (
         <div>
@@ -49,18 +53,6 @@ function App() {
                 Fetch Account
             </button>
             <br />
-            <button
-                style={{ background: accountPosition ? "green" : "grey" }}
-                onClick={() => setAccountPosition(!accountPosition)}>
-                Fetch Position
-            </button>
-            <br />
-            <button
-                style={{ background: closeAccount ? "green" : "grey" }}
-                onClick={() => setCloseAccount(!closeAccount)}>
-                Close Account
-            </button>
-            <br />
             <br />
             <button
                 style={{ background: createLedger ? "green" : "grey" }}
@@ -80,15 +72,28 @@ function App() {
                 Get Ledger
             </button>
             <br />
+            <br />
+            <button
+                style={{ background: marketLookup ? "green" : "grey" }}
+                onClick={() => setMarketLookup(!marketLookup)}>
+                Market Lookup
+            </button>
+            <br />
+            <button
+                style={{ background: listMarkets ? "green" : "grey" }}
+                onClick={() => setListMarkets(!listMarkets)}>
+                List Markets
+            </button>
+            <br />
             {createUser && <CreateUser />}
             {users && <ListUsers setUserID={setUserID} />}
             {createAccount && <CreateAccount userID={userID} />}
             {account && <AccountLookup />}
-            {accountPosition && <PositionLookup />}
             {createLedger && <CreateLedger />}
             {ledgers && <ListLedgers />}
             {ledger && <LedgerLookup />}
-            {closeAccount && <CloseAccount />}
+            {marketLookup && <MarketLookup />}
+            {listMarkets && <ListMarkets />}
         </div>
     );
 }
