@@ -1,20 +1,20 @@
 use crate::error::{EngineError, Result};
-use crate::ids::{IdempotencyKey, OrderId, SeqNo, UserId};
+use crate::ids::{CommandId, OrderId, UserId};
 use crate::order::{OrderStatus, Side};
 use crate::price::Price;
 use crate::quantity::BaseQuantity;
 
+// each order sitting in the book
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestingOrder {
     id: OrderId,
     user_id: UserId,
     side: Side,
     price: Price,
-    qty_original: BaseQuantity,
+    qty_total: BaseQuantity,
     qty_remaining: BaseQuantity,
     status: OrderStatus,
-    seq_no: SeqNo,
-    idempotency_key: IdempotencyKey,
+    command_id: CommandId,
 }
 
 impl RestingOrder {
@@ -23,22 +23,20 @@ impl RestingOrder {
         user_id: UserId,
         side: Side,
         price: Price,
-        qty_original: BaseQuantity,
-        seq_no: SeqNo,
-        idempotency_key: IdempotencyKey,
+        qty_total: BaseQuantity,
+        command_id: CommandId,
     ) -> Result<Self> {
-        let qty_original = qty_original.require_positive()?;
+        let qty_total = qty_total.require_positive()?;
 
         Ok(Self {
             id,
             user_id,
             side,
             price,
-            qty_original,
-            qty_remaining: qty_original,
+            qty_total,
+            qty_remaining: qty_total,
             status: OrderStatus::Open,
-            seq_no,
-            idempotency_key,
+            command_id,
         })
     }
 
@@ -57,6 +55,33 @@ impl RestingOrder {
 
         self.qty_remaining = qty_remaining;
         self.status = status;
+        Ok(())
+    }
+
+    // changes the order's total quantity and/or price, None leaves it as it was.
+    // the new total must be above what is already filled (BAD_QUANTITY in the
+    // contract), the remaining becomes new total minus filled. on an error
+    // nothing changes. where the order sits in the queue is up to Book::modify
+    pub fn modify(
+        &mut self,
+        new_quantity: Option<BaseQuantity>,
+        new_price: Option<Price>,
+    ) -> Result<()> {
+        if self.status.is_terminal() {
+            return Err(EngineError::OrderNotLive);
+        }
+
+        let filled = self.qty_total.checked_sub(self.qty_remaining)?;
+        let new_quantity = new_quantity.unwrap_or(self.qty_total);
+        if new_quantity <= filled {
+            return Err(EngineError::QuantityNotAboveFilled);
+        }
+
+        self.qty_remaining = new_quantity.checked_sub(filled)?;
+        self.qty_total = new_quantity;
+        if let Some(price) = new_price {
+            self.price = price;
+        }
         Ok(())
     }
 
@@ -85,8 +110,8 @@ impl RestingOrder {
         self.price
     }
 
-    pub const fn qty_original(&self) -> BaseQuantity {
-        self.qty_original
+    pub const fn qty_total(&self) -> BaseQuantity {
+        self.qty_total
     }
 
     pub const fn qty_remaining(&self) -> BaseQuantity {
@@ -97,11 +122,8 @@ impl RestingOrder {
         self.status
     }
 
-    pub const fn seq_no(&self) -> SeqNo {
-        self.seq_no
-    }
-
-    pub fn idempotency_key(&self) -> &IdempotencyKey {
-        &self.idempotency_key
+    // returned by value now that CommandId is a plain number like OrderId
+    pub const fn command_id(&self) -> CommandId {
+        self.command_id
     }
 }

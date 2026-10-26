@@ -7,8 +7,8 @@ use crate::price::Price;
 use crate::quantity::BaseQuantity;
 use crate::resting_order::RestingOrder;
 
-type Level = VecDeque<RestingOrder>;
-type BookSide = BTreeMap<Price, Level>;
+type Level = VecDeque<RestingOrder>; // all the orders at the same price 
+type BookSide = BTreeMap<Price, Level>; // a map of one side of the book (sell/by) price is needed for faster access
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fill {
@@ -18,10 +18,11 @@ pub struct Fill {
     pub quantity: BaseQuantity,
 }
 
+// after a matching happens a an execution struct is returned
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Execution {
-    fills: Vec<Fill>,
-    resting: Option<OrderId>,
+    fills: Vec<Fill>, // all the resting orders that were filled because of the new order
+    resting: Option<OrderId>, // the remainder of the new order NONE if it was filled
 }
 
 impl Execution {
@@ -29,11 +30,11 @@ impl Execution {
         &self.fills
     }
 
-    pub const fn resting(&self) -> Option<OrderId> {
+    pub const fn resting_order_id(&self) -> Option<OrderId> {
         self.resting
     }
 
-    pub fn filled(&self) -> Result<BaseQuantity> {
+    pub fn total_filled_quantity(&self) -> Result<BaseQuantity> {
         self.fills
             .iter()
             .try_fold(BaseQuantity::ZERO, |total, fill| {
@@ -46,7 +47,9 @@ impl Execution {
 pub struct Book {
     bids: BookSide, // wants to buy
     asks: BookSide, // wants to sell
-    orders: HashMap<OrderId, (Side, Price)>,
+    all_orders: HashMap<OrderId, (Side, Price)>,
+    // orders are a general index of each order id to prevent double insertion and
+    // faster search instead of walking down a whole bookside
 }
 
 impl Book {
@@ -54,9 +57,11 @@ impl Book {
         Self::default()
     }
 
+    // insert tries to put the new incomming order into the book unless the order
+    // can be matched to the a price on the oposite side of the book
     pub fn insert(&mut self, mut order: RestingOrder) -> Result<Execution> {
         let id = order.id();
-        if self.orders.contains_key(&id) {
+        if self.all_orders.contains_key(&id) {
             return Err(EngineError::DuplicateOrderId);
         }
 
@@ -67,7 +72,7 @@ impl Book {
         } else {
             let side = order.side();
             let price = order.price();
-            self.orders.insert(id, (side, price));
+            self.all_orders.insert(id, (side, price));
             self.side_mut(side)
                 .entry(price)
                 .or_default()
@@ -78,22 +83,24 @@ impl Book {
         Ok(Execution { fills, resting })
     }
 
+    // tries to match the incoming order to a the other side
+    // returns fills(matched)
     fn match_incoming(&mut self, incoming: &mut RestingOrder) -> Result<Vec<Fill>> {
         let taker_side = incoming.side();
         let limit = incoming.price();
 
-        let levels = match taker_side {
+        let opposite_side = match taker_side {
             Side::Buy => &mut self.asks,
             Side::Sell => &mut self.bids,
         };
-        let orders = &mut self.orders;
+        let orders = &mut self.all_orders;
 
         let mut fills = Vec::new();
 
         while !incoming.qty_remaining().is_zero() {
             let best = match taker_side {
-                Side::Buy => levels.keys().next().copied(),
-                Side::Sell => levels.keys().next_back().copied(),
+                Side::Buy => opposite_side.keys().next().copied(),
+                Side::Sell => opposite_side.keys().next_back().copied(),
             };
             let Some(price) = best else {
                 break;
@@ -107,7 +114,7 @@ impl Book {
                 break;
             }
 
-            let Some(level) = levels.get_mut(&price) else {
+            let Some(level) = opposite_side.get_mut(&price) else {
                 break;
             };
 
@@ -137,7 +144,7 @@ impl Book {
             }
 
             if level.is_empty() {
-                levels.remove(&price);
+                opposite_side.remove(&price);
             }
         }
 
@@ -145,7 +152,10 @@ impl Book {
     }
 
     pub fn remove(&mut self, id: OrderId) -> Result<RestingOrder> {
-        let (side, price) = self.orders.remove(&id).ok_or(EngineError::OrderNotFound)?;
+        let (side, price) = self
+            .all_orders
+            .remove(&id)
+            .ok_or(EngineError::OrderNotFound)?;
         let levels = self.side_mut(side);
 
         let Some(level) = levels.get_mut(&price) else {
@@ -164,23 +174,49 @@ impl Book {
         Ok(order)
     }
 
-    pub fn amend(
+    // changes a resting order's quantity and/or price, None leaves it as it was.
+    // the contract (proto/how_to_use.md) decides where it ends up in the queue:
+    // - only a lower (or the same) quantity at the same price keeps its place,
+    //   it asks for less than it queued for so nobody behind it loses out
+    // - a higher quantity or a new price goes to the back of the line, and a
+    //   new price can cross the book and match right away like a new order
+    // a rejected modify leaves the book exactly as it was
+    pub fn modify(
         &mut self,
         id: OrderId,
-        replacement: RestingOrder,
-    ) -> Result<(RestingOrder, Execution)> {
-        let replacement_id = replacement.id();
-        if replacement_id != id && self.orders.contains_key(&replacement_id) {
-            return Err(EngineError::DuplicateOrderId);
+        new_quantity: Option<BaseQuantity>,
+        new_price: Option<Price>,
+    ) -> Result<Execution> {
+        let &(side, price) = self.all_orders.get(&id).ok_or(EngineError::OrderNotFound)?;
+        let order = self
+            .side_mut(side)
+            .get_mut(&price)
+            .and_then(|level| level.iter_mut().find(|resting| resting.id() == id))
+            .ok_or(EngineError::OrderNotFound)?;
+
+        let same_price = new_price.is_none_or(|new| new == price);
+        let not_bigger = new_quantity.is_none_or(|new| new <= order.qty_total());
+
+        if same_price && not_bigger {
+            // changed in place, so it keeps its position in the level
+            order.modify(new_quantity, None)?;
+            return Ok(Execution {
+                fills: Vec::new(),
+                resting: Some(id),
+            });
         }
 
-        let replaced = self.remove(id)?;
-        let execution = self.insert(replacement)?;
-        Ok((replaced, execution))
+        // check the change on a copy first so a rejected modify has not
+        // already taken the order out of the book
+        let mut changed = order.clone();
+        changed.modify(new_quantity, new_price)?;
+
+        self.remove(id)?;
+        self.insert(changed)
     }
 
     pub fn get_by_id(&self, id: OrderId) -> Option<&RestingOrder> {
-        let &(side, price) = self.orders.get(&id)?;
+        let &(side, price) = self.all_orders.get(&id)?;
         self.side(side)
             .get(&price)?
             .iter()
@@ -204,11 +240,11 @@ impl Book {
     }
 
     pub fn len(&self) -> usize {
-        self.orders.len()
+        self.all_orders.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.orders.is_empty()
+        self.all_orders.is_empty()
     }
 
     fn side(&self, side: Side) -> &BookSide {
