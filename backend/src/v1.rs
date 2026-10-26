@@ -194,7 +194,7 @@ pub async fn create_account(
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| match e{
-        sqlx::Error::Database(db) if db.is_foreign_key_violation() => StatusCode::BAD_REQUEST,
+        sqlx::Error::Database(db) if db.is_foreign_key_violation() => StatusCode::NOT_FOUND,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     })?;
 
@@ -283,12 +283,12 @@ pub async fn close_account(
         .tb_client
         .lookup_accounts(&[account_id.as_u128()])
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
         .ok_or(StatusCode::NOT_FOUND)?;
     if account.code != AccountCodeType::User as u16 {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::FORBIDDEN);
     }
 
     // this sends a cancelordersrequest for all the account's orders in all markets.
@@ -318,7 +318,7 @@ pub async fn close_account(
                 account_holder: Some(account.user_data_128.into()),
             })
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
         if resp.reject_reason() != RejectReason::Unspecified {
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -336,10 +336,10 @@ pub async fn close_account(
             ..Default::default()
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match state
         .tb_client
@@ -355,7 +355,7 @@ pub async fn close_account(
         }])
         .await
     {
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_GATEWAY),
         Ok(v) => match v.first() {
             Some(r) => {
                 if r.result == CreateTransferResult::CreditAccountAlreadyClosed {
@@ -379,13 +379,13 @@ pub async fn reopen_account(
         .tb_client
         .lookup_accounts(&[account_id.as_u128()])
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
         .ok_or(StatusCode::NOT_FOUND)?;
 
     if account.code != AccountCodeType::User as u16 {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::FORBIDDEN);
     }
 
     if !account.flags.contains(tb::AccountFlags::Closed) {
@@ -402,7 +402,7 @@ pub async fn reopen_account(
             ..Default::default()
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
         .into_iter()
         .next()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -417,7 +417,7 @@ pub async fn reopen_account(
         }])
         .await
     {
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_GATEWAY),
         Ok(v) => match v.first() {
             Some(r) if r.result == CreateTransferResult::PendingTransferAlreadyVoided => {
                 Ok(StatusCode::NO_CONTENT)
@@ -429,13 +429,13 @@ pub async fn reopen_account(
 }
 
 // credits an account from the ledger's source account. The idempotency key comes from frontend as UUIDv7 and
-// its there so we dont duplicate deposits on retries, returns CREATED when we succeed at making the deposit,
-// ok if its a retry of an already successful depost and  CONFLICT if there is a conflict (for example that its same key but different amount)
+// its there so we dont duplicate deposits on retries, returns CREATED with the transfer when we succeed at making the deposit,
+// OK with the same transfer if its a retry of an already successful deposit and  CONFLICT if there is a conflict (for example that its same key but different amount)
 pub async fn create_deposit(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
     Json(payload): Json<DepositPayload>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<(StatusCode, Json<Transfer>), StatusCode> {
     if payload.idempotency_key.is_nil() || payload.idempotency_key.as_u128() == u128::MAX {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -507,20 +507,54 @@ pub async fn create_deposit(
         Err(_) => return Err(StatusCode::GATEWAY_TIMEOUT),
     };
 
-    match results.first().map(|r| &r.result) {
-        None | Some(CreateTransferResult::Ok) => Ok(StatusCode::CREATED),
-        Some(CreateTransferResult::Exists) => Ok(StatusCode::OK),
-        Some(r) if is_deposit_conflict(r) => Err(StatusCode::CONFLICT),
+    let status = match results.first().map(|r| &r.result) {
+        None | Some(CreateTransferResult::Ok) => StatusCode::CREATED,
+        Some(CreateTransferResult::Exists) => StatusCode::OK,
+        Some(r) if is_deposit_conflict(r) => return Err(StatusCode::CONFLICT),
         Some(
             CreateTransferResult::OverflowsCredits | CreateTransferResult::OverflowsCreditsPosted,
-        ) => Err(StatusCode::BAD_REQUEST),
+        ) => return Err(StatusCode::BAD_REQUEST),
         // this happens when the source account hasn't been created by the relay, so retrying should work
-        Some(CreateTransferResult::DebitAccountNotFound) => Err(StatusCode::SERVICE_UNAVAILABLE),
+        Some(CreateTransferResult::DebitAccountNotFound) => {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
         Some(other) => {
             println!("deposit: unexpected tigerbeetle result {other:?}");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
-    }
+    };
+
+    // tb doesn't give back the stored transfer (we need its timestamp), so we look it up. if this
+    // fails the deposit is already done; a retry with the same idempotency key returns it as OK.
+    let stored = match timeout(
+        Duration::from_secs(2),
+        state
+            .tb_client
+            .lookup_transfers(&[payload.idempotency_key.as_u128()]),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r
+            .into_iter()
+            .next()
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
+        Ok(Err(_)) => return Err(StatusCode::BAD_GATEWAY),
+        Err(_) => return Err(StatusCode::GATEWAY_TIMEOUT),
+    };
+
+    Ok((
+        status,
+        Json(Transfer {
+            transfer_id: Uuid::from_u128(stored.id),
+            direction: TransferDirection::In,
+            kind: transfer_kind(&stored),
+            amount: to_decimal(
+                i128::try_from(stored.amount).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                decimals,
+            )?,
+            timestamp: stored.timestamp.to_string(),
+        }),
+    ))
 }
 
 // returns information about the user
@@ -535,7 +569,6 @@ pub async fn fetch_user(
         .map(Json)
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
-            sqlx::Error::InvalidArgument(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         })
 }
