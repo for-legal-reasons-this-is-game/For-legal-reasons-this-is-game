@@ -3,6 +3,8 @@ import { api, errorMessage } from "../api";
 import { useQuery } from "@tanstack/react-query";
 import { CreateDeposit } from "./CreateDeposit";
 import { ListAccountTransfers } from "./ListAccountTransfers";
+import { ReopenAccount } from "./ReopenAccount";
+import { CloseAccount } from "./CloseAccount";
 
 export function AccountLookup() {
     const [accountID, setAccountID] = useState<string>("");
@@ -48,10 +50,12 @@ export function AccountLookup() {
                     <div>Received account...</div>
                     <div>Name: {data.account_name} </div>
                     <div>ID: {data.account_id} </div>
+                    <div>User ID: {data.account_user_id} </div>
                     <div>Code Type: {data.account_code_type} </div>
                     <div>Ledger ID: {data.account_ledger_id} </div>
                     <div>Status: {data.account_status} </div>
-                    <div>User ID: {data.account_user_id} </div>
+                    <CloseAccount accountID={data.account_id} />
+                    <ReopenAccount accountID={data.account_id} />
                     <CreateDeposit accountID={data.account_id} />
                     <ListAccountTransfers accountID={data.account_id} />
                 </>

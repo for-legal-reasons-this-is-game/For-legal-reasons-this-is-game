@@ -31,7 +31,6 @@ export function ReopenAccount({ accountID }: { accountID: string }) {
 
     return (
         <div>
-            <h3>Reopen Account</h3>
             <form onSubmit={handleSubmit}>
                 <button disabled={isPending} type="submit">
                     Reopen Account

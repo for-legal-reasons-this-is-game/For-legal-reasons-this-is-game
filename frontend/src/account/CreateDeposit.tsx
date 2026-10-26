@@ -36,6 +36,7 @@ export function CreateDeposit({ accountID }: { accountID: string }) {
         });
     }
 
+    // TODO: using the arrows next to the field doesn't count as a change
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
         setValidationError(null);
         const { name, value } = event.target;

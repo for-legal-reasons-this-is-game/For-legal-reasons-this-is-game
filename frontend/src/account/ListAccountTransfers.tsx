@@ -17,7 +17,6 @@ function Transfer({ transfer }: { transfer: Transfer }) {
 }
 
 export function ListAccountTransfers({ accountID }: { accountID: string }) {
-    // TODO: this component will get it's accountID from it's parent Account component
     // TODO: Do we even need this state? just use accountID directly
     const [submittedAccountID, setSubmittedAccountID] = useState("");
     const [query, setQuery] = useState<TransferQuery>({

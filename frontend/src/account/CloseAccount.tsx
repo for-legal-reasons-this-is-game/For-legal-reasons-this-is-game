@@ -1,10 +1,9 @@
-import { useState, type FormEvent, type ChangeEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { api, errorMessage } from "../api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-export function CloseAccount() {
+export function CloseAccount({ accountID }: { accountID: string }) {
     // TODO: put CloseAccount in Account or AccountList component and pass to it AccountID
-    const [accountID, setAccountID] = useState<string>("");
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const queryClient = useQueryClient();
@@ -27,20 +26,9 @@ export function CloseAccount() {
         mutate(accountID.trim());
     }
 
-    function handleChange(event: ChangeEvent<HTMLInputElement>) {
-        setValidationError(null);
-        setAccountID(event.target.value);
-    }
-
     return (
         <div>
-            <h3>Close Account</h3>
             <form onSubmit={handleSubmit}>
-                <input
-                    onChange={handleChange}
-                    value={accountID}
-                    placeholder="AccountID"
-                />
                 <button disabled={isPending} type="submit">
                     Close Account
                 </button>
