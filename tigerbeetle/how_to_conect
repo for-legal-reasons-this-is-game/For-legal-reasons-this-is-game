@@ -1,0 +1,12 @@
+tigerbeetle needs ip adress you can get it by dns resolution from kubernetiees dns
+
+
+command:
+            - /bin/sh
+            - c
+              set -eu
+              IP0=$(getent hosts tb-node-0.tigerbeetle.svc.cluster.local | awk '{print $1}') 
+              IP1=$(getent hosts tb-node-1.tigerbeetle.svc.cluster.local | awk '{print $1}')
+              IP2=$(getent hosts tb-node-2.tigerbeetle.svc.cluster.local | awk '{print $1}')
+              export TB_ADDRESSES="${IP0}:3000,${IP1}:3000,${IP2}:3000"
+              exec /path/to/your-app-binary
