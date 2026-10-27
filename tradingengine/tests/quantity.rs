@@ -1,15 +1,15 @@
 use tradingengine::error::EngineError;
-use tradingengine::quantity::Quantity;
+use tradingengine::quantity::{BaseQuantity, QuoteQuantity};
 
-fn qty(minor_units: u128) -> Quantity {
-    Quantity::from_minor_units(minor_units)
+fn qty(minor_units: u128) -> BaseQuantity {
+    BaseQuantity::from_minor_units(minor_units)
 }
 
 #[test]
 fn accepts_zero() {
     // unlike Price, zero is legal: "filled so far" starts here
     let quantity = qty(0);
-    assert_eq!(quantity, Quantity::ZERO);
+    assert_eq!(quantity, BaseQuantity::ZERO);
     assert!(quantity.is_zero());
 }
 
@@ -21,7 +21,7 @@ fn accepts_positive() {
 #[test]
 fn require_positive_rejects_zero() {
     assert_eq!(
-        Quantity::ZERO.require_positive(),
+        BaseQuantity::ZERO.require_positive(),
         Err(EngineError::QuantityNotPositive)
     );
 }
@@ -50,7 +50,7 @@ fn checked_sub_subtracts() {
 
 #[test]
 fn checked_sub_can_reach_exactly_zero() {
-    assert_eq!(qty(5).checked_sub(qty(5)), Ok(Quantity::ZERO));
+    assert_eq!(qty(5).checked_sub(qty(5)), Ok(BaseQuantity::ZERO));
 }
 
 #[test]
@@ -64,5 +64,25 @@ fn checked_sub_refuses_to_go_negative() {
 #[test]
 fn larger_quantity_compares_above_smaller() {
     assert!(qty(10) > qty(3));
-    assert!(Quantity::ZERO < qty(1));
+    assert!(BaseQuantity::ZERO < qty(1));
+}
+
+// QuoteQuantity has the same methods as BaseQuantity, so one check per method.
+
+#[test]
+fn quote_quantity_has_the_same_arithmetic() {
+    let three = QuoteQuantity::from_minor_units(3);
+    let four = QuoteQuantity::from_minor_units(4);
+
+    let seven = QuoteQuantity::from_minor_units(7);
+    let one = QuoteQuantity::from_minor_units(1);
+
+    assert_eq!(three.checked_add(four), Ok(seven));
+    assert_eq!(four.checked_sub(three), Ok(one));
+    assert_eq!(three.checked_sub(four), Err(EngineError::QuantityNegative));
+    assert_eq!(
+        QuoteQuantity::ZERO.require_positive(),
+        Err(EngineError::QuantityNotPositive)
+    );
+    assert!(QuoteQuantity::ZERO.is_zero());
 }

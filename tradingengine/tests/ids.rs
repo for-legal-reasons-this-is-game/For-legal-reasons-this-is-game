@@ -1,76 +1,22 @@
-use tradingengine::error::EngineError;
-use tradingengine::ids::IdempotencyKey;
+use tradingengine::ids::CommandId;
 
-// only IdempotencyKey has logic worth testing; the numeric ids are pure wrappers
-
-#[test]
-fn accepts_a_uuid_shaped_key() {
-    let raw = "b7f3c1a2-4d5e-4f60-9a1b-2c3d4e5f6a7b";
-    let key = IdempotencyKey::new(raw).expect("a hyphenated uuid is a valid key");
-    assert_eq!(key.as_str(), raw);
-}
+// the ids are plain u128 wrappers now, the string checks that were here went
+// away when CommandId changed from a string key to the contract's 128 bit Id
 
 #[test]
-fn accepts_the_whole_permitted_charset() {
-    let raw = "abcXYZ0189-_";
-    let key = IdempotencyKey::new(raw).expect("alphanumerics, hyphen and underscore");
-    assert_eq!(key.as_str(), raw);
-}
-
-#[test]
-fn rejects_empty() {
-    assert_eq!(
-        IdempotencyKey::new(""),
-        Err(EngineError::IdempotencyKeyInvalid)
-    );
-}
-
-#[test]
-fn accepts_exactly_the_maximum_length() {
-    let raw = "a".repeat(IdempotencyKey::MAX_LEN);
-    let key = IdempotencyKey::new(&raw).expect("the cap itself is allowed");
-    assert_eq!(key.as_str().len(), IdempotencyKey::MAX_LEN);
-    assert_eq!(key.as_str(), raw);
-}
-
-#[test]
-fn rejects_one_character_over_the_maximum() {
-    let raw = "a".repeat(IdempotencyKey::MAX_LEN + 1);
-    assert_eq!(
-        IdempotencyKey::new(&raw),
-        Err(EngineError::IdempotencyKeyInvalid)
-    );
-}
-
-#[test]
-fn rejects_characters_outside_the_charset() {
-    // a space, a path separator and a percent are the ones most likely to arrive
-    // from a careless client, and none of them may reach the dedup map
-    for raw in ["has space", "has/slash", "has%25"] {
-        assert_eq!(
-            IdempotencyKey::new(raw),
-            Err(EngineError::IdempotencyKeyInvalid),
-            "{raw} should have been rejected"
-        );
-    }
-}
-
-#[test]
-fn rejects_non_ascii() {
-    // "kéy" is 4 bytes but 3 characters; the charset check rejects it before the
-    // difference could ever matter to the length cap
-    assert_eq!(
-        IdempotencyKey::new("kéy"),
-        Err(EngineError::IdempotencyKeyInvalid)
-    );
-}
-
-#[test]
-fn distinct_keys_are_distinct_map_entries() {
-    // the property the whole type exists for: commands dedup by key equality
+fn distinct_command_ids_are_distinct_map_entries() {
+    // the property the command cache needs: a retried command finds its
+    // earlier entry and a new command does not
     let mut seen = std::collections::HashSet::new();
-    assert!(seen.insert(IdempotencyKey::new("order-1").expect("valid key")));
-    assert!(seen.insert(IdempotencyKey::new("order-2").expect("valid key")));
-    assert!(!seen.insert(IdempotencyKey::new("order-1").expect("valid key")));
+    assert!(seen.insert(CommandId::new(1)));
+    assert!(seen.insert(CommandId::new(2)));
+    assert!(!seen.insert(CommandId::new(1)));
     assert_eq!(seen.len(), 2);
+}
+
+#[test]
+fn uses_all_128_bits() {
+    // backend ids are UUIDs, a u64 would cut off the top half
+    let id = CommandId::new(u128::MAX);
+    assert_eq!(id.value(), u128::MAX);
 }
