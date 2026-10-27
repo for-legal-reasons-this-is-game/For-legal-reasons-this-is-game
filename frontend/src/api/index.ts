@@ -7,6 +7,7 @@ import type { AccountPayload } from "../types/AccountPayload";
 import type { Position } from "../types/Position";
 import type { Ledger } from "../types/Ledger";
 import type { LedgerPayload } from "../types/LedgerPayload";
+import type { LedgerEnabledPayload } from "../types/LedgerEnabledPayload";
 import type { UserPayload } from "../types/UserPayload";
 import type { DepositPayload } from "../types/DepositPayload";
 import type { Transfer } from "../types/Transfer";
@@ -73,8 +74,8 @@ export const api = {
         list: () => http.get<Ledger[]>("/ledgers"),
         get: (symbol: string) => http.get<Ledger>(`/ledgers/${seg(symbol)}`),
         create: (payload: LedgerPayload) => http.post<Ledger>("/ledgers", payload),
-        setEnabled: (symbol: string, enabled: boolean) =>
-            http.patch<Ledger>(`/ledgers/${seg(symbol)}`, { enabled }),
+        setEnabled: (symbol: string, payload: LedgerEnabledPayload) =>
+            http.patch<Ledger>(`/ledgers/${seg(symbol)}`, payload),
     },
     markets: {
         list: () => http.get<Market[]>("/markets"),

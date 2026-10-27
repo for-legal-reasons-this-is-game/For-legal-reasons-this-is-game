@@ -208,7 +208,8 @@ fn find_market_ledgers<'a>(
     Ok((find(market.base_ledger_id)?, find(market.quote_ledger_id)?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct UserPayload {
     name: String,
 }
@@ -228,7 +229,8 @@ pub struct LedgerPayload {
     decimals: i16,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct LedgerEnabledPayload {
     enabled: bool,
 }
@@ -248,8 +250,9 @@ pub struct TransferQuery {
     cursor: Option<String>, // where the page starts, nothing == first ones, Some == the one with the timestamp + the other limit - 1 amount
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum OrderStatusFilter {
     Open,
     New,
@@ -260,7 +263,8 @@ pub enum OrderStatusFilter {
     PendingTrigger,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct OrderQuery {
     market: Option<String>,            // symbol of the market, none == all of them
     status: Option<OrderStatusFilter>, // status of the order, none == all of them
@@ -268,14 +272,16 @@ pub struct OrderQuery {
     cursor: Option<String>, // the next_cursor of the previous page, nothing == first page
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct MarketOrderQuery {
     status: Option<OrderStatusFilter>, // status of the order, none == all of them
     limit: Option<u32>,                // same as in transferquery: default 50, max 100
     cursor: Option<String>, // the next_cursor of the previous page, nothing == first page
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct MarketTradeQuery {
     limit: Option<u32>,     // same as in transferquery: default 50, max 100
     cursor: Option<String>, // the next_cursor of the previous page, nothing == first page

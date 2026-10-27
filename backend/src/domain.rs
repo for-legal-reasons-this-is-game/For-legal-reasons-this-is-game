@@ -55,7 +55,8 @@ pub enum MarketStatus {
     Halted,
 }
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, TS)]
+#[ts(export)]
 pub struct Account {
     pub account_id: Uuid,
     pub account_name: String,

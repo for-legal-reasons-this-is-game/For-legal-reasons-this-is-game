@@ -11,6 +11,8 @@ const ORDER_STATUS_FILTERS: OrderStatusFilter[] = [
 ];
 
 // Status filter for the order lists. null = all statuses (the filter isn't sent).
+// "open" = every order that can still trade: not rejected, and still being
+// submitted, new, partially filled or waiting for its trigger.
 export function OrderStatusSelect({
     status,
     onChange,
