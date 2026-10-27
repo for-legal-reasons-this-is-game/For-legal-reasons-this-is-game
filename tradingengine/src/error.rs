@@ -12,6 +12,8 @@ pub enum EngineError {
     DecimalsOutOfRange,
     TimestampOutOfRange,
     RequiredFieldAbsent,
+    MarketSymbolEmpty,
+    HasOpenOrders,
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -46,6 +48,11 @@ impl std::fmt::Display for EngineError {
             Self::RequiredFieldAbsent => {
                 write!(f, "a required message field was not set")
             }
+            Self::MarketSymbolEmpty => write!(f, "the market symbol must not be empty"),
+            Self::HasOpenOrders => write!(
+                f,
+                "the decimals cannot change while the market has orders in its book"
+            ),
         }
     }
 }
