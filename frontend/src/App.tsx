@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { CreateUser } from "./user/CreateUser";
 import { ListUsers } from "./user/ListUsers";
+import { ListUserOrders } from "./user/ListUserOrders";
 
 import { CreateAccount } from "./account/CreateAccount";
 import { AccountLookup } from "./account/AccountLookup";
@@ -12,6 +13,8 @@ import { LedgerLookup } from "./ledger/LedgerLookup";
 
 import { MarketLookup } from "./market/MarketLookup";
 import { ListMarkets } from "./market/ListMarkets";
+
+import { OrderLookup } from "./order/OrderLookup";
 
 function App() {
     const [userID, setUserID] = useState<string>("");
@@ -24,6 +27,8 @@ function App() {
     const [ledger, setLedger] = useState(false);
     const [marketLookup, setMarketLookup] = useState(false);
     const [listMarkets, setListMarkets] = useState(false);
+    const [userOrders, setUserOrders] = useState(false);
+    const [orderLookup, setOrderLookup] = useState(false);
 
     return (
         <div>
@@ -38,6 +43,12 @@ function App() {
                 style={{ background: users ? "green" : "grey" }}
                 onClick={() => setUsers(!users)}>
                 List Users
+            </button>
+            <br />
+            <button
+                style={{ background: userOrders ? "green" : "grey" }}
+                onClick={() => setUserOrders(!userOrders)}>
+                User Orders
             </button>
             <br />
             <br />
@@ -85,8 +96,16 @@ function App() {
                 List Markets
             </button>
             <br />
+            <br />
+            <button
+                style={{ background: orderLookup ? "green" : "grey" }}
+                onClick={() => setOrderLookup(!orderLookup)}>
+                Order Lookup
+            </button>
+            <br />
             {createUser && <CreateUser />}
             {users && <ListUsers setUserID={setUserID} />}
+            {userOrders && <ListUserOrders userID={userID} />}
             {createAccount && <CreateAccount userID={userID} />}
             {account && <AccountLookup />}
             {createLedger && <CreateLedger />}
@@ -94,6 +113,7 @@ function App() {
             {ledger && <LedgerLookup />}
             {marketLookup && <MarketLookup />}
             {listMarkets && <ListMarkets />}
+            {orderLookup && <OrderLookup />}
         </div>
     );
 }

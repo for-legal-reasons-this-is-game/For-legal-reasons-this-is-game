@@ -3,14 +3,14 @@ import { api, errorMessage } from "../api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function ReopenAccount({ accountID }: { accountID: string }) {
-    // TODO: put ReopenAccount in Account or AccountList component and pass to it AccountID.
-    // and where we put it we either display CloseAccount or ReopenAccount. look more into
-    // depending on what
+    // TODO: show either CloseAccount or ReopenAccount depending on whether the account is
+    // closed. The API doesn't report that yet (AccountStatus is only active/processing),
+    // so AccountLookup shows both.
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const queryClient = useQueryClient();
     const { isPending, isError, isSuccess, variables, error, mutate } = useMutation({
-        mutationFn: (id: string) => api.accounts.close(id),
+        mutationFn: (id: string) => api.accounts.reopen(id),
         onSuccess: (_data, id) =>
             Promise.all([
                 queryClient.invalidateQueries({ queryKey: ["account", id] }),

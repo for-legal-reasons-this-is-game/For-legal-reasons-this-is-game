@@ -29,6 +29,7 @@ export function CreateAccount({ userID }: { userID: string }) {
         mutate({
             ...formData,
             name: formData.name.trim(),
+            ledger_symbol: formData.ledger_symbol.trim(),
         });
     }
 

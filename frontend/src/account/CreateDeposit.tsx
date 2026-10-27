@@ -5,7 +5,6 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { uuidv7 } from "uuidv7";
 
 export function CreateDeposit({ accountID }: { accountID: string }) {
-    // TODO: put this component in AccountLookup ??
     const [formData, setFormData] = useState<DepositPayload>({
         idempotency_key: "",
         amount: "",
@@ -15,9 +14,11 @@ export function CreateDeposit({ accountID }: { accountID: string }) {
     const queryClient = useQueryClient();
     const { isPending, isError, isSuccess, variables, error, mutate } = useMutation({
         mutationFn: (payload: DepositPayload) => api.accounts.deposit(accountID, payload),
-        onSuccess: (_data, id) =>
+        // onSuccess's 2nd argument is what was passed to mutate() (the payload here),
+        // so the account ID comes from the prop instead
+        onSuccess: () =>
             Promise.all([
-                queryClient.invalidateQueries({ queryKey: ["position", id] }),
+                queryClient.invalidateQueries({ queryKey: ["position", accountID] }),
                 queryClient.invalidateQueries({
                     queryKey: ["transfers", "account", accountID],
                 }),
@@ -39,7 +40,6 @@ export function CreateDeposit({ accountID }: { accountID: string }) {
         });
     }
 
-    // TODO: using the arrows next to the field doesn't count as a change
     function handleChange(event: ChangeEvent<HTMLInputElement>) {
         setValidationError(null);
         const { name, value } = event.target;
@@ -66,7 +66,15 @@ export function CreateDeposit({ accountID }: { accountID: string }) {
             </form>
 
             {validationError && <div style={{ color: "red" }}>{validationError}</div>}
-            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isError && (
+                <div style={{ color: "red" }}>
+                    {errorMessage(error, {
+                        400: "Invalid deposit: the amount must be positive, with no more decimals than the ledger allows, and the ledger must be enabled",
+                        403: "Only user accounts can receive deposits",
+                        409: "This account can't receive deposits right now: it's closed or still being created",
+                    })}
+                </div>
+            )}
             {isSuccess && (
                 <div>
                     <div style={{ color: "green" }}>

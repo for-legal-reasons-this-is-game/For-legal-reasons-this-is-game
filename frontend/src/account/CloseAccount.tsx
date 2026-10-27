@@ -3,7 +3,6 @@ import { api, errorMessage } from "../api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function CloseAccount({ accountID }: { accountID: string }) {
-    // TODO: put CloseAccount in Account or AccountList component and pass to it AccountID
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const queryClient = useQueryClient();

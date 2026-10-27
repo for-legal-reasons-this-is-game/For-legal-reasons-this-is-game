@@ -2,6 +2,9 @@ import { useState, type FormEvent, type ChangeEvent } from "react";
 import { api, errorMessage } from "../api";
 import { useQuery } from "@tanstack/react-query";
 import type { Market } from "../types/Market";
+import { MarketTicker } from "./MarketTicker";
+import { ListMarketOrders } from "./ListMarketOrders";
+import { ListMarketTrades } from "./ListMarketTrades";
 
 export function MarketInfo({ market }: { market: Market }) {
     return (
@@ -36,6 +39,9 @@ export function MarketLookup() {
     const [symbol, setSymbol] = useState<string>("");
     const [submittedSymbol, setSubmittedSymbol] = useState("");
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [ticker, setTicker] = useState(false);
+    const [marketOrders, setMarketOrders] = useState(false);
+    const [marketTrades, setMarketTrades] = useState(false);
 
     const { isFetching, isError, isSuccess, data, error } = useQuery({
         queryKey: ["markets", submittedSymbol],
@@ -69,9 +75,37 @@ export function MarketLookup() {
             </form>
 
             {validationError && <div style={{ color: "red" }}>{validationError}</div>}
-            {isError && <div style={{ color: "red" }}>{errorMessage(error)}</div>}
+            {isError && (
+                <div style={{ color: "red" }}>
+                    {errorMessage(error, {
+                        404: "A market with this symbol doesn't exist",
+                    })}
+                </div>
+            )}
             {isFetching && <div>Loading...</div>}
-            {isSuccess && <MarketInfo market={data} />}
+            {isSuccess && (
+                <>
+                    <MarketInfo market={data} />
+                    <button
+                        style={{ background: ticker ? "green" : "grey" }}
+                        onClick={() => setTicker(!ticker)}>
+                        Ticker
+                    </button>
+                    <button
+                        style={{ background: marketOrders ? "green" : "grey" }}
+                        onClick={() => setMarketOrders(!marketOrders)}>
+                        Orders
+                    </button>
+                    <button
+                        style={{ background: marketTrades ? "green" : "grey" }}
+                        onClick={() => setMarketTrades(!marketTrades)}>
+                        Trades
+                    </button>
+                    {ticker && <MarketTicker symbol={data.symbol} />}
+                    {marketOrders && <ListMarketOrders symbol={data.symbol} />}
+                    {marketTrades && <ListMarketTrades symbol={data.symbol} />}
+                </>
+            )}
         </>
     );
 }

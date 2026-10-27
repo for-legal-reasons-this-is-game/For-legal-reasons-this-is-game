@@ -18,7 +18,7 @@ export function PositionLookup({ accountID }: { accountID: string }) {
                     <div>Account ID: {data.account_id} </div>
                     <div>Account Status: {data.account_status} </div>
                     <div>Symbol: {data.symbol} </div>
-                    <div>Decimals ID: {data.decimals} </div>
+                    <div>Decimals: {data.decimals} </div>
                     <div>Debits Posted: {data.debits_posted} </div>
                     <div>Credits Posted: {data.credits_posted} </div>
                     <div>Debits Pending: {data.debits_pending} </div>
