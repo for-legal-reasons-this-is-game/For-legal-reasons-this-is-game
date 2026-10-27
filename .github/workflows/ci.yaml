@@ -66,6 +66,19 @@ jobs:
         working-directory: ${{ matrix.dir }}
         run: nix develop --command cargo clippy --locked --all-targets -- -D warnings
 
+  # the test job above runs with --bins so the backend skips its integration
+  # test (it needs Postgres + TigerBeetle). that also skips everything in
+  # tradingengine/tests/, so the engine's tests run here without --bins
+  tradingengine-tests:
+    name: tradingengine tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: cargo test
+        working-directory: tradingengine
+        run: nix develop --command cargo test --locked
+
   # proto is a library with no flake of its own, so it borrows the engine's
   # devShell (which has protoc). Its tests never run from the backend/engine
   # jobs: cargo test only runs the tests of the crate it's invoked in.
