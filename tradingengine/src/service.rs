@@ -27,10 +27,9 @@ impl TradingEngine for EngineService {
         &self,
         request: Request<SetMarketRequest>,
     ) -> Result<Response<SetMarketResponse>, Status> {
-        let mut engine = self
-            .engine
-            .lock()
-            .map_err(|_| Status::internal("engine lock poisoned"))?;
+        // as talked over weekly meet up unspecified errors should panic
+        // expect panics when err comes from lock
+        let mut engine = self.engine.lock().expect("engine lock poisoned");
         Ok(Response::new(engine.set_market(request.into_inner())))
     }
 

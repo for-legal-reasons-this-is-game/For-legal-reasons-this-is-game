@@ -7,8 +7,8 @@ use crate::market::MarketInfo;
 use crate::wire::required;
 
 // the engine holds a hashmap of the key pair value of each market here
-// String is the name will possibaly be changed to marketid which is more preferable
-// this change should be done by the backend if they decide and the value are the markets (market.rs)
+// String is the name of the Market: btc-usd 
+// Market info is described in market.rs
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Engine {
     markets: HashMap<String, MarketInfo>,

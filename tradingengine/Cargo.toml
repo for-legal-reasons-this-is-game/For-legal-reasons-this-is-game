@@ -11,3 +11,9 @@ tonic-health = "0.14.6"
 tonic-reflection = "0.14.6"
 proto = {path = "../proto"}
 primitive-types = { version = "0.14.0", default-features = false }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
