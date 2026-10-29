@@ -14,6 +14,7 @@ pub enum EngineError {
     RequiredFieldAbsent,
     MarketSymbolEmpty,
     HasOpenOrders,
+    TooManyMarkets,
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -52,6 +53,11 @@ impl std::fmt::Display for EngineError {
             Self::HasOpenOrders => write!(
                 f,
                 "the decimals cannot change while the market has orders in its book"
+            ),
+            Self::TooManyMarkets => write!(
+                f,
+                "this engine already runs {} markets",
+                crate::engine::MAX_MARKETS
             ),
         }
     }

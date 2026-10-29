@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-
 use proto::trading_engine_server::TradingEngine;
 use proto::{
     CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse, EventItem,
@@ -11,11 +9,11 @@ use tonic::{Request, Response, Status};
 
 use crate::engine::Engine;
 
-// for now one engine per market but this will change when multi threading is
-// impemented
+// every market runs on its own thread inside the engine, so the service holds
+// no lock of its own and a slow market does not hold up the others
 #[derive(Default)]
 pub struct EngineService {
-    engine: Mutex<Engine>,
+    engine: Engine,
 }
 
 // the functions from the trait currently have an into_inner() conversion. This is just to silence
@@ -27,10 +25,8 @@ impl TradingEngine for EngineService {
         &self,
         request: Request<SetMarketRequest>,
     ) -> Result<Response<SetMarketResponse>, Status> {
-        // as talked over weekly meet up unspecified errors should panic
-        // expect panics when err comes from lock
-        let mut engine = self.engine.lock().expect("engine lock poisoned");
-        Ok(Response::new(engine.set_market(request.into_inner())))
+        let response = self.engine.set_market(request.into_inner()).await;
+        Ok(Response::new(response))
     }
 
     async fn place_order(

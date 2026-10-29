@@ -4,6 +4,7 @@ pub mod error;
 pub mod fee;
 pub mod ids;
 pub mod market;
+pub mod market_worker;
 pub mod order;
 pub mod price;
 pub mod quantity;
