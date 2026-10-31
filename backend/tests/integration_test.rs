@@ -786,3 +786,42 @@ async fn source_account_funds_user_and_goes_negative() {
     .await;
     assert_eq!(pos["net_posted"], "1.00");
 }
+
+fn redis_url() -> String {
+    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())
+}
+
+#[tokio::test]
+async fn redis_is_reachable_and_roundtrips_values() {
+    let client = redis::Client::open(redis_url()).expect("parse REDIS_URL");
+    let mut conn = redis::aio::ConnectionManager::new(client)
+        .await
+        .expect("connect to redis");
+
+    let pong: String = redis::cmd("PING")
+        .query_async(&mut conn)
+        .await
+        .expect("PING");
+    assert_eq!(pong, "PONG");
+
+    let key = unique("it:redis");
+    let _: () = redis::cmd("SET")
+        .arg(&key)
+        .arg("hello")
+        .arg("EX")
+        .arg(60)
+        .query_async(&mut conn)
+        .await
+        .expect("SET");
+    let got: Option<String> = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut conn)
+        .await
+        .expect("GET");
+    assert_eq!(got.as_deref(), Some("hello"));
+    let _: i64 = redis::cmd("DEL")
+        .arg(&key)
+        .query_async(&mut conn)
+        .await
+        .expect("DEL");
+}

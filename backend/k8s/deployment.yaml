@@ -17,7 +17,45 @@ spec:
     spec:
       containers:
         - name: backend
-          image: backend_trading_engine:latest
+          image: backend:latest
+          # image is built locally and loaded into minikube, never pulled
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          # TB_CLUSTER_ID, TB_HOSTS, DATABASE_URL, REDIS_URL, POSTGRES_*
+          envFrom:
+            - secretRef:
+                name: backend-secrets
+          env:
+            - name: ENGINE_URL
+              value: http://tradingengine:50051
+          # The TigerBeetle client needs IPs, not hostnames: resolve the
+          # DNS names from TB_HOSTS into TB_IP_ADRESSES before starting.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              addrs=""
+              for hostport in $(echo "${TB_HOSTS}" | tr ',' ' '); do
+                host="${hostport%:*}"
+                port="${hostport##*:}"
+                ip=$(getent ahostsv4 "${host}" | awk 'NR==1 {print $1}')
+                if [ -z "${ip}" ]; then
+                  echo "could not resolve ${host}" >&2
+                  exit 1
+                fi
+                addrs="${addrs:+${addrs},}${ip}:${port}"
+              done
+              export TB_IP_ADRESSES="${addrs}"
+              echo "TigerBeetle addresses: ${TB_IP_ADRESSES}"
+              exec ./backend
+          # the TigerBeetle client needs io_uring, which the default seccomp
+          # profile blocks
+          securityContext:
+            seccompProfile:
+              type: Unconfined
           resources:
             requests:
               cpu: 200m

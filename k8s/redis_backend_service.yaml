@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-redis
+  namespace: transcendence
+  labels:
+    app: backend-redis
+spec:
+  selector:
+    app: backend-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+  type: ClusterIP

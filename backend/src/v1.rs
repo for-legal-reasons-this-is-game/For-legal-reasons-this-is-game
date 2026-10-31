@@ -28,6 +28,8 @@ use std::sync::Arc;
 pub struct AppState {
     pub pg_connections: PgPool,
     pub tb_client: Arc<tb::Client>,
+    /// Auto-reconnecting, cheaply cloneable Redis handle.
+    pub redis: redis::aio::ConnectionManager,
     pub engine_client: EngineClient,
 }
 
