@@ -5,7 +5,7 @@ This file lists what the cluster has to provide so that the design in
 component needs and why.
 
 ## Components and how they run
-
+**ATTENTION: STATEFUL SET FOR ENGINE IS TBD. TREAT ALL OF ITS MENTIONS AS TBD**
 | Component | Kind of workload | Replicas |
 |---|---|---|
 | Engine | `StatefulSet` with a headless Service | One pod per instance. Each pod owns up to 8 markets. |
@@ -28,7 +28,7 @@ component needs and why.
 ### At most one process per instance
 
 Two processes writing the same Redis keys corrupt the state.
-
+ 
 - A `StatefulSet` never runs two pods with the same name at the same time.
   Keep it that way.
 - If a node becomes unreachable, the pod is not replaced automatically, and the
@@ -130,21 +130,6 @@ response, because the engine writes to it before it replies.
 - Its downtime must stay well below the engines' retention window. Alert when it
   has been down for a fraction of the window, and treat it as an incident.
 - It writes to TigerBeetle and Postgres. Both must be reachable from it.
-
-## Scaling
-
-- Don't autoscale the engines on CPU or memory. A market belongs to one
-  instance, so adding a pod only helps when markets are moved to it, and the
-  router's map decides that.
-- **Scale up:** add a pod (increase the `StatefulSet` replicas) and add the new
-  instance to the router's map. It starts with no markets, and the backend
-  assigns markets to it with `SetMarket`.
-- **Scale down:** a `StatefulSet` removes the highest-numbered pod. Only do this
-  when that instance owns no markets. Otherwise its books and event history stay
-  in Redis with nobody serving them. Moving a live market to another instance
-  isn't supported.
-- Don't run a cluster autoscaler or a disruption policy that evicts engine pods
-  at random. Plan node drains: each drain restarts the instances on that node.
 
 ## Disruptions
 
