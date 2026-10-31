@@ -23,7 +23,6 @@ spec:
           ports:
             - name: http
               containerPort: 8000
-          # TB_CLUSTER_ID, TB_HOSTS, DATABASE_URL, REDIS_URL, POSTGRES_*
           envFrom:
             - secretRef:
                 name: backend-secrets
