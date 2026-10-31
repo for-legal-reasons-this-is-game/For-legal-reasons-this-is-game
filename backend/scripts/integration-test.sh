@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Spins up throwaway Postgres + TigerBeetle containers, boots the real backend
+# Spins up throwaway Postgres + Redis + TigerBeetle containers, boots the real backend
 # binary against them, runs the integration test suite, then tears everything
 # down. This is the single source of truth for the `integration` job in
 # .github/workflows/ci.yaml and backend_ci.yaml (they just call this script
@@ -24,6 +24,11 @@ TB_CLUSTER_ID="${TB_CLUSTER_ID:-0}"
 TB_IP_ADRESSES="${TB_IP_ADRESSES:-127.0.0.1:${TB_PORT}}"
 export TB_CLUSTER_ID TB_IP_ADRESSES
 
+REDIS_CONTAINER="${REDIS_CONTAINER:-backend-integration-redis}"
+REDIS_PORT="${REDIS_PORT:-6380}"
+REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${REDIS_PORT}}"
+export REDIS_URL
+
 ENGINE_IMAGE="${ENGINE_IMAGE:-tradingengine-integration}"
 ENGINE_CONTAINER="${ENGINE_CONTAINER:-backend-integration-engine}"
 ENGINE_PORT="${ENGINE_PORT:-50051}"
@@ -44,6 +49,8 @@ cleanup() {
     cat "$SERVER_LOG" >&2 2>&1 || true
     echo "----- postgres log (tail) -----" >&2
     docker logs --tail 50 "$PG_CONTAINER" >&2 2>&1 || true
+    echo "----- redis log (tail) -----" >&2
+    docker logs --tail 50 "$REDIS_CONTAINER" >&2 2>&1 || true
     echo "----- tigerbeetle log -----" >&2
     docker logs "$TB_CONTAINER" >&2 2>&1 || true
     echo "----- trading engine health / log -----" >&2
@@ -56,7 +63,7 @@ cleanup() {
   fi
   # `cargo run` spawns the binary as a child, which outlives a kill of cargo
   pkill -f 'target/debug/backend' 2>/dev/null || true
-  docker rm -f "$PG_CONTAINER" "$TB_CONTAINER" "$ENGINE_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -f "$PG_CONTAINER" "$TB_CONTAINER" "$ENGINE_CONTAINER" "$REDIS_CONTAINER" >/dev/null 2>&1 || true
   rm -f "$SERVER_LOG"
 }
 trap cleanup EXIT
@@ -112,6 +119,28 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [[ "$pg_ready" == true ]] || { echo "postgres never became ready" >&2; exit 1; }
+
+# --- redis -----------------------------------------------------------------
+echo "==> starting redis ($REDIS_CONTAINER on :$REDIS_PORT)"
+docker rm -f "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+docker run -d --name "$REDIS_CONTAINER" \
+  -p "${REDIS_PORT}:6379" \
+  redis:7-alpine >/dev/null
+
+echo "==> waiting for redis"
+redis_ready=false
+for _ in $(seq 1 30); do
+  if ! container_running "$REDIS_CONTAINER"; then
+    echo "redis container exited" >&2
+    exit 1
+  fi
+  if [[ "$(docker exec "$REDIS_CONTAINER" redis-cli ping 2>/dev/null || true)" == "PONG" ]]; then
+    redis_ready=true
+    break
+  fi
+  sleep 1
+done
+[[ "$redis_ready" == true ]] || { echo "redis never answered PING" >&2; exit 1; }
 
 # --- tigerbeetle (single replica, development mode) ------------------------
 # --development drops the O_DIRECT / fsync requirements (CI filesystems often

@@ -45,6 +45,11 @@ async fn main() {
         .await
         .expect("Migration failed");
 
+    let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set");
+    let redis = connect_redis(&redis_url)
+        .await
+        .expect("Failed to connect to Redis");
+
     let engine_url =
         env::var("ENGINE_URL").unwrap_or_else(|_| "http://tradingengine:50051".to_string());
     let engine_client = EngineClient::new(&engine_url).expect("Invalid ENGINE_URL");
@@ -52,6 +57,7 @@ async fn main() {
     let state = AppState {
         pg_connections,
         tb_client,
+        redis,
         engine_client,
     };
 
@@ -100,6 +106,14 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
+}
+
+async fn connect_redis(url: &str) -> redis::RedisResult<redis::aio::ConnectionManager> {
+    let client = redis::Client::open(url)?;
+    let mut conn = redis::aio::ConnectionManager::new(client).await?;
+    let _pong: String = redis::cmd("PING").query_async(&mut conn).await?;
+    //println!("Redis connected: {pong}");
+    Ok(conn)
 }
 
 async fn shutdown_signal() {
