@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS trades (
   buyer_fee NUMERIC(39, 0) NOT NULL,
   seller_fee NUMERIC(39, 0) NOT NULL,
   taker_side SMALLINT NOT NULL CHECK (taker_side IN (1, 2)),
-  engine_epoch BIGINT NOT NULL,
-  engine_sequence BIGINT NOT NULL,
   engine_time TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

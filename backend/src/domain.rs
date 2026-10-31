@@ -508,8 +508,6 @@ pub struct TradeRow {
     pub buyer_fee: Decimal,
     pub seller_fee: Decimal,
     pub taker_side: Side,
-    pub engine_epoch: i64,
-    pub engine_sequence: i64,
     pub engine_time: String,
     pub created_at: String,
 }

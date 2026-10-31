@@ -76,11 +76,13 @@ One git-ignored file, three sections (see `.env.example`):
 ### Services (planned architecture)
 The system is being designed as multiple components (names/ports TBD):
 - **API service (Rust)**: exposes REST endpoints (public API)
-- **Trading engine (Rust)**: processes orders/trades and recalculates prices
+- **Trading engine (Rust)**: processes orders/trades and recalculates prices. Several instances, each owning up to 8 markets, with its state saved to Redis
+- **Router**: forwards each command to the engine instance that owns its market, and merges the instances' event streams for the consumer
+- **Event consumer**: the only reader of the engines' event streams; writes the results to TigerBeetle and PostgreSQL
 - **Databases (TigerBeetle + PostgreSQL)**:  Postgres stores user data and account metadata, TigerBeetle handles trades and accounts
 - **Keycloak**: Handles authentication
 - **Infiscal**: Secret management
-- **Cache layer (TBD)**: Redis
+- **Redis**: the engines' saved state (order books, command cache, event history)
 
 ---
 
@@ -143,8 +145,8 @@ We organize work using:
 - **PostgreSQL** as our relational database
 - **TigerBeetle** as our distributed transactional database; currently, there are 3 replicas in our cluster.
 
-### Cache
-- **Redis**
+### Cache / engine state
+- **Redis**: each engine instance saves its books, command cache and event history here, so it can resume after a restart
 
 ### DevOps / Deployment
 - **Dockerfiles** for services
