@@ -1267,15 +1267,14 @@ pub async fn list_order_trades(
 
     let rows = sqlx::query_as::<_, TradeRow>(
         r#"SELECT trade_id, market_id, buyer_order_id, seller_order_id, price, base_quantity,
-                  quote_quantity, buyer_fee, seller_fee, taker_side, engine_epoch,
-                  engine_sequence,
+                  quote_quantity, buyer_fee, seller_fee, taker_side,
                   to_char(engine_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
                       AS engine_time,
                   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
                       AS created_at
            FROM trades
            WHERE buyer_order_id = $1 OR seller_order_id = $1
-           ORDER BY trades.engine_time ASC, engine_epoch ASC, engine_sequence ASC"#,
+           ORDER BY trades.engine_time ASC, trades.trade_id ASC"#,
     )
     .bind(order_id)
     .fetch_all(&state.pg_connections)
@@ -1308,8 +1307,7 @@ pub async fn list_market_trades(
 
     let mut rows = sqlx::query_as::<_, TradeRow>(
         r#"SELECT trade_id, market_id, buyer_order_id, seller_order_id, price, base_quantity,
-                  quote_quantity, buyer_fee, seller_fee, taker_side, engine_epoch,
-                  engine_sequence,
+                  quote_quantity, buyer_fee, seller_fee, taker_side,
                   to_char(engine_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
                       AS engine_time,
                   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')

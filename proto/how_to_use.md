@@ -2,7 +2,7 @@
 
 This guide describes what the backend and the trading engine must each do to
 implement the gRPC contract in `proto/`. It covers order placement, the event
-stream, settlement, reservations, engine restarts, the market data stream, and
+stream, settlement, reservations, engine crashes and restarts, the market data stream, and
 the tests that each component needs.
 
 The backend design that this guide assumes is described in `TB_DESIGN.md`:
@@ -30,6 +30,32 @@ display only.
 | Engine | The order book, matching, order state, fee amounts per fill, and order expiry. |
 
 The engine never touches money. The backend never decides matching outcomes.
+
+### Topology
+
+- The engine runs as several instances. One instance owns at most 8 markets,
+  and every market is owned by exactly one instance. Each instance has a stable
+  identity, for example the name of a `StatefulSet` pod, and it keeps its state
+  in Redis under that identity. At most one process may run for an instance at
+  any time, including during rolling updates. Two processes writing the same
+  Redis state corrupt it.
+- The backend and the event consumer never talk to an engine directly. They
+  talk to the router, which holds the map of markets to instances and the
+  address of each instance.
+- Commands go to the router, which forwards each one to the instance that owns
+  its market.
+- The event consumer is a single service. It subscribes to the router once. The
+  router subscribes to every instance, merges their streams, and forwards the
+  items unchanged. Items from different instances interleave in no fixed
+  order; items from one instance keep the order the engine sent them in. If the
+  stream from one instance drops, the router subscribes to it again. It then
+  receives that instance's whole retained history again, which the consumer
+  handles because it is idempotent.
+- The consumer is the only service that reads the event stream, and it writes
+  the results to TigerBeetle and Postgres. Where this guide says "the backend"
+  in the event stream, settlement, and refund sections, it means that consumer.
+- An instance can be removed only when it owns no markets. Moving a market to
+  another instance isn't covered by this contract.
 
 ## Rules for both components
 
@@ -148,55 +174,70 @@ and the HTTP reply.
 | `reject_reason` is `UNSPECIFIED` (accepted) | Set `submission` to `accepted`. Return `status` and the filled amounts to the HTTP caller. |
 | Accepted with `status` `CANCELLED` and a `cancel_reason` | Normal outcome, not an error. For example, an IOC order that crossed nothing. |
 | Accepted with `status` `FILLED` after a modify or cancel | Normal outcome. A modify can reprice into the book, and a cancel can lose a race with a fill. |
-| `reject_reason` is set | Refund the whole reservation and set `submission` to `rejected`. Nothing about this order arrives on the stream. |
+| `reject_reason` is set, except `INTERNAL_ERROR` on a cancel or modify | Refund the whole reservation and set `submission` to `rejected`. Nothing about this order arrives on the stream. |
+| `INTERNAL_ERROR` on a `PlaceOrder` | The engine stopped before it processed the order, so the order never existed. Refund the whole reservation, set `submission` to `rejected`, and tell the user the order failed. This is a rejection like any other: the engine saves its state only after it answers everything that was queued. |
+| `INTERNAL_ERROR` on a `CancelOrder`, `CancelOrders`, or `ModifyOrder` | The command wasn't applied and the order is untouched. Don't refund. For a modify that raised the reservation, return the extra amount you already transferred to the hold account. Tell the user the request failed so they can try again. |
 | Transport error, and the engine certainly didn't receive the command | Refund the whole reservation. |
 | Transport error, and you aren't certain | Treat it as a timeout. |
 | Timeout | Retry with the **same** `command_id`. Don't refund yet. |
-| Retries exhausted | Still don't refund. Wait for the stream or for an engine restart to resolve the order. |
-| Engine epoch changed | Never retry. Refund and move on. |
+| Retries exhausted | Still don't refund. Wait for the stream to resolve the order. |
+
+A retry with the same `command_id` is safe across an engine restart, because
+the engine keeps its command cache in Redis. A command that was processed
+before a crash returns its stored response; a command that wasn't returns
+`INTERNAL_ERROR` or is processed normally.
 
 ### Processing the event stream
 
-The event stream carries `ExecutionReport`, `TradeSettlement`, and `Control`
-items. Open one subscription at startup and keep it alive.
+The event stream carries `ExecutionReport` and `TradeSettlement` items. Open
+one subscription to the router at startup and keep it alive. Use gRPC keepalive
+so that a silently dropped connection is noticed and you reconnect.
 
 #### Subscribing
 
-1. Read `engine_epoch` and `last_sequence` from the `engine_stream_state` table.
-2. Subscribe with both values as `engine_epoch` and `after_sequence`. Always send
-   both. On the very first run, both are 0.
+There is no resume position. Every subscription replays the whole history that
+the engines retain, then continues live. After a disconnect, a consumer restart,
+or an engine restart, subscribe again the same way.
+
+Because of that, everything the consumer does must be safe to repeat:
+
+- Before you validate or settle a `TradeSettlement`, check whether its
+  `trade_id` is already in `trades`. If it is, skip it. Don't validate it: the
+  orders it refers to may have ended long ago.
+- Never move an order backwards. Ignore an `ExecutionReport` if the order is
+  already `FILLED`, `CANCELLED`, or `EXPIRED`, or if its filled amount is lower
+  than the one you stored.
+- Transfer IDs are deterministic, so TigerBeetle returns `exists` for a repeat.
+  Treat `exists` as success.
+
+The engines retain history for a fixed window. If the consumer is down for
+longer than the window, it cannot know what it missed, and trades that happened
+during the gap never settle. Alert when the consumer has been down for a
+fraction of the window, and size the window with that in mind.
 
 #### Processing in batches
 
-Process items strictly in sequence order. The engine guarantees that a trade's
-settlement arrives before the reports that reflect it, and that an order's final
-report arrives after every settlement that touched it. No additional ordering
+The engine guarantees that a trade's settlement arrives before the reports that
+reflect it, and that an order's final report arrives after every settlement that
+touched it. The router keeps that order per instance. No additional ordering
 logic is needed.
 
-For each item, check the following first:
-
-| Condition | Action |
-|---|---|
-| `engine_epoch` differs from the stored epoch | Stop normal processing and run the [engine restart procedure](#handling-an-engine-restart). |
-| `sequence` is less than or equal to the cursor | Already processed. Skip it. This is normal after a reconnect. |
-| `sequence` is greater than the cursor + 1 | A gap. Log it as a serious error and resubscribe to force a snapshot. |
-
-Then process items in batches:
+Process items in batches:
 
 1. Collect items until the batch has N items or T milliseconds have passed.
-2. Build the TigerBeetle transfers for every item in the batch, as described in
+2. Drop the items that are already recorded, as described above.
+3. Build the TigerBeetle transfers for every remaining item, as described in
    [Settling a trade](#settling-a-trade) and
    [Refunding reservations](#refunding-reservations).
-3. Send all transfers in one TigerBeetle request. Treat `exists` as success.
-4. In one Postgres transaction, write the batch's trades and order updates, and
-   advance the cursor in `engine_stream_state`.
+4. Send all transfers in one TigerBeetle request. Treat `exists` as success.
+5. In one Postgres transaction, write the batch's trades and order updates.
 
-Advance the cursor only after the TigerBeetle request succeeds. If the backend
-crashes between steps 3 and 4, it reprocesses the batch. Deterministic transfer
-IDs make TigerBeetle return `exists` instead of moving money twice.
+If the consumer crashes between steps 4 and 5, it processes the batch again
+after it reconnects. Deterministic transfer IDs make TigerBeetle return `exists`
+instead of moving money twice.
 
 If any transfer chain fails, stop processing at that item and raise an alert.
-Don't skip the item, and don't advance the cursor past it.
+Don't skip the item.
 
 #### `ExecutionReport`
 
@@ -208,15 +249,6 @@ Don't skip the item, and don't advance the cursor past it.
   reservation and remove the order from the open-orders map.
 - If `exec_type` is `TRADE`, `trade_id` is set. Join it to the `TradeSettlement`
   with the same ID to get the price, amounts, fees, and counterparty.
-- If `exec_type` is `RESTATED`, the report is part of a snapshot.
-
-#### `Control`
-
-| Kind | Action |
-|---|---|
-| `SNAPSHOT_BEGIN` | Discard everything you believe about the engine's state. |
-| `RESTATED` reports that follow | Rebuild the set of working orders. These reports have `sequence` 0; don't store it as the cursor. |
-| `SNAPSHOT_END` | Set the cursor to `as_of_sequence`. Every order you considered working that didn't appear in the snapshot: cancel it locally and refund it. |
 
 ### Settling a trade
 
@@ -280,8 +312,7 @@ Refund in every one of these cases:
 | IOC or FOK remainder | `ExecutionReport` with status `CANCELLED` |
 | GTD expiry | `ExecutionReport` with status `EXPIRED`. Not a cancel. |
 | Mass cancel | `ExecutionReport` with `cancel_reason` `ADMIN`, one per order |
-| Synchronous rejection | Command response with `reject_reason` set |
-| Engine restart | The order is missing from the snapshot |
+| Synchronous rejection | Command response with `reject_reason` set. This includes `INTERNAL_ERROR` on a `PlaceOrder`. |
 
 Except for synchronous rejections, refund on the **stream event**, never on a
 command response.
@@ -301,20 +332,18 @@ A modify changes the reservation without ending the order:
 
 ### Handling an engine restart
 
-A changed `engine_epoch`, or a snapshot you didn't request, means the engine
-restarted.
+An engine restart is not an event the backend has to act on. The engine saves
+its book, command cache, and event history to Redis when it stops and loads
+them when it starts, so nothing the backend knows becomes wrong.
 
-1. Stop accepting new orders.
-2. Drop every in-flight command and refund its reservation. Don't retry any of
-   them.
-3. Send `SetMarket` for every market.
-4. Resubscribe with the new epoch and `after_sequence` 0.
-5. Process the snapshot. It's empty, because the engine keeps orders in memory.
-6. For every order that's still working locally: cancel it locally, refund it,
-   and notify the user.
-7. Save the new epoch in `engine_stream_state`, and start accepting orders again.
-
-Check only whether the epoch changed. Never compare which epoch is larger.
+- Commands that were still queued when the engine stopped come back with
+  `INTERNAL_ERROR`. See [Handling command responses](#handling-command-responses).
+- Commands that fail at the transport level while the engine is down follow the
+  normal transport error rules. Retrying with the same `command_id` is safe.
+- The router subscribes to the instance again, and the instance replays its
+  retained history. The consumer skips what it already recorded.
+- Don't send `SetMarket` again. The engine restores its markets from Redis.
+- Don't cancel or refund working orders. They are still working.
 
 ### Processing the market data stream
 
@@ -349,12 +378,11 @@ The market data stream is for display only. Nothing decides from it.
 
 ### Startup
 
-- Set `engine_epoch` to the process start time, in Unix nanoseconds. Send the
-  same value on every item of both streams.
-- Start with no markets loaded. Reject every command with `UNKNOWN_MARKET` until
-  the backend sends `SetMarket`.
-- Start the event sequence at 1.
-- Start with an empty command cache.
+- Load the markets, the order books, the command cache, the event history, and
+  the last `sequence` from Redis. On the very first start, Redis is empty:
+  start with no markets, start the event sequence at 1, and reject every
+  command with `UNKNOWN_MARKET` until the backend sends `SetMarket`.
+- Don't answer any command until the load is complete.
 
 ### Handling a command
 
@@ -367,8 +395,8 @@ Before you do anything else with a command, check the command cache:
 | `command_id` new | Run the command and store its response. |
 
 - Keep cache entries longer than the backend's whole retry period.
-- The cache lives in memory and is lost when the process stops. That's
-  acceptable, because the orders are lost too.
+- The cache is saved to Redis together with the rest of the engine's state,
+  so a retry after a restart gets the same answer as before the crash.
 
 ### Validating a place command
 
@@ -434,6 +462,11 @@ whole life.
 - `TradeSettlement` carries both sides' accounts, both fees, and the fee account.
   The backend must be able to settle it without any lookup.
 - The fill's `ExecutionReport` carries only `trade_id`, not a copy of the trade.
+- Generate `trade_id` with a time-ordered unique ID (`tb::id()` or UUIDv7), so
+  it can't collide across instances. It must strictly increase in the order the
+  trades happened within one instance; UUIDv7 needs a counter inside one
+  millisecond. The backend uses it to order trades with the same `engine_time`,
+  and derives its TigerBeetle transfer IDs from it.
 
 ### Emitting events for an order change
 
@@ -470,33 +503,50 @@ current `limit_price`.
 ### Event stream
 
 - Increase `sequence` by 1 per item, with no gaps or repeats, for the life of
-  the process.
-- Snapshot items carry `sequence` 0.
-- `Control` items carry no market symbol.
+  the instance's data. It keeps counting across restarts; it comes from Redis.
+  It numbers the engine's own history; no subscriber resumes from it.
+- Persist every emitted item with its `sequence` in Redis, so a restart can
+  replay it.
+- Every subscription starts with a replay of the whole retained history, in
+  order, and then continues live. There are no snapshots.
+- Allow multiple subscribers.
+- If a subscriber falls behind and the buffer limit is reached, drop it and let
+  it reconnect. Never block matching.
+- Retain the history for a fixed window, for example a number of hours or a
+  maximum item count, and trim anything older. Document the value. Nobody
+  acknowledges items, so a consumer that stays down longer than the window
+  misses events and cannot detect it.
+- Don't send a response or an event before the state it depends on is saved in
+  Redis. See [Crash and shutdown](#crash-and-shutdown).
 
-Send a snapshot when any of these is true:
+### Crash and shutdown
 
-- `after_sequence` is 0.
-- The request's `engine_epoch` doesn't match the current epoch.
-- `after_sequence` is older than the retained history.
+Install a panic handler and a signal handler (`SIGTERM`, which Kubernetes sends
+on shutdown, and `SIGINT`). When either fires, in this order:
 
-Otherwise, replay from `after_sequence + 1`.
+1. Stop taking commands.
+2. Answer every command that is queued and not yet processed with
+   `INTERNAL_ERROR`. This applies to every command type. Don't store these
+   answers in the command cache; a retry must run the command for real.
+3. Write to Redis everything the engine holds in memory: the books, the command
+   cache, the event history, and the last `sequence`.
+4. Exit.
 
-To send a snapshot, follow these steps:
+A hard kill (`SIGKILL`, an out-of-memory kill, a node failure) runs no handler,
+so the engine must also be safe without one. The rule: **nothing leaves the
+engine until the state it depends on is in Redis.**
 
-1. Set `N` to the current sequence.
-2. Send `SNAPSHOT_BEGIN`.
-3. Send one `RESTATED` `ExecutionReport` per working order, including `type` and
-   `time_in_force`.
-4. Buffer everything that happens during the snapshot. Don't interleave it with
-   the snapshot.
-5. Send `SNAPSHOT_END` with `as_of_sequence` set to `N`.
-6. Send the buffered items, then continue live.
+1. Take a batch of queued commands and process them.
+2. Write the resulting books, command cache entries, events, and `sequence` to
+   Redis once.
+3. Only then send the batch's command responses and events.
 
-- If the buffer limit is reached, drop the subscriber and let it reconnect.
-  Never block matching.
-- Allow multiple subscribers, each with its own position.
-- Document how much history the engine retains.
+This keeps one Redis write per batch, but every response and event waits for
+it. Without the rule, the backend could act on an acknowledged order or a trade
+that the restarted engine has never heard of.
+
+The engine doesn't try to survive memory corruption or states that break its
+own handlers. Redis is assumed to be always available.
 
 ### Market data stream
 
@@ -523,10 +573,15 @@ depends on the book or on its own clock.
 - Deciding anything from the order book or from trades read off the stream.
 - Writing order status or fills from a command response.
 - Forgetting to refund the reservation on a synchronous rejection.
-- Retrying a command after the epoch changed.
-- Advancing the cursor before the TigerBeetle request succeeds.
-- Advancing the cursor in a different Postgres transaction from the batch's
-  trades and order updates.
+- Cancelling or refunding a working order because the engine restarted.
+- Refunding an order after `INTERNAL_ERROR` on a cancel or modify. The order is
+  still working.
+- Sending a response or an event before the state it depends on is in Redis.
+- Reading `sequence` as a resume position.
+- Validating a replayed `TradeSettlement` before checking whether its
+  `trade_id` is already recorded.
+- Letting a replayed `ExecutionReport` move an order backwards.
+- Writing a batch's trades and order updates in separate Postgres transactions.
 - Changing the transfer ID formula after deployment.
 - Reading `remaining_base_quantity` on a market buy.
 - Storing `md_sequence`.

@@ -118,9 +118,9 @@ Each piece of data has exactly one system of record.
 |---|---|---|
 | Balances and transfers | TigerBeetle | Backend |
 | Users, account metadata, ledgers, and markets | Postgres | Backend |
-| Order book and live order state | Engine (in memory) | Engine |
-| Order history and trade history | Postgres | Backend, from engine events |
-| Event stream position | Postgres (`engine_stream_state`) | Backend |
+| Order book and live order state | Engine (in memory, saved to Redis) | Engine |
+| Order history and trade history | Postgres | Event consumer, from engine events |
+| Event history, command cache | Redis | Engine |
 | Current market depth | Backend (in memory) | Backend, from the market data stream |
 
 Postgres keeps a record of orders and trades for display. The engine's events are
