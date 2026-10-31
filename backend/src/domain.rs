@@ -55,7 +55,8 @@ pub enum MarketStatus {
     Halted,
 }
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, FromRow, TS)]
+#[ts(export)]
 pub struct Account {
     pub account_id: Uuid,
     pub account_name: String,
@@ -105,7 +106,8 @@ fn scale_to_decimal(raw: Decimal, decimals: i16) -> Result<Decimal, StatusCode> 
     )
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
 pub struct Market {
     pub market_id: i32,
     pub symbol: String,
@@ -113,9 +115,13 @@ pub struct Market {
     pub base_asset: Ledger,
     pub quote_asset: Ledger,
     pub price_decimals: i16,
+    #[ts(type = "string")]
     pub min_base_quantity: Decimal,
+    #[ts(type = "string")]
     pub min_quote_quantity: Decimal,
+    #[ts(type = "string")]
     pub quantity_step: Decimal,
+    #[ts(type = "string")]
     pub price_step: Decimal,
     pub maker_fee_bps: i32,
     pub taker_fee_bps: i32,
@@ -141,23 +147,27 @@ impl Market {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export)]
 pub enum TransferDirection {
     In,  // money came into this account
     Out, // money left this account
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct Transfer {
     pub transfer_id: Uuid,
     pub direction: TransferDirection,
     pub kind: &'static str,
+    #[ts(type = "string")]
     pub amount: Decimal,
     pub timestamp: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct TransferPage {
     pub items: Vec<Transfer>,
     pub next_cursor: Option<String>, // None means this was the last page

@@ -6,7 +6,7 @@ export function EnableLedger({ symbol, enabled }: { symbol: string; enabled: boo
 
     const { isPending, isError, error, mutate } = useMutation({
         mutationFn: ({ symbol, enabled }: { symbol: string; enabled: boolean }) =>
-            api.ledgers.setEnabled(symbol, !enabled),
+            api.ledgers.setEnabled(symbol, { enabled: !enabled }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ledgers"] }),
     });
 

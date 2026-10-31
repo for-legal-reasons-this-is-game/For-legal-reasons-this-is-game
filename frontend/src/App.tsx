@@ -1,13 +1,20 @@
 import { useState } from "react";
+
 import { CreateUser } from "./user/CreateUser";
 import { ListUsers } from "./user/ListUsers";
+import { ListUserOrders } from "./user/ListUserOrders";
+
 import { CreateAccount } from "./account/CreateAccount";
+import { AccountLookup } from "./account/AccountLookup";
+
 import { CreateLedger } from "./ledger/CreateLedger";
 import { ListLedgers } from "./ledger/ListLedgers";
-import { AccountLookup } from "./account/AccountLookup";
-import { PositionLookup } from "./account/PositionLookup";
 import { LedgerLookup } from "./ledger/LedgerLookup";
-import { CloseAccount } from "./account/CloseAccount";
+
+import { MarketLookup } from "./market/MarketLookup";
+import { ListMarkets } from "./market/ListMarkets";
+
+import { OrderLookup } from "./order/OrderLookup";
 
 function App() {
     const [userID, setUserID] = useState<string>("");
@@ -17,9 +24,11 @@ function App() {
     const [createLedger, setCreateLedger] = useState(false);
     const [ledgers, setLedgers] = useState(false);
     const [account, setAccount] = useState(false);
-    const [accountPosition, setAccountPosition] = useState(false);
     const [ledger, setLedger] = useState(false);
-    const [closeAccount, setCloseAccount] = useState(false);
+    const [marketLookup, setMarketLookup] = useState(false);
+    const [listMarkets, setListMarkets] = useState(false);
+    const [userOrders, setUserOrders] = useState(false);
+    const [orderLookup, setOrderLookup] = useState(false);
 
     return (
         <div>
@@ -36,6 +45,12 @@ function App() {
                 List Users
             </button>
             <br />
+            <button
+                style={{ background: userOrders ? "green" : "grey" }}
+                onClick={() => setUserOrders(!userOrders)}>
+                User Orders
+            </button>
+            <br />
             <br />
             <button
                 style={{ background: createAccount ? "green" : "grey" }}
@@ -47,18 +62,6 @@ function App() {
                 style={{ background: account ? "green" : "grey" }}
                 onClick={() => setAccount(!account)}>
                 Fetch Account
-            </button>
-            <br />
-            <button
-                style={{ background: accountPosition ? "green" : "grey" }}
-                onClick={() => setAccountPosition(!accountPosition)}>
-                Fetch Position
-            </button>
-            <br />
-            <button
-                style={{ background: closeAccount ? "green" : "grey" }}
-                onClick={() => setCloseAccount(!closeAccount)}>
-                Close Account
             </button>
             <br />
             <br />
@@ -80,15 +83,37 @@ function App() {
                 Get Ledger
             </button>
             <br />
+            <br />
+            <button
+                style={{ background: marketLookup ? "green" : "grey" }}
+                onClick={() => setMarketLookup(!marketLookup)}>
+                Market Lookup
+            </button>
+            <br />
+            <button
+                style={{ background: listMarkets ? "green" : "grey" }}
+                onClick={() => setListMarkets(!listMarkets)}>
+                List Markets
+            </button>
+            <br />
+            <br />
+            <button
+                style={{ background: orderLookup ? "green" : "grey" }}
+                onClick={() => setOrderLookup(!orderLookup)}>
+                Order Lookup
+            </button>
+            <br />
             {createUser && <CreateUser />}
             {users && <ListUsers setUserID={setUserID} />}
+            {userOrders && <ListUserOrders userID={userID} />}
             {createAccount && <CreateAccount userID={userID} />}
             {account && <AccountLookup />}
-            {accountPosition && <PositionLookup />}
             {createLedger && <CreateLedger />}
             {ledgers && <ListLedgers />}
             {ledger && <LedgerLookup />}
-            {closeAccount && <CloseAccount />}
+            {marketLookup && <MarketLookup />}
+            {listMarkets && <ListMarkets />}
+            {orderLookup && <OrderLookup />}
         </div>
     );
 }

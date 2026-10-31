@@ -1,11 +1,17 @@
 import { useState, type FormEvent, type ChangeEvent } from "react";
 import { api, errorMessage } from "../api";
 import { useQuery } from "@tanstack/react-query";
+import { CreateDeposit } from "./CreateDeposit";
+import { ListAccountTransfers } from "./ListAccountTransfers";
+import { ReopenAccount } from "./ReopenAccount";
+import { CloseAccount } from "./CloseAccount";
+import { PositionLookup } from "./PositionLookup";
 
 export function AccountLookup() {
     const [accountID, setAccountID] = useState<string>("");
     const [submittedAccountID, setSubmittedAccountID] = useState("");
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [positionLookup, setPositionLookup] = useState(false);
 
     const { isFetching, isError, isSuccess, data, error } = useQuery({
         queryKey: ["account", submittedAccountID],
@@ -46,10 +52,21 @@ export function AccountLookup() {
                     <div>Received account...</div>
                     <div>Name: {data.account_name} </div>
                     <div>ID: {data.account_id} </div>
+                    <div>User ID: {data.account_user_id} </div>
                     <div>Code Type: {data.account_code_type} </div>
                     <div>Ledger ID: {data.account_ledger_id} </div>
                     <div>Status: {data.account_status} </div>
-                    <div>User ID: {data.account_user_id} </div>
+                    <button
+                        style={{ background: positionLookup ? "green" : "grey" }}
+                        onClick={() => setPositionLookup(!positionLookup)}>
+                        Position Lookup
+                    </button>
+                    <br />
+                    {positionLookup && <PositionLookup accountID={data.account_id} />}
+                    <CloseAccount accountID={data.account_id} />
+                    <ReopenAccount accountID={data.account_id} />
+                    <CreateDeposit accountID={data.account_id} />
+                    <ListAccountTransfers accountID={data.account_id} />
                 </>
             )}
         </>
