@@ -54,6 +54,9 @@ jobs:
 
       - name: create kind cluster
         uses: helm/kind-action@v1
+        with:
+          # `kind load` below defaults to a cluster named "kind"
+          cluster_name: kind
 
       - name: load images into kind
         run: kind load docker-image backend:latest tradingengine:latest
@@ -73,7 +76,7 @@ jobs:
                         -f k8s/redis_backend_pvc.yaml \
                         -f k8s/redis_backend_deployment.yaml \
                         -f k8s/redis_backend_service.yaml
-          kubectl apply -f k8s/ci/tigerbeetle.yaml
+          kubectl apply -f .github/k8s-ci/tigerbeetle.yaml
           kubectl -n transcendence rollout status deploy/backend-postgress --timeout=180s
           kubectl -n transcendence rollout status deploy/backend-redis --timeout=180s
           kubectl -n tigerbeetle rollout status statefulset/tigerbeetle --timeout=180s
@@ -85,7 +88,7 @@ jobs:
       - name: deploy tradingengine and backend
         run: |
           set -euo pipefail
-          kubectl apply -f k8s/ci/tradingengine.yaml
+          kubectl apply -f .github/k8s-ci/tradingengine.yaml
           kubectl apply -f backend/k8s/deployment.yaml -f backend/k8s/service.yaml
           kubectl -n transcendence rollout status deploy/tradingengine --timeout=180s
           kubectl -n transcendence rollout status deploy/backend --timeout=180s
