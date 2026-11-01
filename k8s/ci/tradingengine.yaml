@@ -1,0 +1,51 @@
+# CI-only trading engine. There is no production manifest for it yet; when
+# there is one, apply that from the workflow instead and delete this file.
+# The backend reaches it at http://tradingengine:50051 (set in
+# backend/k8s/deployment.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tradingengine
+  namespace: transcendence
+  labels:
+    app: tradingengine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tradingengine
+  template:
+    metadata:
+      labels:
+        app: tradingengine
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: tradingengine
+          image: tradingengine:latest
+          # image is built in CI and loaded into kind, never pulled
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+          # same service name the compose healthcheck uses
+          readinessProbe:
+            grpc:
+              port: 50051
+              service: trading.v1.TradingEngine
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tradingengine
+  namespace: transcendence
+  labels:
+    app: tradingengine
+spec:
+  selector:
+    app: tradingengine
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc

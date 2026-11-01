@@ -432,11 +432,11 @@ async fn create_account_on_disabled_ledger_returns_400() {
 }
 
 #[tokio::test]
-async fn create_account_for_unknown_user_returns_400() {
+async fn create_account_for_unknown_user_returns_404() {
     let c = client();
     // USD is seeded and enabled; the failure must come from the user FK.
     let (status, _) = create_account(&c, &Uuid::new_v4().to_string(), "USD").await;
-    assert_eq!(status, 400);
+    assert_eq!(status, 404);
 }
 
 #[tokio::test]
@@ -785,6 +785,398 @@ async fn source_account_funds_user_and_goes_negative() {
     )
     .await;
     assert_eq!(pos["net_posted"], "1.00");
+}
+
+// --- deposits, transfers, close / reopen ------------------------------------
+
+/// Appends a query string. The values used in these tests (numbers, symbols,
+/// timestamps and uuids) never need percent-encoding.
+fn with_query(url: String, query: &[(&str, &str)]) -> String {
+    if query.is_empty() {
+        return url;
+    }
+    let pairs: Vec<String> = query.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    format!("{url}?{}", pairs.join("&"))
+}
+
+fn account_url(account: u128, suffix: &str) -> String {
+    format!("{}/accounts/{}{suffix}", base(), Uuid::from_u128(account))
+}
+
+async fn post_deposit(
+    c: &reqwest::Client,
+    account: u128,
+    key: Uuid,
+    amount: &str,
+) -> reqwest::Response {
+    c.post(account_url(account, "/deposit"))
+        .json(&json!({ "idempotency_key": key, "amount": amount }))
+        .send()
+        .await
+        .expect("send deposit")
+}
+
+/// A fresh 2-decimal ledger with one active user account on it.
+async fn funded_ledger_account(c: &reqwest::Client) -> (String, u128) {
+    let symbol = create_ledger(c, 2).await;
+    let (account, _) = create_active_account(c, &symbol).await;
+    (symbol, account)
+}
+
+#[tokio::test]
+async fn deposit_credits_account_and_shows_in_position() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+
+    let body = expect_status(
+        post_deposit(&c, account, Uuid::new_v4(), "12.34").await,
+        201,
+    )
+    .await;
+    assert_eq!(body["kind"], "deposit");
+    assert_eq!(body["direction"], "in");
+    assert_eq!(body["amount"], "12.34");
+
+    let pos = expect_status(
+        c.get(account_url(account, "/position"))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(pos["net_posted"], "12.34");
+    assert_eq!(pos["credits_posted"], "12.34");
+}
+
+#[tokio::test]
+async fn deposit_retry_with_same_key_returns_200_and_credits_once() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+    let key = Uuid::new_v4();
+
+    let first = expect_status(post_deposit(&c, account, key, "5.00").await, 201).await;
+    let retry = expect_status(post_deposit(&c, account, key, "5.00").await, 200).await;
+    assert_eq!(first["transfer_id"], retry["transfer_id"]);
+
+    let pos = expect_status(
+        c.get(account_url(account, "/position"))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(pos["net_posted"], "5.00");
+}
+
+#[tokio::test]
+async fn deposit_with_reused_key_and_different_amount_returns_409() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+    let key = Uuid::new_v4();
+
+    expect_status(post_deposit(&c, account, key, "5.00").await, 201).await;
+    expect_status(post_deposit(&c, account, key, "6.00").await, 409).await;
+}
+
+#[tokio::test]
+async fn deposit_with_invalid_key_or_amount_returns_400() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+
+    expect_status(post_deposit(&c, account, Uuid::nil(), "1.00").await, 400).await;
+    for amount in ["0", "-1.00", "1.234"] {
+        expect_status(post_deposit(&c, account, Uuid::new_v4(), amount).await, 400).await;
+    }
+}
+
+#[tokio::test]
+async fn deposit_missing_amount_returns_422() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+    let res = c
+        .post(account_url(account, "/deposit"))
+        .json(&json!({ "idempotency_key": Uuid::new_v4() }))
+        .send()
+        .await
+        .unwrap();
+    expect_status(res, 422).await;
+}
+
+#[tokio::test]
+async fn deposit_into_unknown_account_returns_404() {
+    let c = client();
+    let res = post_deposit(&c, Uuid::new_v4().as_u128(), Uuid::new_v4(), "1.00").await;
+    expect_status(res, 404).await;
+}
+
+#[tokio::test]
+async fn deposit_into_system_account_returns_403() {
+    let c = client();
+    let pool = pg().await;
+    let symbol = create_ledger(&c, 2).await;
+    let source = system_account_id(&pool, &symbol, 3).await;
+    expect_status(post_deposit(&c, source, Uuid::new_v4(), "1.00").await, 403).await;
+}
+
+#[tokio::test]
+async fn deposit_into_disabled_ledger_returns_400() {
+    let c = client();
+    let (symbol, account) = funded_ledger_account(&c).await;
+    set_ledger_enabled(&c, &symbol, false).await;
+    expect_status(post_deposit(&c, account, Uuid::new_v4(), "1.00").await, 400).await;
+}
+
+#[tokio::test]
+async fn transfers_of_fresh_account_are_empty() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+    let body = expect_status(
+        c.get(account_url(account, "/transfers"))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(body["items"], json!([]));
+    assert!(body["next_cursor"].is_null());
+}
+
+#[tokio::test]
+async fn transfers_list_deposits_newest_first() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+    expect_status(post_deposit(&c, account, Uuid::new_v4(), "1.00").await, 201).await;
+    expect_status(post_deposit(&c, account, Uuid::new_v4(), "2.00").await, 201).await;
+
+    let body = expect_status(
+        c.get(account_url(account, "/transfers"))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["amount"], "2.00");
+    assert_eq!(items[1]["amount"], "1.00");
+    for item in items {
+        assert_eq!(item["kind"], "deposit");
+        assert_eq!(item["direction"], "in");
+    }
+    assert!(body["next_cursor"].is_null());
+}
+
+#[tokio::test]
+async fn transfers_paginate_with_cursor() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+    for amount in ["1.00", "2.00", "3.00"] {
+        expect_status(post_deposit(&c, account, Uuid::new_v4(), amount).await, 201).await;
+    }
+
+    let page1 = expect_status(
+        c.get(with_query(
+            account_url(account, "/transfers"),
+            &[("limit", "2")],
+        ))
+        .send()
+        .await
+        .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(page1["items"].as_array().unwrap().len(), 2);
+    assert_eq!(page1["items"][0]["amount"], "3.00");
+    let cursor = page1["next_cursor"]
+        .as_str()
+        .expect("next_cursor")
+        .to_string();
+
+    let page2 = expect_status(
+        c.get(with_query(
+            account_url(account, "/transfers"),
+            &[("limit", "2"), ("cursor", cursor.as_str())],
+        ))
+        .send()
+        .await
+        .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(page2["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page2["items"][0]["amount"], "1.00");
+    assert!(page2["next_cursor"].is_null());
+}
+
+#[tokio::test]
+async fn transfers_reject_bad_limit_cursor_and_unknown_account() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+
+    let res = c
+        .get(with_query(
+            account_url(account, "/transfers"),
+            &[("limit", "0")],
+        ))
+        .send()
+        .await
+        .unwrap();
+    expect_status(res, 400).await;
+
+    let res = c
+        .get(with_query(
+            account_url(account, "/transfers"),
+            &[("cursor", "not-a-number")],
+        ))
+        .send()
+        .await
+        .unwrap();
+    expect_status(res, 400).await;
+
+    let res = c
+        .get(account_url(Uuid::new_v4().as_u128(), "/transfers"))
+        .send()
+        .await
+        .unwrap();
+    expect_status(res, 404).await;
+}
+
+async fn post_account_action(
+    c: &reqwest::Client,
+    account: u128,
+    action: &str,
+) -> reqwest::Response {
+    c.post(account_url(account, &format!("/{action}")))
+        .send()
+        .await
+        .expect("send account action")
+}
+
+#[tokio::test]
+async fn close_account_blocks_deposits_until_reopened() {
+    let c = client();
+    let tb = tb_client();
+    let (_, account) = funded_ledger_account(&c).await;
+
+    expect_status(post_account_action(&c, account, "close").await, 204).await;
+    let found = tb
+        .lookup_accounts(&[account])
+        .await
+        .expect("lookup account");
+    assert!(
+        found[0].flags.contains(tb::AccountFlags::Closed),
+        "account should be closed in tigerbeetle"
+    );
+    expect_status(post_deposit(&c, account, Uuid::new_v4(), "1.00").await, 409).await;
+
+    expect_status(post_account_action(&c, account, "reopen").await, 204).await;
+    let found = tb
+        .lookup_accounts(&[account])
+        .await
+        .expect("lookup account");
+    assert!(!found[0].flags.contains(tb::AccountFlags::Closed));
+    expect_status(post_deposit(&c, account, Uuid::new_v4(), "1.00").await, 201).await;
+}
+
+#[tokio::test]
+async fn close_and_reopen_are_idempotent() {
+    let c = client();
+    let (_, account) = funded_ledger_account(&c).await;
+
+    // reopening an account that is already open is a no-op
+    expect_status(post_account_action(&c, account, "reopen").await, 204).await;
+    expect_status(post_account_action(&c, account, "close").await, 204).await;
+    expect_status(post_account_action(&c, account, "close").await, 204).await;
+    expect_status(post_account_action(&c, account, "reopen").await, 204).await;
+    expect_status(post_account_action(&c, account, "reopen").await, 204).await;
+}
+
+#[tokio::test]
+async fn close_and_reopen_unknown_account_return_404() {
+    let c = client();
+    let unknown = Uuid::new_v4().as_u128();
+    expect_status(post_account_action(&c, unknown, "close").await, 404).await;
+    expect_status(post_account_action(&c, unknown, "reopen").await, 404).await;
+}
+
+#[tokio::test]
+async fn close_and_reopen_system_account_return_403() {
+    let c = client();
+    let pool = pg().await;
+    let symbol = create_ledger(&c, 2).await;
+    let fee = system_account_id(&pool, &symbol, 2).await;
+    expect_status(post_account_action(&c, fee, "close").await, 403).await;
+    expect_status(post_account_action(&c, fee, "reopen").await, 403).await;
+}
+
+// --- markets, orders, trades, ticker -------------------------------------------
+//
+// The engine can't create markets, orders or trades through the API yet, so
+// only the paths reachable without them are covered here. Add tests that place
+// orders once the engine has endpoints.
+
+async fn get_json(c: &reqwest::Client, path: &str, query: &[(&str, &str)], want: u16) -> Value {
+    let res = c
+        .get(with_query(format!("{}{path}", base()), query))
+        .send()
+        .await
+        .expect("send get");
+    expect_status(res, want).await
+}
+
+#[tokio::test]
+async fn list_markets_returns_an_array() {
+    let c = client();
+    let body = get_json(&c, "/markets", &[], 200).await;
+    assert!(body.is_array());
+}
+
+#[tokio::test]
+async fn unknown_market_returns_404_on_every_market_route() {
+    let c = client();
+    for suffix in ["", "/orders", "/trades", "/ticker"] {
+        get_json(&c, &format!("/markets/NOPE-NOPE{suffix}"), &[], 404).await;
+    }
+}
+
+#[tokio::test]
+async fn fetch_order_unknown_and_malformed() {
+    let c = client();
+    get_json(&c, &format!("/orders/{}", Uuid::new_v4()), &[], 404).await;
+    get_json(&c, "/orders/not-a-uuid", &[], 400).await;
+}
+
+#[tokio::test]
+async fn order_trades_of_unknown_order_returns_404() {
+    let c = client();
+    get_json(&c, &format!("/orders/{}/trades", Uuid::new_v4()), &[], 404).await;
+}
+
+#[tokio::test]
+async fn user_without_orders_gets_an_empty_page() {
+    let c = client();
+    let user_id = create_user(&c).await;
+    let page = get_json(&c, &format!("/users/{user_id}/orders"), &[], 200).await;
+    assert_eq!(page["items"], json!([]));
+    assert!(page["next_cursor"].is_null());
+}
+
+#[tokio::test]
+async fn user_orders_validate_inputs() {
+    let c = client();
+    let user_id = create_user(&c).await;
+    let path = format!("/users/{user_id}/orders");
+
+    get_json(&c, &path, &[("limit", "0")], 400).await;
+    get_json(&c, &path, &[("status", "bogus")], 400).await;
+    get_json(&c, &path, &[("cursor", "no-underscore")], 400).await;
+    get_json(&c, &path, &[("market", "NOPE-NOPE")], 404).await;
+    get_json(&c, &format!("/users/{}/orders", Uuid::new_v4()), &[], 404).await;
+    get_json(&c, "/users/not-a-uuid/orders", &[], 400).await;
 }
 
 fn redis_url() -> String {
