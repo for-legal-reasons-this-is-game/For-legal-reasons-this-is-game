@@ -28,8 +28,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # only used to get the cargo toolchain for the test step
-      - uses: DeterminateSystems/nix-installer-action@main
+      # The test binary links the host's openssl, so it is built with the
+      # runner's own toolchain. Inside `nix develop` it would be linked
+      # against Nix's glibc and fail to start on the runner's older libc.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # proto/build.rs needs protoc (the Nix dev shell used to provide it)
+      - name: install protoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
 
       # Build context is the repo root for both images (they need ../proto).
       - name: build backend image
@@ -117,7 +123,7 @@ jobs:
           export REDIS_URL=redis://127.0.0.1:6379
           export TB_CLUSTER_ID=0
           export TB_IP_ADRESSES=127.0.0.1:3000
-          nix develop --command cargo test --locked --test integration_test
+          cargo test --locked --test integration_test
 
       - name: dump cluster state
         if: failure()
