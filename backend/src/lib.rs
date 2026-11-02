@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod consumer;
 pub mod domain;
 pub mod hmac_utils;
 pub mod relay;
