@@ -1,0 +1,81 @@
+[package]
+name = "engine_sprint"
+version = "0.1.0"
+edition = "2024"
+publish = false
+autotests = false
+default-run = "sprint"
+
+# Rustlings-style exercises for the sprint in ../SPRINT.md.
+# Each exercise is its own test target: `cargo test --test ex03_validate_place`.
+# ./check.sh runs them in order and stops at the first one that fails.
+
+[dependencies]
+proto = { path = "../../../proto" }
+tradingengine = { path = "../.." }
+
+[[test]]
+name = "ex00_contract_quiz"
+path = "exercises/ex00_contract_quiz.rs"
+
+[[test]]
+name = "ex01_wire_enums"
+path = "exercises/ex01_wire_enums.rs"
+
+[[test]]
+name = "ex02_required_fields"
+path = "exercises/ex02_required_fields.rs"
+
+[[test]]
+name = "ex03_validate_place"
+path = "exercises/ex03_validate_place.rs"
+
+[[test]]
+name = "ex04_filled_quote"
+path = "exercises/ex04_filled_quote.rs"
+
+[[test]]
+name = "ex05_reject_mapping"
+path = "exercises/ex05_reject_mapping.rs"
+
+[[test]]
+name = "ex06_place_response"
+path = "exercises/ex06_place_response.rs"
+
+[[test]]
+name = "ex07_market_place"
+path = "exercises/ex07_market_place.rs"
+
+# reference solutions, run with ./check.sh --solutions
+
+[[test]]
+name = "sol00_contract_quiz"
+path = "solutions/ex00_contract_quiz.rs"
+
+[[test]]
+name = "sol01_wire_enums"
+path = "solutions/ex01_wire_enums.rs"
+
+[[test]]
+name = "sol02_required_fields"
+path = "solutions/ex02_required_fields.rs"
+
+[[test]]
+name = "sol03_validate_place"
+path = "solutions/ex03_validate_place.rs"
+
+[[test]]
+name = "sol04_filled_quote"
+path = "solutions/ex04_filled_quote.rs"
+
+[[test]]
+name = "sol05_reject_mapping"
+path = "solutions/ex05_reject_mapping.rs"
+
+[[test]]
+name = "sol06_place_response"
+path = "solutions/ex06_place_response.rs"
+
+[[test]]
+name = "sol07_market_place"
+path = "solutions/ex07_market_place.rs"
