@@ -3,6 +3,9 @@ use axum::{
     routing::{get, patch, post},
 };
 
+use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::time::Duration};
+use tower_sessions_redis_store::{RedisStore, fred::prelude::*};
+
 use backend::{
     bootstrap, relay,
     service::EngineClient,
@@ -19,6 +22,24 @@ use std::env;
 // how to stricture api /api/{version: String}/*
 #[tokio::main]
 async fn main() {
+    let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set");
+    let redis = connect_redis(&redis_url)
+        .await
+        .expect("Failed to connect to Redis");
+
+    let pool = Pool::new(Config::from_url(&redis_url).unwrap(), None, None, None, 6).unwrap();
+    pool.connect();
+    pool.wait_for_connect()
+        .await
+        .expect("Failed to connect session Redis");
+
+    let session_store = RedisStore::new(pool);
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_name("id")
+        .with_http_only(true)
+        .with_secure(true)
+        .with_expiry(Expiry::OnInactivity(Duration::hours(1)));
+
     // TB_CLUSTER_ID / TB_IP_ADRESSES come from the process environment
     // (e.g. a K8s Secret via envFrom).
     let tb_client = Arc::new(
@@ -44,11 +65,6 @@ async fn main() {
         .run(&pg_connections)
         .await
         .expect("Migration failed");
-
-    let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set");
-    let redis = connect_redis(&redis_url)
-        .await
-        .expect("Failed to connect to Redis");
 
     let engine_url =
         env::var("ENGINE_URL").unwrap_or_else(|_| "http://tradingengine:50051".to_string());
@@ -99,7 +115,7 @@ async fn main() {
         .route("/orders/{order_id}/trades", get(v1::list_order_trades))
         .with_state(state);
 
-    let router = Router::<()>::new().nest("/api/v1", v1);
+    let router = Router::<()>::new().nest("/api/v1", v1).layer(session_layer);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
     println!("Server running on 0.0.0.0:8000");
     axum::serve(listener, router)
