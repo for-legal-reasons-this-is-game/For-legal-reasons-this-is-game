@@ -147,34 +147,72 @@ pub fn wanted_ids(items: &[EventItem]) -> (Vec<Uuid>, Vec<Uuid>, Vec<String>) {
     (trades, orders, symbols)
 }
 
-// what the reports of a batch have decided so far
+// How far an order has got, as a sort key: (finished?, filled base, filled quote). Of two reports
+// of one order, the one with the bigger key is the newer.
+type Progress = (bool, u128, u128);
+
+// The newest limit price seen for each order that is still open. The consumer creates it once and
+// passes it to every batch.
+//
+// A modify can reprice an order into the book, so the trade that follows its REPLACED report must
+// be checked against the new limit. Postgres only learns the new limit when the batch with the
+// report is saved, and the next batch is prepared before that, so the consumer remembers it itself.
+// A report only replaces what is remembered if it has at least as much progress, so a replayed
+// older report cannot bring an old limit back. A finished order is forgotten, which keeps this small.
+#[derive(Default)]
+pub struct LimitMemory {
+    newest: HashMap<Uuid, (Progress, u128)>,
+}
+
+impl LimitMemory {
+    fn get(&self, order_id: &Uuid) -> Option<u128> {
+        self.newest.get(order_id).map(|(_, limit)| *limit)
+    }
+
+    fn see(&mut self, order_id: Uuid, progress: Progress, limit: Option<u128>) {
+        let Some(limit) = limit else { return };
+        match self.newest.get(&order_id) {
+            Some((known, _)) if *known > progress => {}
+            _ => {
+                self.newest.insert(order_id, (progress, limit));
+            }
+        }
+    }
+
+    fn forget(&mut self, order_id: &Uuid) {
+        self.newest.remove(order_id);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.newest.is_empty()
+    }
+}
+
+// what the reports of one batch have decided so far
 #[derive(Default)]
 struct ReportState {
     refunded: HashSet<Uuid>,
     updates: HashMap<Uuid, OrderUpdate>,
     update_order: Vec<Uuid>,
-    // The newest limit price the batch has shown for an order. A modify can reprice an order into
-    // the book, so a trade right after its REPLACED report must be checked against the new limit,
-    // which postgres does not have yet.
-    limits: HashMap<Uuid, u128>,
 }
 
-pub fn build_plan(items: &[EventItem], lookups: &Lookups) -> Result<BatchPlan, PlanError> {
+pub fn build_plan(
+    items: &[EventItem],
+    lookups: &Lookups,
+    memory: &mut LimitMemory,
+) -> Result<BatchPlan, PlanError> {
     let mut plan = BatchPlan::default();
     let mut seen_trades = HashSet::new();
     let mut state = ReportState::default();
 
     for item in items {
         match &item.body {
-            Some(Body::TradeSettlement(ts)) => plan_trade(
-                item,
-                ts,
-                lookups,
-                &state.limits,
-                &mut seen_trades,
-                &mut plan,
-            )?,
-            Some(Body::ExecutionReport(r)) => plan_report(item, r, lookups, &mut state, &mut plan)?,
+            Some(Body::TradeSettlement(ts)) => {
+                plan_trade(item, ts, lookups, memory, &mut seen_trades, &mut plan)?
+            }
+            Some(Body::ExecutionReport(r)) => {
+                plan_report(item, r, lookups, memory, &mut state, &mut plan)?
+            }
             None => eprintln!(
                 "CONSUMER: event {} of {} has no body, skipping it",
                 item.sequence, item.market_symbol
@@ -193,7 +231,7 @@ fn plan_trade(
     item: &EventItem,
     ts: &TradeSettlement,
     l: &Lookups,
-    limits: &HashMap<Uuid, u128>,
+    memory: &LimitMemory,
     seen: &mut HashSet<Uuid>,
     plan: &mut BatchPlan,
 ) -> Result<(), PlanError> {
@@ -271,7 +309,7 @@ fn plan_trade(
     if Uuid::from_u128(fee_account) != market.fee_account_id {
         return fail("fee account is not the market's fee account".into());
     }
-    let limit_of = |order: &OrderRow| limits.get(&order.order_id).copied().or(order.limit_price);
+    let limit_of = |order: &OrderRow| memory.get(&order.order_id).or(order.limit_price);
     if limit_of(buyer).is_some_and(|limit| price > limit) {
         return fail(format!("price {price} is above the buyer's limit"));
     }
@@ -379,6 +417,7 @@ fn plan_report(
     item: &EventItem,
     r: &ExecutionReport,
     l: &Lookups,
+    memory: &mut LimitMemory,
     state: &mut ReportState,
     plan: &mut BatchPlan,
 ) -> Result<(), PlanError> {
@@ -411,6 +450,14 @@ fn plan_report(
 
     // one update per order: the report with the most progress wins, the later one on a tie
     let rank = |u: &OrderUpdate, terminal: bool| (terminal, u.filled_base, u.filled_quote);
+
+    // remember the new limit for the trades that follow (this batch or the next); forget it when
+    // the order is over
+    if terminal {
+        memory.forget(&order_id);
+    } else {
+        memory.see(order_id, rank(&update, terminal), update.limit_price);
+    }
     match state.updates.get(&order_id) {
         None => {
             state.update_order.push(order_id);
@@ -422,11 +469,6 @@ fn plan_report(
                 state.updates.insert(order_id, update);
             }
         }
-    }
-
-    // follows the winning report, so a replayed older one does not lower the limit again
-    if let Some(limit) = state.updates.get(&order_id).and_then(|u| u.limit_price) {
-        state.limits.insert(order_id, limit);
     }
 
     if terminal && state.refunded.insert(order_id) {
@@ -465,6 +507,20 @@ mod tests {
 
     use crate::consumer::ids::{refund_transfer_id, trade_leg_transfer_id};
     use crate::domain::TransferCodeType;
+
+    // one batch on its own: the consumer's memory of limit prices starts empty
+    fn build_plan(items: &[EventItem], l: &Lookups) -> Result<BatchPlan, PlanError> {
+        super::build_plan(items, l, &mut LimitMemory::default())
+    }
+
+    // a batch planned with a memory that lives on between batches, like the consumer's
+    fn plan_with(
+        memory: &mut LimitMemory,
+        items: &[EventItem],
+        l: &Lookups,
+    ) -> Result<BatchPlan, PlanError> {
+        super::build_plan(items, l, memory)
+    }
 
     const SYMBOL: &str = "BTC-USD";
     const BUYER: u128 = 0xB1;
@@ -909,6 +965,56 @@ mod tests {
         }
         assert!(matches!(
             build_plan(&[it], &lookups()).unwrap_err(),
+            PlanError::Validation(_)
+        ));
+    }
+
+    // --- limit prices remembered across batches ------------------------------------------------
+
+    #[test]
+    fn a_repricing_in_an_earlier_batch_is_remembered() {
+        let mut memory = LimitMemory::default();
+        let mut trade = t(1);
+        trade.price = 1200;
+        // batch 1 ends with the repricing, batch 2 starts with the trade; postgres still has 1100
+        plan_with(&mut memory, &[repricing_report(BUYER, 1300)], &lookups()).unwrap();
+        assert!(plan_with(&mut memory, &[trade_item(&trade)], &lookups()).is_ok());
+    }
+
+    #[test]
+    fn a_replayed_older_report_in_a_later_batch_does_not_lower_the_limit() {
+        let mut memory = LimitMemory::default();
+        let mut newer = repricing_report(BUYER, 1300);
+        let mut older = repricing_report(BUYER, 1100);
+        if let (Some(Body::ExecutionReport(n)), Some(Body::ExecutionReport(o))) =
+            (newer.body.as_mut(), older.body.as_mut())
+        {
+            n.filled_base_quantity = amount(5);
+            o.filled_base_quantity = amount(2);
+        }
+        let mut trade = t(1);
+        trade.price = 1200;
+        plan_with(&mut memory, &[newer], &lookups()).unwrap();
+        plan_with(&mut memory, &[older], &lookups()).unwrap();
+        assert!(plan_with(&mut memory, &[trade_item(&trade)], &lookups()).is_ok());
+    }
+
+    #[test]
+    fn a_finished_order_is_forgotten() {
+        let mut memory = LimitMemory::default();
+        let finished = report(BUYER, OrderStatus::Filled, 1000, 1_000_000);
+        plan_with(
+            &mut memory,
+            &[repricing_report(BUYER, 1300), finished],
+            &lookups(),
+        )
+        .unwrap();
+        assert!(memory.is_empty());
+        // forgotten: the stored limit (1100) applies again
+        let mut trade = t(1);
+        trade.price = 1200;
+        assert!(matches!(
+            plan_with(&mut memory, &[trade_item(&trade)], &lookups()).unwrap_err(),
             PlanError::Validation(_)
         ));
     }

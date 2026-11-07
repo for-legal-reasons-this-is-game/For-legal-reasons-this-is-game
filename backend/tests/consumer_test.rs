@@ -698,7 +698,7 @@ async fn serve(subs: Vec<Sub>) -> (String, Arc<AtomicUsize>) {
 
 fn config(router_url: String, lock_key: i64) -> Config {
     Config {
-        router_url,
+        engine_url: router_url,
         database_url: database_url(),
         tb_cluster_id: std::env::var("TB_CLUSTER_ID")
             .map(|v| v.parse().unwrap())
@@ -1065,4 +1065,37 @@ async fn e2e_second_consumer_cannot_start_while_the_first_runs() {
     let message = finishes_with_error(start(config(url, key))).await;
     assert!(message.contains("advisory lock"), "{message}");
     stop(first).await;
+}
+
+fn report_with_limit(w: &World, order: Uuid, limit: u128) -> EventItem {
+    let mut event = report_event(w, order, OrderStatus::New, 0, 0);
+    if let Some(Body::ExecutionReport(report)) = event.body.as_mut() {
+        report.limit_price = qty(limit);
+    }
+    event
+}
+
+#[tokio::test]
+async fn e2e_a_repricing_and_the_trade_after_it_in_different_batches() {
+    let (pool, c) = (pool().await, tb_client());
+    let s = scenario(&pool, &c).await; // both orders have limit 1000 in postgres
+    // the buyer raises the limit to 1300 and matches at 1200. With one event per batch, the trade
+    // is prepared while the batch with the repricing is not saved yet, so postgres still says 1000
+    let history = vec![
+        report_with_limit(&s.w, s.buy_order, 1300),
+        trade_event(&s, s.trade, 1200),
+        report_event(&s.w, s.buy_order, OrderStatus::Filled, BASE_QTY, QUOTE_QTY),
+        report_event(&s.w, s.sell_order, OrderStatus::Filled, BASE_QTY, QUOTE_QTY),
+    ];
+    let (url, _) = serve(vec![Sub {
+        items: history,
+        ending: Ending::Hang,
+    }])
+    .await;
+    let mut cfg = config(url, fresh_lock_key());
+    cfg.batch_max_items = 1;
+    let running = start(cfg);
+    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
+    assert_settled_exactly_once(&pool, &c, &s).await;
+    stop(running).await;
 }

@@ -1,10 +1,10 @@
 use crate::service::EngineClient;
 use cn_tigerbeetle as tb;
-use plan::{BatchPlan, Lookups};
+use plan::{BatchPlan, LimitMemory, Lookups};
 use proto::{EventItem, SubscribeEventsRequest};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use stream::{SourceSettings, Stats, run_source};
 use tokio_util::sync::CancellationToken;
@@ -21,7 +21,8 @@ pub type ConsumerError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub router_url: String,
+    // where the events come from. The router sits behind this url, like it does for the backend
+    pub engine_url: String,
     pub database_url: String,
     pub tb_cluster_id: u128,
     pub tb_addresses: String,
@@ -52,9 +53,7 @@ impl Config {
         };
         let tb_cluster_id = required("TB_CLUSTER_ID")?;
         Ok(Config {
-            router_url: get("ROUTER_URL")
-                .or_else(|| get("ENGINE_URL"))
-                .ok_or("ROUTER_URL must be set")?,
+            engine_url: required("ENGINE_URL")?,
             database_url: required("DATABASE_URL")?,
             tb_cluster_id: tb_cluster_id
                 .parse()
@@ -69,21 +68,25 @@ impl Config {
 }
 
 // reads what postgres knows about the batch (three lookups at once) and plans it
-async fn prepare_batch(pool: &PgPool, items: Vec<EventItem>) -> Result<BatchPlan, ConsumerError> {
+async fn prepare_batch(
+    pool: &PgPool,
+    limits: &Mutex<LimitMemory>,
+    items: Vec<EventItem>,
+) -> Result<BatchPlan, ConsumerError> {
     let (trade_ids, order_ids, symbols) = plan::wanted_ids(&items);
     let (known_trades, orders, markets) = tokio::try_join!(
         store::known_trade_ids(pool, &trade_ids),
         store::load_orders(pool, &order_ids),
         store::load_markets(pool, &symbols),
     )?;
-    Ok(plan::build_plan(
-        &items,
-        &Lookups {
-            orders,
-            markets,
-            known_trades,
-        },
-    )?)
+    let lookups = Lookups {
+        orders,
+        markets,
+        known_trades,
+    };
+    // there is no await below, so the lock is never held while waiting
+    let mut memory = limits.lock().unwrap_or_else(PoisonError::into_inner);
+    Ok(plan::build_plan(&items, &lookups, &mut memory)?)
 }
 
 // Runs the consumer until `cancel` fires (graceful stop, Ok) or a stage fails (Err: the process
@@ -109,18 +112,20 @@ async fn run_locked(
             .map_err(|e| format!("tigerbeetle client could not start: {e:?}"))?,
     );
     let engine = EngineClient::with_keepalive(
-        &cfg.router_url,
+        &cfg.engine_url,
         Duration::from_secs(20),
         Duration::from_secs(10),
     )?;
     let stats = Arc::new(Stats::default());
     let settings = SourceSettings::from_config(cfg);
 
+    // the limit prices seen so far, shared by all the batches (see LimitMemory)
+    let limits = Arc::new(Mutex::new(LimitMemory::default()));
     let prepare = {
         let pool = pool.clone();
         move |items: Vec<EventItem>| {
-            let pool = pool.clone();
-            async move { prepare_batch(&pool, items).await }
+            let (pool, limits) = (pool.clone(), limits.clone());
+            async move { prepare_batch(&pool, &limits, items).await }
         }
     };
     // money first: a crash after this and before the commit is repaired by the replay, because
@@ -185,7 +190,7 @@ mod tests {
     }
 
     const REQUIRED: [(&str, &str); 4] = [
-        ("ROUTER_URL", "http://router:50051"),
+        ("ENGINE_URL", "http://tradingengine:50051"),
         ("DATABASE_URL", "postgres://x"),
         ("TB_CLUSTER_ID", "0"),
         ("TB_IP_ADRESSES", "127.0.0.1:3000"),
@@ -194,25 +199,11 @@ mod tests {
     #[test]
     fn config_defaults_when_optional_vars_missing() {
         let cfg = Config::from_lookup(lookup(&REQUIRED)).unwrap();
-        assert_eq!(cfg.router_url, "http://router:50051");
+        assert_eq!(cfg.engine_url, "http://tradingengine:50051");
         assert_eq!(cfg.batch_max_items, 500);
         assert_eq!(cfg.batch_max_wait, Duration::from_millis(50));
         assert_eq!(cfg.queue_depth, 4);
         assert_eq!(cfg.lock_key, DEFAULT_LOCK_KEY);
-    }
-
-    #[test]
-    fn config_falls_back_to_engine_url() {
-        let mut pairs: Vec<_> = REQUIRED
-            .iter()
-            .copied()
-            .filter(|(k, _)| *k != "ROUTER_URL")
-            .collect();
-        pairs.push(("ENGINE_URL", "http://engine:50051"));
-        assert_eq!(
-            Config::from_lookup(lookup(&pairs)).unwrap().router_url,
-            "http://engine:50051"
-        );
     }
 
     #[test]
@@ -230,14 +221,14 @@ mod tests {
     }
 
     #[test]
-    fn config_missing_router_url_is_error() {
+    fn config_missing_engine_url_is_error() {
         let pairs: Vec<_> = REQUIRED
             .iter()
             .copied()
-            .filter(|(k, _)| *k != "ROUTER_URL")
+            .filter(|(k, _)| *k != "ENGINE_URL")
             .collect();
         let err = Config::from_lookup(lookup(&pairs)).unwrap_err();
-        assert!(err.to_string().contains("ROUTER_URL"), "{err}");
+        assert!(err.to_string().contains("ENGINE_URL"), "{err}");
     }
 
     #[test]
