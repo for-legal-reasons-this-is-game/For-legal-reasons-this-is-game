@@ -236,6 +236,7 @@ pub enum TransferCodeType {
     ProvisioningFromSource = 3,
     Hold = 4,
     CloseAccount = 5,
+    Refund = 6,
 }
 
 impl TryFrom<i16> for TransferCodeType {
@@ -641,5 +642,19 @@ impl Ticker {
             quote_volume: scale_to_decimal(t.quote_volume, quote.decimals)?,
             trade_count: t.trade_count,
         })
+    }
+}
+
+#[cfg(test)]
+mod transfer_code_tests {
+    use super::*;
+
+    #[test]
+    fn refund_code_roundtrips_as_six() {
+        assert_eq!(u16::from(TransferCodeType::Refund), 6);
+        assert!(matches!(
+            TransferCodeType::try_from(6i16),
+            Ok(TransferCodeType::Refund)
+        ));
     }
 }
