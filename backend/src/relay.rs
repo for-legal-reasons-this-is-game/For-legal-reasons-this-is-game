@@ -215,8 +215,6 @@ pub async fn market_relay_tick(state: &AppState) {
         return;
     };
     let mut tx = tx.unwrap();
-    // same grace as the orders, and three at a time because each one can wait on the engine while
-    // this transaction holds the rows
     let pending = sqlx::query_scalar::<_, i32>(
         "SELECT market_id FROM market_outbox \
          WHERE processed_at IS NULL \
@@ -237,25 +235,21 @@ pub async fn market_relay_tick(state: &AppState) {
 
     for &market_id in &pending {
         match advance_market(state, market_id).await {
-            // stamps the row in this transaction, advance_market never does
             Ok(MarketVerdict::Accepted) => {
                 if let Err(e) = activate_market(&mut *tx, market_id).await {
                     println!("RELAY: couldn't activate market {market_id}: {e}");
                 }
             }
-            // retrying can't fix a refused definition, so it is taken out like the handler does
             Ok(MarketVerdict::Refused) => {
                 if let Err(e) = remove_market(&mut tx, market_id).await {
                     println!("RELAY: couldn't remove the refused market {market_id}: {e}");
                 }
             }
-            // already logged, the market stays pending
             Ok(_) => {}
             Err(code) => println!("RELAY: market {market_id} couldn't be advanced: {code}"),
         }
     }
 
-    // every market that was tried goes to the back of the line
     let marking =
         sqlx::query("UPDATE market_outbox SET last_attempt_at = now() WHERE market_id = ANY($1)")
             .bind(&pending)

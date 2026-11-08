@@ -21,16 +21,13 @@ CREATE TABLE IF NOT EXISTS markets (
   FOREIGN KEY (fee_account_id, quote_ledger_id) REFERENCES accounts(account_id, account_ledger_id)
 );
 
--- one row per market that still has to be told to the engine (SetMarket). The market stays halted
--- until the engine accepted it; processed_at is stamped in the same statement that sets it to trading.
--- last_attempt_at is when the relay last tried it, so it goes round all the pending markets
 CREATE TABLE IF NOT EXISTS market_outbox (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   market_id INTEGER NOT NULL UNIQUE REFERENCES markets(market_id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_attempt_at TIMESTAMPTZ, -- null means never tried
   processed_at TIMESTAMPTZ -- null means still pending
-);
+-- );
 -- partial index so the relay only looks at the pending rows, in the order it takes them
 CREATE INDEX IF NOT EXISTS market_outbox_unprocessed
 ON market_outbox(last_attempt_at NULLS FIRST, id) WHERE processed_at IS NULL;
