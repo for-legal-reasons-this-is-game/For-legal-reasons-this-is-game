@@ -126,12 +126,7 @@ pub async fn relay_loop(state: AppState) {
     }
 }
 
-// The order relay does for orders what relay_loop does for accounts. it finishes what the backend
-// couldnt do. Each pending order_outbox row is an order that still
-// needs something: its hold account and reservation, the PlaceOrder, or the refund of a rejection.
-// advance_order works out which from the order itself and is safe to repeat, so this just calls it
-// until the order is finished and then stamps the row. The pending orders are taken in
-// turns (the least recently tried first), so the ones that never finish don't hold up the rest
+// this relay completes the steps of an order that the backend didnt do: its hold account and reservation, the PlaceOrder, or the refund of a rejection.
 pub async fn order_relay_loop(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
