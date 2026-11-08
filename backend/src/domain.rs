@@ -261,7 +261,18 @@ impl From<TransferCodeType> for i16 {
 }
 
 // enums for serializing the proto enums
-#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    FromPrimitive,
+    ToPrimitive,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    TS,
+)]
 #[repr(i16)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -270,7 +281,18 @@ pub enum Side {
     Sell = 2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    FromPrimitive,
+    ToPrimitive,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    TS,
+)]
 #[repr(i16)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -281,7 +303,18 @@ pub enum OrderType {
     StopMarket = 4,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    FromPrimitive,
+    ToPrimitive,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    TS,
+)]
 #[repr(i16)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -292,13 +325,66 @@ pub enum TimeInForce {
     Fok = 4,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    FromPrimitive,
+    ToPrimitive,
+    Serialize,
+    Deserialize,
+    sqlx::Type,
+    TS,
+)]
 #[repr(i16)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum TriggerDirection {
     LastAtOrAbove = 1,
     LastAtOrBelow = 2,
+}
+
+// the domain enums share their numbers with the proto ones, these give the proto version for a
+// PlaceOrderRequest
+impl From<Side> for proto::Side {
+    fn from(s: Side) -> Self {
+        match s {
+            Side::Buy => proto::Side::Buy,
+            Side::Sell => proto::Side::Sell,
+        }
+    }
+}
+
+impl From<OrderType> for proto::OrderType {
+    fn from(t: OrderType) -> Self {
+        match t {
+            OrderType::Limit => proto::OrderType::Limit,
+            OrderType::Market => proto::OrderType::Market,
+            OrderType::StopLimit => proto::OrderType::StopLimit,
+            OrderType::StopMarket => proto::OrderType::StopMarket,
+        }
+    }
+}
+
+impl From<TimeInForce> for proto::TimeInForce {
+    fn from(t: TimeInForce) -> Self {
+        match t {
+            TimeInForce::Gtc => proto::TimeInForce::Gtc,
+            TimeInForce::Gtd => proto::TimeInForce::Gtd,
+            TimeInForce::Ioc => proto::TimeInForce::Ioc,
+            TimeInForce::Fok => proto::TimeInForce::Fok,
+        }
+    }
+}
+
+impl From<TriggerDirection> for proto::TriggerDirection {
+    fn from(t: TriggerDirection) -> Self {
+        match t {
+            TriggerDirection::LastAtOrAbove => proto::TriggerDirection::LastAtOrAbove,
+            TriggerDirection::LastAtOrBelow => proto::TriggerDirection::LastAtOrBelow,
+        }
+    }
 }
 
 // the engine's view of the order
@@ -343,6 +429,7 @@ pub enum RejectReason {
     NotOrderOwner = 7,
     DuplicateCommand = 8,
     Unsupported = 9,
+    InternalError = 10,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type, TS)]
@@ -656,5 +743,50 @@ mod transfer_code_tests {
             TransferCodeType::try_from(6i16),
             Ok(TransferCodeType::Refund)
         ));
+    }
+}
+
+#[cfg(test)]
+mod order_domain_tests {
+    use super::*;
+
+    #[test]
+    fn reject_reason_internal_error_is_ten() {
+        assert_eq!(
+            RejectReason::from_i32(10),
+            Some(RejectReason::InternalError)
+        );
+    }
+
+    #[test]
+    fn domain_enums_map_to_proto_numbers() {
+        for (domain, proto) in [
+            (Side::Buy as i32, proto::Side::from(Side::Buy) as i32),
+            (Side::Sell as i32, proto::Side::from(Side::Sell) as i32),
+        ] {
+            assert_eq!(domain, proto);
+        }
+        for t in [
+            OrderType::Limit,
+            OrderType::Market,
+            OrderType::StopLimit,
+            OrderType::StopMarket,
+        ] {
+            assert_eq!(t as i32, proto::OrderType::from(t) as i32);
+        }
+        for t in [
+            TimeInForce::Gtc,
+            TimeInForce::Gtd,
+            TimeInForce::Ioc,
+            TimeInForce::Fok,
+        ] {
+            assert_eq!(t as i32, proto::TimeInForce::from(t) as i32);
+        }
+        for t in [
+            TriggerDirection::LastAtOrAbove,
+            TriggerDirection::LastAtOrBelow,
+        ] {
+            assert_eq!(t as i32, proto::TriggerDirection::from(t) as i32);
+        }
     }
 }

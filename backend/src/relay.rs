@@ -1,4 +1,7 @@
-use crate::{domain::AccountCodeType, v1::AppState};
+use crate::{
+    domain::AccountCodeType,
+    v1::{AppState, advance_order},
+};
 use cn_tigerbeetle::{self as tb};
 use sqlx::{self};
 use tokio::time::{Duration, timeout};
@@ -120,5 +123,76 @@ pub async fn relay_loop(state: AppState) {
                 continue;
             }
         }
+    }
+}
+
+// The order relay does for orders what relay_loop does for accounts. it finishes what the backend
+// couldnt do. Each pending order_outbox row is an order that still
+// needs something: its hold account and reservation, the PlaceOrder, or the refund of a rejection.
+// advance_order works out which from the order itself and is safe to repeat, so this just calls it
+// until the order is finished and then stamps the row. The pending orders are taken in
+// turns (the least recently tried first), so the ones that never finish don't hold up the rest
+pub async fn order_relay_loop(state: AppState) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        order_relay_tick(&state).await;
+    }
+}
+
+// one pass of order_relay_loop
+pub async fn order_relay_tick(state: &AppState) {
+    let tx = state.pg_connections.begin().await;
+    if let Err(e) = tx {
+        println!("RELAY: order relay couldn't establish a connection to the db: {e}");
+        return;
+    };
+    let mut tx = tx.unwrap();
+    // 15 seconds of grace,
+    // Only three orders at a time: each one can wait on the network
+    // and this transaction and its row locks are held meanwhile. skip locked lets several backends share the work
+    let pending = sqlx::query_scalar::<_, Uuid>(
+        "SELECT order_id FROM order_outbox \
+         WHERE processed_at IS NULL \
+         AND created_at < now() - interval '15 seconds' \
+         ORDER BY last_attempt_at NULLS FIRST, id LIMIT 3 \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .fetch_all(&mut *tx)
+    .await;
+    let pending = match pending {
+        Ok(v) if v.is_empty() => return,
+        Ok(v) => v,
+        Err(e) => {
+            println!("RELAY: couldn't drain orders from db: {e}");
+            return;
+        }
+    };
+
+    let mut finished: Vec<Uuid> = Vec::new();
+    for &order_id in &pending {
+        match advance_order(state, order_id, 1).await {
+            Ok(advance) if advance.finished => finished.push(order_id),
+            Ok(_) => {}
+            Err(code) => println!("RELAY: order {order_id} couldn't be advanced: {code}"),
+        }
+    }
+
+    let marking = sqlx::query(
+        "UPDATE order_outbox SET last_attempt_at = now(), \
+         processed_at = CASE WHEN order_id = ANY($2) THEN now() ELSE processed_at END \
+         WHERE order_id = ANY($1)",
+    )
+    .bind(&pending)
+    .bind(finished)
+    .execute(&mut *tx)
+    .await;
+    if let Err(e) = marking {
+        println!("RELAY: couldn't stamp the outbox's finished orders: {e}");
+        return;
+    }
+    if let Err(e) = tx.commit().await {
+        println!("RELAY: couldn't commit to db: {e}");
     }
 }
