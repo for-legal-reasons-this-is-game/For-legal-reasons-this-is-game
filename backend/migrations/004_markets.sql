@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS market_outbox (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_attempt_at TIMESTAMPTZ, -- null means never tried
   processed_at TIMESTAMPTZ -- null means still pending
--- );
+ );
 -- partial index so the relay only looks at the pending rows, in the order it takes them
 CREATE INDEX IF NOT EXISTS market_outbox_unprocessed
 ON market_outbox(last_attempt_at NULLS FIRST, id) WHERE processed_at IS NULL;
