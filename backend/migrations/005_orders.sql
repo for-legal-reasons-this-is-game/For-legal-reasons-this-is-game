@@ -41,10 +41,6 @@ CREATE INDEX IF NOT EXISTS orders_user_created ON orders(user_id, created_at DES
 CREATE INDEX IF NOT EXISTS orders_market_open ON orders(market_id)
 WHERE submission <> 'rejected' AND (status IS NULL OR status IN (1, 2, 6));
 
--- one row per order that still needs the relay to finish it (hold account, reservation, PlaceOrder,
--- refund). processed_at is stamped once there is nothing left to do for that order.
--- last_attempt_at is when the relay last tried it, so it goes round all the pending orders and a few
--- stuck ones can't keep the newer ones waiting
 create table if not exists order_outbox(
   id bigint generated always as identity primary key,
   order_id uuid not null unique references orders(order_id),

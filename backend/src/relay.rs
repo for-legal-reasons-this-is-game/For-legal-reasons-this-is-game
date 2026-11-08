@@ -1,6 +1,6 @@
 use crate::{
     domain::AccountCodeType,
-    v1::{AppState, advance_order},
+    v1::{AppState, MarketVerdict, activate_market, advance_market, advance_order, remove_market},
 };
 use cn_tigerbeetle::{self as tb};
 use sqlx::{self};
@@ -190,6 +190,79 @@ pub async fn order_relay_tick(state: &AppState) {
     .await;
     if let Err(e) = marking {
         println!("RELAY: couldn't stamp the outbox's finished orders: {e}");
+        return;
+    }
+    if let Err(e) = tx.commit().await {
+        println!("RELAY: couldn't commit to db: {e}");
+    }
+}
+
+// relay for markets. We need one because of all the network calls
+pub async fn market_relay_loop(state: AppState) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        market_relay_tick(&state).await;
+    }
+}
+
+// one pass of market_relay_loop
+pub async fn market_relay_tick(state: &AppState) {
+    let tx = state.pg_connections.begin().await;
+    if let Err(e) = tx {
+        println!("RELAY: market relay couldn't establish a connection to the db: {e}");
+        return;
+    };
+    let mut tx = tx.unwrap();
+    // same grace as the orders, and three at a time because each one can wait on the engine while
+    // this transaction holds the rows
+    let pending = sqlx::query_scalar::<_, i32>(
+        "SELECT market_id FROM market_outbox \
+         WHERE processed_at IS NULL \
+         AND created_at < now() - interval '15 seconds' \
+         ORDER BY last_attempt_at NULLS FIRST, id LIMIT 3 \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .fetch_all(&mut *tx)
+    .await;
+    let pending = match pending {
+        Ok(v) if v.is_empty() => return,
+        Ok(v) => v,
+        Err(e) => {
+            println!("RELAY: couldn't drain markets from db: {e}");
+            return;
+        }
+    };
+
+    for &market_id in &pending {
+        match advance_market(state, market_id).await {
+            // stamps the row in this transaction, advance_market never does
+            Ok(MarketVerdict::Accepted) => {
+                if let Err(e) = activate_market(&mut *tx, market_id).await {
+                    println!("RELAY: couldn't activate market {market_id}: {e}");
+                }
+            }
+            // retrying can't fix a refused definition, so it is taken out like the handler does
+            Ok(MarketVerdict::Refused) => {
+                if let Err(e) = remove_market(&mut tx, market_id).await {
+                    println!("RELAY: couldn't remove the refused market {market_id}: {e}");
+                }
+            }
+            // already logged, the market stays pending
+            Ok(_) => {}
+            Err(code) => println!("RELAY: market {market_id} couldn't be advanced: {code}"),
+        }
+    }
+
+    // every market that was tried goes to the back of the line
+    let marking =
+        sqlx::query("UPDATE market_outbox SET last_attempt_at = now() WHERE market_id = ANY($1)")
+            .bind(&pending)
+            .execute(&mut *tx)
+            .await;
+    if let Err(e) = marking {
+        println!("RELAY: couldn't stamp the tried markets: {e}");
         return;
     }
     if let Err(e) = tx.commit().await {

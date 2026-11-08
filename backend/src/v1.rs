@@ -246,6 +246,25 @@ pub struct LedgerEnabledPayload {
 
 #[derive(Deserialize, TS)]
 #[ts(export)]
+pub struct MarketPayload {
+    symbol: String,
+    base_ledger_symbol: String,
+    quote_ledger_symbol: String,
+    price_decimals: i16,
+    #[ts(type = "string")]
+    min_base_quantity: Decimal,
+    #[ts(type = "string")]
+    min_quote_quantity: Decimal,
+    #[ts(type = "string | null")]
+    quantity_step: Option<Decimal>, // none means 1
+    #[ts(type = "string | null")]
+    price_step: Option<Decimal>, // same
+    maker_fee_bps: i32,
+    taker_fee_bps: i32,
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
 pub struct DepositPayload {
     idempotency_key: Uuid, // frontend-generated IN UUIDv7!
     #[ts(type = "string")]
@@ -1638,6 +1657,235 @@ pub async fn set_ledger_enabled(
     })?;
 
     Ok(Json(updated))
+}
+
+// creates a market. It starts halted but its activated once the engine confirms it, which can fail,
+// so there's a relay to pick that up too.
+// The fee account is the quote ledger's system fee account
+pub async fn create_market(
+    State(state): State<AppState>,
+    Json(payload): Json<MarketPayload>,
+) -> Result<(StatusCode, Json<Market>), StatusCode> {
+    if payload.symbol.trim().is_empty()
+        || !(0..=18).contains(&payload.price_decimals)
+        || !(0..=10_000).contains(&payload.maker_fee_bps)
+        || !(0..=10_000).contains(&payload.taker_fee_bps)
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let mut ledgers = Vec::new();
+    for symbol in [&payload.base_ledger_symbol, &payload.quote_ledger_symbol] {
+        match fetch_ledger_by_symbol(&state.pg_connections, symbol)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            None => return Err(StatusCode::NOT_FOUND),
+            Some(l) if !l.enabled => return Err(StatusCode::BAD_REQUEST),
+            Some(l) => ledgers.push(l),
+        }
+    }
+    let (base, quote) = (ledgers.remove(0), ledgers.remove(0));
+    if base.ledger_id == quote.ledger_id {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let exponent = payload.price_decimals as i32 + base.decimals as i32 - quote.decimals as i32;
+    if !(0..=38).contains(&exponent) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let min_base = to_units(payload.min_base_quantity, base.decimals as u32)?;
+    let min_quote = to_units(payload.min_quote_quantity, quote.decimals as u32)?;
+    let quantity_step = match payload.quantity_step {
+        Some(step) => to_units(step, base.decimals as u32)?,
+        None => 1,
+    };
+    let price_step = match payload.price_step {
+        Some(step) => to_units(step, payload.price_decimals as u32)?,
+        None => 1,
+    };
+
+    let fee_account = sqlx::query_scalar::<_, Uuid>(
+        "SELECT account_id FROM accounts WHERE account_ledger_id = $1 AND account_code_type = 2",
+    )
+    .bind(quote.ledger_id)
+    .fetch_optional(&state.pg_connections)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut tx = state
+        .pg_connections
+        .begin()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let market_id = sqlx::query_scalar::<_, i32>(
+        "INSERT INTO markets (symbol, base_ledger_id, quote_ledger_id, price_decimals, fee_account_id, \
+                min_base_quantity, min_quote_quantity, quantity_step, price_step, \
+                maker_fee_bps, taker_fee_bps) \
+         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8::numeric, $9::numeric, $10, $11) \
+         RETURNING market_id",
+    )
+    .bind(payload.symbol.trim())
+    .bind(base.ledger_id)
+    .bind(quote.ledger_id)
+    .bind(payload.price_decimals)
+    .bind(fee_account)
+    .bind(min_base.to_string())
+    .bind(min_quote.to_string())
+    .bind(quantity_step.to_string())
+    .bind(price_step.to_string())
+    .bind(payload.maker_fee_bps)
+    .bind(payload.taker_fee_bps)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => StatusCode::CONFLICT,
+        sqlx::Error::Database(db) if db.is_check_violation() => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
+    sqlx::query("INSERT INTO market_outbox (market_id) VALUES ($1)")
+        .bind(market_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let created = match advance_market(&state, market_id).await? {
+        MarketVerdict::Accepted => match activate_market(&state.pg_connections, market_id).await {
+            Ok(()) => true,
+            Err(e) => {
+                println!("MARKET: couldn't activate market {market_id}: {e}");
+                false
+            }
+        },
+        MarketVerdict::Refused => {
+            let mut tx = state
+                .pg_connections
+                .begin()
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            remove_market(&mut tx, market_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            tx.commit()
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        MarketVerdict::Retry | MarketVerdict::Anomaly => false,
+    };
+
+    let row = fetch_market_by_id(&state.pg_connections, market_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::ACCEPTED
+    };
+    Ok((status, Json(Market::from_row(row, base, quote)?)))
+}
+
+// what the engine said to a SetMarket
+#[derive(Debug, PartialEq)]
+pub enum MarketVerdict {
+    Accepted,
+    Retry,   // needs to be retried
+    Refused, // BAD_DEFINITION: the market can't exist
+    Anomaly, // an answer a retry can't fix, its logged only (something very wrong in our code)
+}
+
+// One attempt at telling the engine about a market
+//repeating it is safe
+pub async fn advance_market(state: &AppState, market_id: i32) -> Result<MarketVerdict, StatusCode> {
+    let (symbol, price_decimals, base_decimals, quote_decimals, fee_account) =
+        sqlx::query_as::<_, (String, i16, i16, i16, Uuid)>(
+            "SELECT m.symbol, m.price_decimals, b.decimals, q.decimals, m.fee_account_id \
+             FROM markets m \
+             JOIN ledgers b ON b.ledger_id = m.base_ledger_id \
+             JOIN ledgers q ON q.ledger_id = m.quote_ledger_id \
+             WHERE m.market_id = $1",
+        )
+        .bind(market_id)
+        .fetch_optional(&state.pg_connections)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let request = proto::SetMarketRequest {
+        market: Some(proto::Market {
+            symbol,
+            base_decimals: base_decimals as u32,
+            quote_decimals: quote_decimals as u32,
+            price_decimals: price_decimals as u32,
+            fee_account: Some(fee_account.as_u128().into()),
+        }),
+    };
+    match timeout(ORDER_STEP_TIMEOUT, state.engine_client.set_market(request)).await {
+        Err(_) => {
+            println!("MARKET: the engine didn't answer SetMarket for market {market_id} in time");
+            Ok(MarketVerdict::Retry)
+        }
+        Ok(Err(e)) => {
+            println!("MARKET: SetMarket for market {market_id} failed: {e}");
+            Ok(MarketVerdict::Retry)
+        }
+        Ok(Ok(response)) => match response.reject_reason {
+            0 => Ok(MarketVerdict::Accepted),
+            1 => {
+                println!(
+                    "MARKET: the engine refused the definition of market {market_id}: {}",
+                    response.reject_detail
+                );
+                Ok(MarketVerdict::Refused)
+            }
+            other => {
+                println!(
+                    "MARKET: unexpected SetMarket answer {other} for market {market_id}: {}",
+                    response.reject_detail
+                );
+                Ok(MarketVerdict::Anomaly)
+            }
+        },
+    }
+}
+
+// takes a market out
+pub async fn remove_market(
+    conn: &mut sqlx::PgConnection,
+    market_id: i32,
+) -> Result<(), sqlx::Error> {
+    for sql in [
+        "DELETE FROM market_outbox WHERE market_id = $1",
+        "DELETE FROM markets WHERE market_id = $1",
+    ] {
+        sqlx::query(sql).bind(market_id).execute(&mut *conn).await?;
+    }
+    Ok(())
+}
+
+// stamps the outbox row and turns it on, only happens once either directly in the backend or via the relay
+pub async fn activate_market(
+    executor: impl sqlx::PgExecutor<'_>,
+    market_id: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "WITH done AS ( \
+             UPDATE market_outbox SET processed_at = now() \
+             WHERE market_id = $1 AND processed_at IS NULL \
+             RETURNING market_id \
+         ) \
+         UPDATE markets SET status = 'trading' \
+         WHERE market_id IN (SELECT market_id FROM done)",
+    )
+    .bind(market_id)
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 // lists all markets

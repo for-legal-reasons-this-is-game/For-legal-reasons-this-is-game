@@ -110,22 +110,28 @@ struct World {
     quote_source: u128,
 }
 
-// two ledgers (their ledger_id is also the tigerbeetle ledger), a fee account and a trading market
-async fn world(pool: &PgPool, c: &tb::Client) -> World {
-    let ledger = |tag: &'static str| {
+// two ledgers (their ledger_id is also the tigerbeetle ledger) with the given decimals and the fee
+// account of the quote one. Gives (base ledger, quote ledger, fee account)
+async fn ledgers_with_fee(
+    pool: &PgPool,
+    base_decimals: i16,
+    quote_decimals: i16,
+) -> (i32, i32, Uuid) {
+    let ledger = |tag: &'static str, decimals: i16| {
         let pool = pool.clone();
         async move {
             sqlx::query_scalar::<_, i32>(
-                "INSERT INTO ledgers (symbol, name, decimals) VALUES ($1, $1, 2) RETURNING ledger_id",
+                "INSERT INTO ledgers (symbol, name, decimals) VALUES ($1, $1, $2) RETURNING ledger_id",
             )
             .bind(unique_symbol(tag))
+            .bind(decimals)
             .fetch_one(&pool)
             .await
             .expect("insert ledger")
         }
     };
-    let base_ledger = ledger("B").await;
-    let quote_ledger = ledger("Q").await;
+    let base_ledger = ledger("B", base_decimals).await;
+    let quote_ledger = ledger("Q", quote_decimals).await;
 
     let system_user = Uuid::new_v4();
     sqlx::query("INSERT INTO users (user_id, user_name) VALUES ($1, 'fees')")
@@ -144,6 +150,12 @@ async fn world(pool: &PgPool, c: &tb::Client) -> World {
     .execute(pool)
     .await
     .expect("insert fee account");
+    (base_ledger, quote_ledger, fee_account)
+}
+
+// two ledgers, a fee account and a trading market
+async fn world(pool: &PgPool, c: &tb::Client) -> World {
+    let (base_ledger, quote_ledger, fee_account) = ledgers_with_fee(pool, 2, 2).await;
 
     let symbol = unique_symbol("M");
     let market_id = sqlx::query_scalar::<_, i32>(
@@ -303,18 +315,44 @@ enum Script {
 
 type Calls = Arc<Mutex<Vec<proto::PlaceOrderRequest>>>;
 
+// what the fake does with the next SetMarket it gets (nothing scripted: accepted)
+enum MarketScript {
+    Reply(i32), // the reject_reason to answer with
+    Fail(Status),
+    Hang,
+}
+
+type MarketCalls = Arc<Mutex<Vec<proto::SetMarketRequest>>>;
+
 struct FakeEngine {
     scripts: Mutex<VecDeque<Script>>,
     calls: Calls,
+    market_scripts: Mutex<VecDeque<MarketScript>>,
+    market_calls: MarketCalls,
 }
 
 #[tonic::async_trait]
 impl TradingEngine for FakeEngine {
     async fn set_market(
         &self,
-        _: Request<proto::SetMarketRequest>,
+        request: Request<proto::SetMarketRequest>,
     ) -> Result<Response<proto::SetMarketResponse>, Status> {
-        Err(Status::unimplemented("fake"))
+        self.market_calls.lock().unwrap().push(request.into_inner());
+        let script = self.market_scripts.lock().unwrap().pop_front();
+        match script {
+            None => Ok(Response::new(proto::SetMarketResponse::default())),
+            Some(MarketScript::Reply(reject_reason)) => {
+                Ok(Response::new(proto::SetMarketResponse {
+                    reject_reason,
+                    ..Default::default()
+                }))
+            }
+            Some(MarketScript::Fail(status)) => Err(status),
+            Some(MarketScript::Hang) => {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Err(Status::unavailable("gave up waiting"))
+            }
+        }
     }
     async fn place_order(
         &self,
@@ -389,19 +427,37 @@ fn rejected(reason: i32) -> proto::PlaceOrderResponse {
 
 // serves the scripted answers (the n-th PlaceOrder gets the n-th script) and gives the client for it
 async fn engine(scripts: Vec<Script>) -> (EngineClient, Calls) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
     let calls: Calls = Arc::new(Mutex::new(Vec::new()));
     let fake = FakeEngine {
         scripts: Mutex::new(scripts.into()),
         calls: calls.clone(),
+        market_scripts: Mutex::new(VecDeque::new()),
+        market_calls: Arc::new(Mutex::new(Vec::new())),
     };
+    (serve(fake).await, calls)
+}
+
+// the same, for the SetMarket the market endpoint sends
+async fn market_engine(scripts: Vec<MarketScript>) -> (EngineClient, MarketCalls) {
+    let market_calls: MarketCalls = Arc::new(Mutex::new(Vec::new()));
+    let fake = FakeEngine {
+        scripts: Mutex::new(VecDeque::new()),
+        calls: Arc::new(Mutex::new(Vec::new())),
+        market_scripts: Mutex::new(scripts.into()),
+        market_calls: market_calls.clone(),
+    };
+    (serve(fake).await, market_calls)
+}
+
+async fn serve(fake: FakeEngine) -> EngineClient {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(
         tonic::transport::Server::builder()
             .add_service(TradingEngineServer::new(fake))
             .serve_with_incoming(TcpListenerStream::new(listener)),
     );
-    (EngineClient::new(&url).expect("engine url"), calls)
+    EngineClient::new(&url).expect("engine url")
 }
 
 async fn app(pool: &PgPool, c: &Arc<tb::Client>, engine: EngineClient) -> AppState {
@@ -1360,4 +1416,466 @@ async fn two_simultaneous_requests_with_one_key_place_one_order() {
     assert_eq!(orders, 1);
     assert_eq!(balance(&e.c, e.p.quote.as_u128()).await, (10_030, FUNDS));
     assert_eq!(e.calls.lock().unwrap().len(), 1);
+}
+
+// --- create_market -----------------------------------------------------------------
+
+struct MarketEnv {
+    pool: PgPool,
+    state: AppState,
+    url: String,
+    calls: MarketCalls,
+    base_symbol: String,
+    quote_symbol: String,
+    quote_ledger: i32,
+    fee_account: Uuid,
+}
+
+// two ledgers (base with 3 decimals, quote with 2) with the quote one's fee account, and the
+// endpoint served with a fake engine that answers SetMarket as scripted
+async fn market_env(scripts: Vec<MarketScript>) -> MarketEnv {
+    let (pool, c) = (pool().await, tb_client());
+    let (base_ledger, quote_ledger, fee_account) = ledgers_with_fee(&pool, 3, 2).await;
+    let symbol_of = |id: i32| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT symbol FROM ledgers WHERE ledger_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("ledger symbol")
+        }
+    };
+    let (base_symbol, quote_symbol) = (symbol_of(base_ledger).await, symbol_of(quote_ledger).await);
+    let (eng, calls) = market_engine(scripts).await;
+    let state = app(&pool, &c, eng).await;
+    let router = Router::new()
+        .route("/markets", post(v1::create_market))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    MarketEnv {
+        pool,
+        state,
+        url,
+        calls,
+        base_symbol,
+        quote_symbol,
+        quote_ledger,
+        fee_account,
+    }
+}
+
+// base has 3 decimals and quote 2: minimum 0.005 base is 5, minimum 1.50 quote is 150, steps 5 and 5
+fn market_body(e: &MarketEnv, symbol: &str) -> Value {
+    json!({
+        "symbol": symbol,
+        "base_ledger_symbol": e.base_symbol,
+        "quote_ledger_symbol": e.quote_symbol,
+        "price_decimals": 4,
+        "min_base_quantity": "0.005",
+        "min_quote_quantity": "1.50",
+        "quantity_step": "0.005",
+        "price_step": "0.0005",
+        "maker_fee_bps": 10,
+        "taker_fee_bps": 30,
+    })
+}
+
+async fn post_market(e: &MarketEnv, body: &Value) -> (u16, Value) {
+    let res = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap()
+        .post(format!("{}/markets", e.url))
+        .json(body)
+        .send()
+        .await
+        .expect("send market");
+    let status = res.status().as_u16();
+    (status, res.json().await.unwrap_or(Value::Null))
+}
+
+async fn count_where(pool: &PgPool, sql: &'static str, symbol: &str) -> i64 {
+    sqlx::query_scalar(sql)
+        .bind(symbol)
+        .fetch_one(pool)
+        .await
+        .expect("count")
+}
+
+const MARKETS_WITH_SYMBOL: &str = "SELECT count(*) FROM markets WHERE symbol = $1";
+const PENDING_OUTBOX_OF_SYMBOL: &str = "SELECT count(*) FROM market_outbox o \
+     JOIN markets m ON m.market_id = o.market_id WHERE m.symbol = $1 AND o.processed_at IS NULL";
+
+#[tokio::test]
+async fn create_market_inserts_a_halted_market_and_a_pending_outbox_row() {
+    // the engine can't be reached, so nothing but the insert has happened
+    let e = market_env(vec![MarketScript::Fail(Status::unavailable("down"))]).await;
+    let symbol = unique_symbol("M");
+
+    let (status, body) = post_market(&e, &market_body(&e, &symbol)).await;
+
+    assert_eq!(status, 202);
+    assert_eq!(body["status"], "halted");
+    assert_eq!(body["symbol"], symbol.as_str());
+    let raw: (String, String, String, String, i32, i32) = sqlx::query_as(
+        "SELECT min_base_quantity::text, min_quote_quantity::text, quantity_step::text, \
+                price_step::text, maker_fee_bps, taker_fee_bps FROM markets WHERE symbol = $1",
+    )
+    .bind(&symbol)
+    .fetch_one(&e.pool)
+    .await
+    .expect("stored market");
+    assert_eq!(
+        raw,
+        ("5".into(), "150".into(), "5".into(), "5".into(), 10, 30)
+    );
+    assert_eq!(
+        count_where(&e.pool, PENDING_OUTBOX_OF_SYMBOL, &symbol).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn create_market_rejects_bad_requests_with_the_right_status() {
+    let e = market_env(vec![]).await;
+    let symbol = unique_symbol("M");
+    let with = |key: &str, value: Value| {
+        let mut body = market_body(&e, &symbol);
+        body[key] = value;
+        body
+    };
+    let cases = [
+        (with("base_ledger_symbol", json!("NOPE")), 404),
+        (with("quote_ledger_symbol", json!("NOPE")), 404),
+        (with("quote_ledger_symbol", json!(e.base_symbol)), 400),
+        (with("symbol", json!("")), 400),
+        (with("symbol", json!("   ")), 400),
+        (with("min_base_quantity", json!("0")), 400),
+        (with("min_base_quantity", json!("-1")), 400),
+        (with("min_base_quantity", json!("0.0005")), 400), // finer than the 3 decimals of base
+        (with("min_quote_quantity", json!("0")), 400),
+        (with("quantity_step", json!("0")), 400),
+        (with("price_step", json!("0")), 400),
+        (with("price_decimals", json!(-1)), 400),
+        (with("price_decimals", json!(19)), 400),
+        (with("maker_fee_bps", json!(-1)), 400),
+        (with("taker_fee_bps", json!(10001)), 400),
+    ];
+    for (body, expected) in cases {
+        let (status, _) = post_market(&e, &body).await;
+        assert_eq!(status, expected, "body: {body}");
+    }
+
+    sqlx::query("UPDATE ledgers SET enabled = false WHERE ledger_id = $1")
+        .bind(e.quote_ledger)
+        .execute(&e.pool)
+        .await
+        .expect("disable the ledger");
+    let (status, _) = post_market(&e, &market_body(&e, &symbol)).await;
+    assert_eq!(status, 400, "disabled ledger");
+
+    assert_eq!(count_where(&e.pool, MARKETS_WITH_SYMBOL, &symbol).await, 0);
+    assert!(e.calls.lock().unwrap().is_empty(), "the engine was called");
+}
+
+#[tokio::test]
+async fn create_market_conflicts_on_duplicate_symbol_or_pair() {
+    let e = market_env(vec![MarketScript::Fail(Status::unavailable("down"))]).await;
+    let symbol = unique_symbol("M");
+    let body = market_body(&e, &symbol);
+
+    assert_eq!(post_market(&e, &body).await.0, 202);
+    // re-posting after a 202 is a conflict, nothing is duplicated
+    assert_eq!(post_market(&e, &body).await.0, 409);
+    // another symbol for the same ledger pair
+    let (status, _) = post_market(&e, &market_body(&e, &unique_symbol("N"))).await;
+    assert_eq!(status, 409);
+
+    assert_eq!(count_where(&e.pool, MARKETS_WITH_SYMBOL, &symbol).await, 1);
+    assert_eq!(
+        count_where(&e.pool, PENDING_OUTBOX_OF_SYMBOL, &symbol).await,
+        1
+    );
+}
+
+async fn market_state(e: &MarketEnv, symbol: &str) -> (String, bool) {
+    sqlx::query_as(
+        "SELECT m.status::text, o.processed_at IS NOT NULL FROM markets m \
+         JOIN market_outbox o ON o.market_id = m.market_id WHERE m.symbol = $1",
+    )
+    .bind(symbol)
+    .fetch_one(&e.pool)
+    .await
+    .expect("market state")
+}
+
+#[tokio::test]
+async fn create_market_activates_when_the_engine_accepts() {
+    let e = market_env(vec![]).await;
+    let symbol = unique_symbol("M");
+
+    let (status, body) = post_market(&e, &market_body(&e, &symbol)).await;
+
+    assert_eq!(status, 201);
+    assert_eq!(body["status"], "trading");
+    assert_eq!(
+        market_state(&e, &symbol).await,
+        ("trading".to_string(), true)
+    );
+    let calls = e.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let sent = calls[0].market.as_ref().expect("market in the request");
+    assert_eq!(sent.symbol, symbol);
+    assert_eq!(
+        (sent.base_decimals, sent.quote_decimals, sent.price_decimals),
+        (3, 2, 4)
+    );
+    assert_eq!(sent.fee_account, Some(e.fee_account.as_u128().into()));
+}
+
+#[tokio::test]
+async fn create_market_stays_halted_when_the_engine_cannot_be_reached() {
+    for script in [
+        MarketScript::Fail(Status::unavailable("down")),
+        MarketScript::Hang,
+    ] {
+        let e = market_env(vec![script]).await;
+        let symbol = unique_symbol("M");
+
+        let (status, body) = post_market(&e, &market_body(&e, &symbol)).await;
+
+        assert_eq!(status, 202);
+        assert_eq!(body["status"], "halted");
+        assert_eq!(
+            market_state(&e, &symbol).await,
+            ("halted".to_string(), false)
+        );
+        assert_eq!(e.calls.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn create_market_refused_by_the_engine_is_removed() {
+    let e = market_env(vec![MarketScript::Reply(1)]).await; // BAD_DEFINITION
+    let symbol = unique_symbol("M");
+
+    let (status, _) = post_market(&e, &market_body(&e, &symbol)).await;
+
+    assert_eq!(status, 400);
+    assert_eq!(count_where(&e.pool, MARKETS_WITH_SYMBOL, &symbol).await, 0);
+    // nothing is left behind, the same symbol can be created again
+    assert_eq!(post_market(&e, &market_body(&e, &symbol)).await.0, 201);
+}
+
+#[tokio::test]
+async fn create_market_answers_that_are_not_accepted_never_activate() {
+    // HAS_OPEN_ORDERS and a number this backend doesn't know
+    for reason in [2, 99] {
+        let e = market_env(vec![MarketScript::Reply(reason)]).await;
+        let symbol = unique_symbol("M");
+
+        let (status, body) = post_market(&e, &market_body(&e, &symbol)).await;
+
+        assert_eq!(status, 202);
+        assert_eq!(body["status"], "halted");
+        assert_eq!(
+            market_state(&e, &symbol).await,
+            ("halted".to_string(), false)
+        );
+    }
+}
+
+#[tokio::test]
+async fn activate_market_does_nothing_for_a_finished_row() {
+    let e = market_env(vec![]).await;
+    let symbol = unique_symbol("M");
+    assert_eq!(post_market(&e, &market_body(&e, &symbol)).await.0, 201);
+    // someone halts it afterwards; a repeat of the activation must not turn it back on
+    sqlx::query("UPDATE markets SET status = 'halted' WHERE symbol = $1")
+        .bind(&symbol)
+        .execute(&e.pool)
+        .await
+        .expect("halt");
+    let market_id: i32 = sqlx::query_scalar("SELECT market_id FROM markets WHERE symbol = $1")
+        .bind(&symbol)
+        .fetch_one(&e.pool)
+        .await
+        .expect("market id");
+
+    v1::activate_market(&e.pool, market_id)
+        .await
+        .expect("activate");
+
+    assert_eq!(
+        market_state(&e, &symbol).await,
+        ("halted".to_string(), true)
+    );
+}
+
+// --- the market relay ---------------------------------------------------------------
+
+use backend::relay::market_relay_tick;
+
+// like relay_turn: the relay works on every aged pending market there is, so these tests take turns
+// and each starts without leftovers (only the old ones, the fresh rows belong to tests still running)
+async fn market_relay_turn(pool: &PgPool) -> tokio::sync::MutexGuard<'static, ()> {
+    let turn = RELAY_TESTS.lock().await;
+    sqlx::query(
+        "UPDATE market_outbox SET processed_at = now() \
+         WHERE processed_at IS NULL AND created_at < now() - interval '15 seconds'",
+    )
+    .execute(pool)
+    .await
+    .expect("empty the queue");
+    turn
+}
+
+// makes the outbox row old enough for the relay (it leaves a grace period for the handler)
+async fn age_market_outbox(pool: &PgPool, symbol: &str) {
+    sqlx::query(
+        "UPDATE market_outbox SET created_at = now() - interval '1 minute' \
+         WHERE market_id = (SELECT market_id FROM markets WHERE symbol = $1)",
+    )
+    .bind(symbol)
+    .execute(pool)
+    .await
+    .expect("age outbox row");
+}
+
+#[tokio::test]
+async fn the_market_relay_finishes_a_market_the_handler_could_not() {
+    let e = market_env(vec![MarketScript::Fail(Status::unavailable("down"))]).await;
+    let _turn = market_relay_turn(&e.pool).await;
+    let symbol = unique_symbol("M");
+    assert_eq!(post_market(&e, &market_body(&e, &symbol)).await.0, 202);
+    age_market_outbox(&e.pool, &symbol).await;
+
+    market_relay_tick(&e.state).await;
+
+    assert_eq!(
+        market_state(&e, &symbol).await,
+        ("trading".to_string(), true)
+    );
+    assert_eq!(e.calls.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn the_market_relay_leaves_markets_inside_the_grace_period_to_the_handler() {
+    let e = market_env(vec![MarketScript::Fail(Status::unavailable("down"))]).await;
+    let _turn = market_relay_turn(&e.pool).await;
+    let symbol = unique_symbol("M");
+    assert_eq!(post_market(&e, &market_body(&e, &symbol)).await.0, 202);
+
+    market_relay_tick(&e.state).await;
+
+    assert_eq!(
+        market_state(&e, &symbol).await,
+        ("halted".to_string(), false)
+    );
+    assert_eq!(e.calls.lock().unwrap().len(), 1);
+}
+
+// a halted market with its own ledger pair and an old, pending outbox row. Gives its market_id
+async fn pending_market(pool: &PgPool) -> i32 {
+    let (base_ledger, quote_ledger, fee_account) = ledgers_with_fee(pool, 2, 2).await;
+    sqlx::query_scalar::<_, i32>(
+        "WITH m AS ( \
+             INSERT INTO markets (symbol, base_ledger_id, quote_ledger_id, price_decimals, \
+                                  fee_account_id, min_base_quantity, min_quote_quantity, \
+                                  maker_fee_bps, taker_fee_bps) \
+             VALUES ($1, $2, $3, 2, $4, 1, 1, 10, 30) RETURNING market_id \
+         ), o AS ( \
+             INSERT INTO market_outbox (market_id, created_at) \
+             SELECT market_id, now() - interval '1 minute' FROM m \
+         ) SELECT market_id FROM m",
+    )
+    .bind(unique_symbol("M"))
+    .bind(base_ledger)
+    .bind(quote_ledger)
+    .bind(fee_account)
+    .fetch_one(pool)
+    .await
+    .expect("pending market")
+}
+
+#[tokio::test]
+async fn the_market_relay_goes_round_the_pending_markets() {
+    let pool = pool().await;
+    let _turn = market_relay_turn(&pool).await;
+    // the first three attempts fail, so those three stay pending
+    let down = || MarketScript::Fail(Status::unavailable("down"));
+    let (eng, calls) = market_engine(vec![down(), down(), down()]).await;
+    let state = app(&pool, &tb_client(), eng).await;
+    let mut markets = Vec::new();
+    for _ in 0..4 {
+        markets.push(pending_market(&pool).await);
+    }
+    let trading = |id: i32| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT status = 'trading' FROM markets WHERE market_id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("market status")
+        }
+    };
+
+    market_relay_tick(&state).await;
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    for id in &markets {
+        assert!(!trading(*id).await);
+    }
+
+    // the one that was never tried goes first, before the three that just failed
+    market_relay_tick(&state).await;
+    assert!(trading(markets[3]).await);
+}
+
+#[tokio::test]
+async fn the_market_relay_removes_a_market_the_engine_refuses() {
+    let pool = pool().await;
+    let _turn = market_relay_turn(&pool).await;
+    let (eng, calls) = market_engine(vec![MarketScript::Reply(1)]).await; // BAD_DEFINITION
+    let state = app(&pool, &tb_client(), eng).await;
+    let market_id = pending_market(&pool).await;
+
+    market_relay_tick(&state).await;
+
+    let left: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM markets WHERE market_id = $1) \
+              + (SELECT count(*) FROM market_outbox WHERE market_id = $1)",
+    )
+    .bind(market_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(left, 0);
+    // and it is not asked again
+    market_relay_tick(&state).await;
+    assert_eq!(calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn create_market_rejects_decimals_that_cannot_price_an_order() {
+    let e = market_env(vec![]).await;
+    let symbol = unique_symbol("M");
+    // the quote of an order is price * base / 10^(price_decimals + base_decimals - quote_decimals):
+    // with base 3 and price 4 decimals, a quote ledger with 9 gives a negative exponent
+    sqlx::query("UPDATE ledgers SET decimals = 9 WHERE ledger_id = $1")
+        .bind(e.quote_ledger)
+        .execute(&e.pool)
+        .await
+        .expect("change decimals");
+
+    let (status, _) = post_market(&e, &market_body(&e, &symbol)).await;
+
+    assert_eq!(status, 400);
+    assert_eq!(count_where(&e.pool, MARKETS_WITH_SYMBOL, &symbol).await, 0);
+    assert!(e.calls.lock().unwrap().is_empty());
 }
