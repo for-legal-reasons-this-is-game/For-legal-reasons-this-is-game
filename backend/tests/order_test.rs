@@ -491,12 +491,10 @@ async fn happy_path_reserves_then_accepts() {
     // the money moved from the user's quote account into the order's hold account
     assert_eq!(balance(&c, order.as_u128()).await, (0, RESERVED_BUY));
     assert_eq!(balance(&c, p.quote.as_u128()).await, (RESERVED_BUY, FUNDS));
+    let command_id = command_id_of(&pool, order).await.as_u128();
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0].command_id,
-        Some(proto::Id::from(command_id_of(&pool, order).await.as_u128()))
-    );
+    assert_eq!(calls[0].command_id, Some(proto::Id::from(command_id)));
 }
 
 #[tokio::test]
@@ -636,12 +634,12 @@ async fn retries_send_the_same_request_and_finish_when_the_engine_answers() {
     assert_eq!(second.submission, Submission::Accepted);
     assert!(second.finished);
 
+    // the money was reserved once
+    assert_eq!(balance(&c, order.as_u128()).await, (0, RESERVED_BUY));
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[0], calls[1]);
     assert_eq!(calls[1], calls[2]); // same command_id and the same sent_at every time
-    // and the money was reserved once
-    assert_eq!(balance(&c, order.as_u128()).await, (0, RESERVED_BUY));
 }
 
 #[tokio::test]

@@ -42,18 +42,58 @@ jobs:
         # The tests/ folder needs Postgres + TigerBeetle, so it stays out.
         run: nix develop --command cargo test --locked --lib --bins
 
-  # integration:
-  #   name: integration
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: DeterminateSystems/nix-installer-action@main
-  #     # scripts/integration-test.sh brings up throwaway Postgres + TigerBeetle
-  #     # containers, boots the backend against them, runs the suite, and tears
-  #     # it all down (dumping container/server logs on failure).
-  #     - name: integration tests
-  #       working-directory: backend
-  #       run: nix develop --command bash scripts/integration-test.sh
+  # the tests/ folder tests that need real Postgres, Redis and TigerBeetle but no engine: the
+  # engine is a fake inside the test process, and the backend binary is not started, so nothing
+  # else touches the database while they run.
+  backend-mock-tests:
+    name: backend mock tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@main
+      # same single-node, development-mode TigerBeetle as backend/scripts/integration-test.sh (the
+      # server release has to match the cn-tigerbeetle client, see the note there)
+      - name: start postgres, redis and tigerbeetle
+        run: |
+          set -euo pipefail
+          docker run -d --name pg -p 5433:5432 \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=backend \
+            postgres:16
+          docker run -d --name redis -p 6380:6379 redis:7-alpine
+          docker run -d --name tb -p 3000:3000 \
+            --security-opt seccomp=unconfined --cap-add IPC_LOCK \
+            --entrypoint /bin/sh ghcr.io/tigerbeetle/tigerbeetle:0.16.67 -c '
+              set -e
+              FILE=/tmp/0.tigerbeetle
+              [ -f "$FILE" ] || /tigerbeetle format --cluster=0 --replica=0 --replica-count=1 --development "$FILE"
+              exec /tigerbeetle start --addresses=0.0.0.0:3000 --development "$FILE"
+            '
+          wait_for() {
+            for _ in $(seq 1 60); do
+              if eval "$1" >/dev/null 2>&1; then return 0; fi
+              sleep 1
+            done
+            echo "never became ready: $1" >&2
+            return 1
+          }
+          wait_for 'docker exec pg pg_isready -U postgres -d backend -q'
+          wait_for '[ "$(docker exec redis redis-cli ping)" = PONG ]'
+          wait_for 'grep -q "listening on" <(docker logs tb 2>&1)'
+      - name: cargo test
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5433/backend
+          REDIS_URL: redis://127.0.0.1:6380
+          TB_CLUSTER_ID: "0"
+          TB_IP_ADRESSES: 127.0.0.1:3000
+        run: nix develop --command cargo test --locked --test consumer_test --test order_test
+      - name: dump container logs
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker logs --tail 50 pg || true
+          docker logs --tail 50 redis || true
+          docker logs tb || true
 
   clippy:
     name: clippy
