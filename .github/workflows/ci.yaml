@@ -38,7 +38,9 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - name: cargo test
         working-directory: ${{ matrix.dir }}
-        run: nix develop --command cargo test --locked --bins
+        # --lib runs the unit tests inside src/ (no database needed), --bins the binaries' tests.
+        # The tests/ folder needs Postgres + TigerBeetle, so it stays out.
+        run: nix develop --command cargo test --locked --lib --bins
 
   # integration:
   #   name: integration

@@ -324,6 +324,7 @@ fn transfer_kind(t: &tb::Transfer) -> &'static str {
         Ok(TransferCodeType::FeeCollection) => "fee",
         Ok(TransferCodeType::ProvisioningFromSource) => "deposit",
         Ok(TransferCodeType::Hold) => "hold",
+        Ok(TransferCodeType::Refund) => "refund",
         Ok(TransferCodeType::CloseAccount) | Err(_) => "unknown",
     }
 }

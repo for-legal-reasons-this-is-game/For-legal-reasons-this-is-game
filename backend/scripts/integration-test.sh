@@ -236,3 +236,6 @@ fi
 # --- tests ---------------------------------------------------------------
 echo "==> running integration tests"
 DATABASE_URL="$DATABASE_URL" cargo test --locked --test integration_test
+
+echo "==> running consumer tests"
+DATABASE_URL="$DATABASE_URL" cargo test --locked --test consumer_test

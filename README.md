@@ -254,6 +254,7 @@ AI tools were used for:
 - Turning meeting notes into a structured README/checklist
 - Drafting documentation templates and contributor-facing checklists
 - Brainstorming architecture options and tradeoffs (frameworks, messaging, caching)
+- Developing the consumer, using the AI-DLC/Superpowers workflow
 
 > AI-generated suggestions are reviewed by the team before being adopted.
 
