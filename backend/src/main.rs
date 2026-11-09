@@ -67,6 +67,8 @@ async fn main() {
 
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
+    tokio::task::spawn(relay::order_relay_loop(state.clone()));
+    tokio::task::spawn(relay::market_relay_loop(state.clone()));
 
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
@@ -74,6 +76,7 @@ async fn main() {
         .route("/users/{user_id}/accounts", post(v1::create_account))
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/users/{user_id}/orders", get(v1::list_user_orders))
+        .route("/users/{user_id}/orders", post(v1::create_order))
         .route("/accounts/{account_id}", get(v1::fetch_account))
         .route("/accounts/{account_id}/close", post(v1::close_account))
         .route("/accounts/{account_id}/reopen", post(v1::reopen_account))
@@ -91,6 +94,7 @@ async fn main() {
         .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .route("/markets", get(v1::list_markets))
+        .route("/markets", post(v1::create_market))
         .route("/markets/{symbol}", get(v1::fetch_market))
         .route("/markets/{symbol}/orders", get(v1::list_market_orders))
         .route("/markets/{symbol}/trades", get(v1::list_market_trades))

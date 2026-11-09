@@ -27,6 +27,12 @@ pub fn refund_transfer_id(order_id: u128) -> u128 {
     derive(b"refund", order_id, 0)
 }
 
+// id of the transfer that moves the reservation from the user's account to an order's hold account
+// (a new tag, so it can never equal the refund of the same order)
+pub fn reservation_transfer_id(order_id: u128) -> u128 {
+    derive(b"reserve", order_id, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,6 +64,33 @@ mod tests {
     #[test]
     fn refund_id_differs_from_trade_leg_id() {
         assert_ne!(refund_transfer_id(7), trade_leg_transfer_id(7, 1));
+    }
+
+    #[test]
+    fn reservation_id_differs_from_refund_and_trade_leg_ids() {
+        for src in [7u128, u128::MAX] {
+            let reserve = reservation_transfer_id(src);
+            assert_ne!(reserve, refund_transfer_id(src));
+            for leg in 1..=4 {
+                assert_ne!(reserve, trade_leg_transfer_id(src, leg));
+            }
+        }
+    }
+
+    #[test]
+    fn reservation_id_is_deterministic_and_never_zero_or_max() {
+        assert_eq!(reservation_transfer_id(42), reservation_transfer_id(42));
+        for src in [0u128, 1, u128::MAX] {
+            let id = reservation_transfer_id(src);
+            assert_ne!(id, 0);
+            assert_ne!(id, u128::MAX);
+        }
+    }
+
+    #[test]
+    fn reservation_id_keeps_the_time_prefix() {
+        let t = 0xAAAA_BBBB_CCCC_DDDD_0000_0000_0000_0001u128;
+        assert_eq!(reservation_transfer_id(t) >> 64, t >> 64);
     }
 
     #[test]

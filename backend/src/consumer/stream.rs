@@ -98,7 +98,7 @@ pub struct SourceSettings {
     pub jitter: fn() -> f64,
 }
 
-fn clock_jitter() -> f64 {
+pub fn clock_jitter() -> f64 {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.subsec_nanos())

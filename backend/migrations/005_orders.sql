@@ -41,6 +41,17 @@ CREATE INDEX IF NOT EXISTS orders_user_created ON orders(user_id, created_at DES
 CREATE INDEX IF NOT EXISTS orders_market_open ON orders(market_id)
 WHERE submission <> 'rejected' AND (status IS NULL OR status IN (1, 2, 6));
 
+create table if not exists order_outbox(
+  id bigint generated always as identity primary key,
+  order_id uuid not null unique references orders(order_id),
+  created_at timestamptz not null default now(),
+  last_attempt_at timestamptz, -- null means never tried
+  processed_at timestamptz -- null means still pending
+);
+-- partial index so the relay only looks at the pending rows, in the order it takes them
+CREATE INDEX IF NOT EXISTS order_outbox_unprocessed
+ON order_outbox(last_attempt_at NULLS FIRST, id) WHERE processed_at IS NULL;
+
 -- this gets called when orders ar updated to keep the time correct, it just changes the updated at row
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN

@@ -23,6 +23,7 @@ uuid = { version = "1.24.0", features = ["serde"] }
 proto = {path = "../proto"}
 redis = { version = "1.8.1", features = ["tokio-comp", "connection-manager"] }
 tokio-util = "0.7"
+primitive-types = { version = "0.14.0", default-features = false }
 [dev-dependencies]
 tokio = { version = "1.53.0", features = ["full", "test-util"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "native-tls"] }

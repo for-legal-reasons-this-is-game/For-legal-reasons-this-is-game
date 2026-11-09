@@ -406,7 +406,7 @@ fn plan_trade(
 }
 
 // ceil(quote * bps / 10000) without a 256-bit intermediate; saturates instead of overflowing
-fn fee_cap(quote: u128, bps: i32) -> u128 {
+pub fn fee_cap(quote: u128, bps: i32) -> u128 {
     let bps = bps.max(0) as u128;
     let whole = (quote / 10_000).saturating_mul(bps);
     let rest = (quote % 10_000) * bps;
