@@ -1,0 +1,138 @@
+name: k8s_integration
+
+# Deploys the stack into a throwaway kind cluster and runs the backend
+# integration suite against it. Slow, so it only runs for PRs into main and
+# for what lands on main; the fast docker-based check stays in
+# backend/scripts/integration-test.sh.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  k8s-integration:
+    name: k8s integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The test binary links the host's openssl, so it is built with the
+      # runner's own toolchain. Inside `nix develop` it would be linked
+      # against Nix's glibc and fail to start on the runner's older libc.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # proto/build.rs needs protoc (the Nix dev shell used to provide it)
+      - name: install protoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+
+      # Build context is the repo root for both images (they need ../proto).
+      - name: build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          tags: backend:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: build tradingengine image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tradingengine/Dockerfile
+          tags: tradingengine:latest
+          load: true
+          cache-from: type=gha,scope=tradingengine
+          cache-to: type=gha,scope=tradingengine,mode=max
+
+      - name: create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          # `kind load` below defaults to a cluster named "kind"
+          cluster_name: kind
+
+      - name: load images into kind
+        run: kind load docker-image backend:latest tradingengine:latest
+
+      - name: deploy dependencies
+        run: |
+          set -euo pipefail
+          kubectl apply -f k8s/namespace.yaml
+          # backend-secrets is read by postgres and the backend. The CI
+          # TigerBeetle is a single node, so narrow TB_HOSTS down to it.
+          kubectl apply -f backend/k8s/secret.yaml
+          kubectl -n transcendence patch secret backend-secrets --type merge \
+            -p '{"stringData":{"TB_HOSTS":"tb-node-0.tigerbeetle.svc.cluster.local:3000"}}'
+          kubectl apply -f k8s/postgress_backend_pvc.yaml \
+                        -f k8s/postgress_backend_deployment.yaml \
+                        -f k8s/postgress_backend_service.yaml \
+                        -f k8s/redis_backend_pvc.yaml \
+                        -f k8s/redis_backend_deployment.yaml \
+                        -f k8s/redis_backend_service.yaml
+          kubectl apply -f .github/k8s-ci/tigerbeetle.yaml
+          kubectl -n transcendence rollout status deploy/backend-postgress --timeout=180s
+          kubectl -n transcendence rollout status deploy/backend-redis --timeout=180s
+          kubectl -n tigerbeetle rollout status statefulset/tigerbeetle --timeout=180s
+
+      # The backend resolves TigerBeetle's DNS name on start and connects to
+      # Postgres for migrations, so it goes up after the dependencies are ready.
+      # The HPA is skipped on purpose: it needs metrics-server and would scale
+      # the backend to 2 replicas.
+      - name: deploy tradingengine and backend
+        run: |
+          set -euo pipefail
+          kubectl apply -f .github/k8s-ci/tradingengine.yaml
+          kubectl apply -f backend/k8s/deployment.yaml -f backend/k8s/service.yaml
+          kubectl -n transcendence rollout status deploy/tradingengine --timeout=180s
+          kubectl -n transcendence rollout status deploy/backend --timeout=180s
+
+      # The tests talk to Postgres, TigerBeetle and Redis directly as well as
+      # to the backend's HTTP API, so all four are forwarded to localhost.
+      - name: run integration tests
+        run: |
+          set -euo pipefail
+          kubectl -n transcendence port-forward svc/backend 8000:8000 &
+          kubectl -n transcendence port-forward svc/backend-postgress 5432:5432 &
+          kubectl -n transcendence port-forward svc/backend-redis 6379:6379 &
+          kubectl -n tigerbeetle port-forward svc/tb-node-0 3000:3000 &
+
+          # Kubernetes "Ready" does not mean the backend finished its
+          # migrations, so wait for the API itself.
+          for _ in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/users || true)" = "200" ] && break
+            sleep 1
+          done
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/users)" = "200" ]
+
+          cd backend
+          export BACKEND_URL=http://127.0.0.1:8000
+          export DATABASE_URL=postgres://test:test@127.0.0.1:5432/test
+          export REDIS_URL=redis://127.0.0.1:6379
+          export TB_CLUSTER_ID=0
+          export TB_IP_ADRESSES=127.0.0.1:3000
+          cargo test --locked --test integration_test
+
+      - name: dump cluster state
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          for ns in transcendence tigerbeetle; do
+            kubectl -n "$ns" describe pods || true
+            for p in $(kubectl -n "$ns" get pods -o name); do
+              echo "----- $ns/$p -----"
+              kubectl -n "$ns" logs "$p" --all-containers --tail=100 || true
+            done
+          done

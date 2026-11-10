@@ -4,34 +4,26 @@ package trading.v1;
 import "google/protobuf/timestamp.proto";
 import "common.proto";
 
-message SubscribeEventsRequest {
-  //this is used for re-connections; restart the processing after
-  //this sequence number. 0 is everything, so the bakend sends after_sequence 0 at start.
-  uint64 after_sequence = 1;
-  // the epoch the after_sequence belongs to, 
-  // a missmatch against the engine's current epoch should force a snapshot
-  // regardless of what after_sequence says. 
-  uint64 engine_epoch = 2;
-}
+// There is no resume position: every subscription starts with a replay of the
+// whole history the engine retains, then continues live. The consumer is
+// idempotent, so it just skips what it already recorded.
+// The consumer only talks to the router, which subscribes to every engine
+// instance and merges the streams.
+message SubscribeEventsRequest {}
 
 message EventItem {
   // it's basically a counter of each individual "frame" of the processing.
-  // you need to increase it every time you return a ExecutionReport(except RESTATED) or a TradeSettlement
-  // BUT YOU HAVE TO SET IT TO 0 ON SNAPSHOT LINES, so:
-  // 1. ExecutionReport with exec_type RESTATED
-  // 2. CONTROL {SNAPSHOT_BEGIN}
-  // 3. CONTROL {SNAPSHOT_END}
+  // you need to increase it every time you return a ExecutionReport or a TradeSettlement.
+  // The counter is per engine instance (not per market), and it keeps counting
+  // across restarts of that instance (it lives in Redis with the event history).
+  // It numbers the history on the engine's side; nobody resumes from it.
   uint64 sequence = 1;
-  // process start time in unix nanos
-  uint64 engine_epoch = 2;
   google.protobuf.Timestamp engine_time = 3;
-  // empty when it's Control
   string market_symbol = 4;
 
   oneof body {
     ExecutionReport execution_report = 10;
     TradeSettlement trade_settlement = 11;
-    Control control = 12;
   }
 }
 
@@ -79,6 +71,10 @@ message ExecutionReport {
 // and it contains both sides. Emmit this first, before the
 // two execution reports
 message TradeSettlement {
+  // A time-ordered unique id (tb::id() or UUIDv7), so it never collides across
+  // engine instances. It must strictly increase in the order the trades
+  // happened within one instance (UUIDv7 needs a counter inside one
+  // millisecond). The backend orders trades with the same engine_time by it.
   Id trade_id = 1;
   Uint128 price = 2;
   Uint128 base_quantity = 3;
@@ -102,16 +98,6 @@ message TradeSettlement {
   Id fee_account = 16;
 }
 
-message Control {
-  enum Kind {
-    KIND_UNSPECIFIED = 0;
-    KIND_SNAPSHOT_BEGIN = 1;
-    KIND_SNAPSHOT_END = 2;
-  }
-  Kind kind = 1;
-  uint64 as_of_sequence = 2;
-}
-
 // This is the second stream. it's there
 // to derive the data needed to display
 
@@ -119,9 +105,8 @@ message SubscribeMarketDataRequest{}
 
 message MarketDataItem {
   // This is a separate counter than the sequence of the event
-  // item, its only to detect gaps. The fw will always re-snapshot
+  // item, its only to detect gaps. On a gap the display side re-snapshots (BookSnapshot)
   uint64 md_sequence = 1;
-  uint64 engine_epoch = 2;
   google.protobuf.Timestamp engine_time = 3;
   string market_symbol = 4;
 

@@ -84,7 +84,9 @@ message PlaceOrderResponse {
   //needs to be set after you try to match 
   // the order for the first time immediately after the request, 
   // important for the trading engine.
-  // IMPORTANT: THIS IS ONLY FOR THE IMMEDIATE REPLY TO USER!! 
+  // reject_reason INTERNAL_ERROR means the engine crashed/stopped before
+  // processing this order: it never existed, so the backend refunds it.
+  // IMPORTANT: THIS IS ONLY FOR THE IMMEDIATE REPLY TO USER!!
   // settlement only happens on TradeSettlement, this is the only way
   // we can really report anything to the user besides just saying "we got your order now wait"
   OrderStatus status = 4;

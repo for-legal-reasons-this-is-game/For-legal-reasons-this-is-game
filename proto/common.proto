@@ -75,14 +75,11 @@ enum ExecType {
   EXEC_TYPE_CANCELLED = 4;
   EXEC_TYPE_EXPIRED = 5;
   EXEC_TYPE_REPLACED = 6;
-// its for when the backend connects to the engine, and the engine lets
-// the backend know what's the current state of things, so this one 
-// doesn't force the backend to do anything, it just copies the state of the order to be in sync
-  EXEC_TYPE_RESTATED = 7;
 }
 
-// This is only returned synchronously, because these rejections
-// can be determined the moment the command comes
+// This is only returned synchronously, in the response to the command.
+// Almost all of these can be determined the moment the command comes;
+// INTERNAL_ERROR is the exception, see below.
 // also Unspecified == accepted
 enum RejectReason {
   REJECT_REASON_UNSPECIFIED = 0;
@@ -95,6 +92,11 @@ enum RejectReason {
   REJECT_REASON_NOT_ORDER_OWNER = 7;
   REJECT_REASON_DUPLICATE_COMMAND = 8; // command_id is the same as another one
   REJECT_REASON_UNSUPPORTED  = 9; // in case i missed any other reason
+  // The engine panicked or was told to stop while this command was still
+  // queued, so it was NOT processed. The engine answers every queued command
+  // with this before it saves its state and exits. A cancel/modify rejected
+  // with this leaves the order untouched.
+  REJECT_REASON_INTERNAL_ERROR = 10;
 }
 
 // These is when the commands are valid and an order exists but its

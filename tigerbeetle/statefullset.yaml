@@ -30,6 +30,7 @@ spec:
               REPLICA_INDEX=$(echo "${HOSTNAME}" | awk -F'-' '{print $NF}')
               DATA_FILE="/var/lib/tigerbeetle/cluster_0_${REPLICA_INDEX}.tigerbeetle"
 
+              sleep $((5 * REPLICA_INDEX))
               if [ ! -f "${DATA_FILE}" ]; then
                 /tigerbeetle format \
                   --cluster=0 \
@@ -63,12 +64,22 @@ spec:
               DATA_FILE="/var/lib/tigerbeetle/cluster_0_${REPLICA_INDEX}.tigerbeetle"
 
               # Kubernetes automatically injects TB_NODE_X_SERVICE_HOST with the static IPv4 of each Service!
-              ADDRESSES="${TB_NODE_0_SERVICE_HOST}:3000,${TB_NODE_1_SERVICE_HOST}:3000,${TB_NODE_2_SERVICE_HOST}:3000"
+              # A replica cannot bind to its own Service ClusterIP (not assigned to the pod),
+              # so use 0.0.0.0 for our own slot and the Service IPs for the peers.
+              A0="${TB_NODE_0_SERVICE_HOST}:3000"
+              A1="${TB_NODE_1_SERVICE_HOST}:3000"
+              A2="${TB_NODE_2_SERVICE_HOST}:3000"
+              case "${REPLICA_INDEX}" in
+                0) A0="0.0.0.0:3000" ;;
+                1) A1="0.0.0.0:3000" ;;
+                2) A2="0.0.0.0:3000" ;;
+              esac
+              ADDRESSES="${A0},${A1},${A2}"
               echo "Starting replica ${REPLICA_INDEX} with static IPs: ${ADDRESSES}"
 
               exec /tigerbeetle start \
                 --addresses="${ADDRESSES}" \
-                --cache-grid=2500MiB\
+                --cache-grid=512MiB \
                 --development \
                 "${DATA_FILE}"
           ports:
@@ -77,10 +88,10 @@ spec:
           resources:
             requests:
               cpu: "50m"
-              memory: "2500Mi"
+              memory: "1500Mi"
             limits:
               cpu: "500m"
-              memory: "2500Mi"
+              memory: "2Gi"
           volumeMounts:
             - name: tb-data
               mountPath: /var/lib/tigerbeetle

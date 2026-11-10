@@ -45,6 +45,11 @@ async fn main() {
         .await
         .expect("Migration failed");
 
+    let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set");
+    let redis = connect_redis(&redis_url)
+        .await
+        .expect("Failed to connect to Redis");
+
     let engine_url =
         env::var("ENGINE_URL").unwrap_or_else(|_| "http://tradingengine:50051".to_string());
     let engine_client = EngineClient::new(&engine_url).expect("Invalid ENGINE_URL");
@@ -52,6 +57,7 @@ async fn main() {
     let state = AppState {
         pg_connections,
         tb_client,
+        redis,
         engine_client,
     };
 
@@ -61,6 +67,8 @@ async fn main() {
 
     // the task loops forever, but we will need to join it on ctrl c
     tokio::task::spawn(relay::relay_loop(state.clone()));
+    tokio::task::spawn(relay::order_relay_loop(state.clone()));
+    tokio::task::spawn(relay::market_relay_loop(state.clone()));
 
     let v1 = Router::new()
         .route("/users", post(v1::create_user))
@@ -68,6 +76,7 @@ async fn main() {
         .route("/users/{user_id}/accounts", post(v1::create_account))
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/users/{user_id}/orders", get(v1::list_user_orders))
+        .route("/users/{user_id}/orders", post(v1::create_order))
         .route("/accounts/{account_id}", get(v1::fetch_account))
         .route("/accounts/{account_id}/close", post(v1::close_account))
         .route("/accounts/{account_id}/reopen", post(v1::reopen_account))
@@ -85,6 +94,7 @@ async fn main() {
         .route("/ledgers/{symbol}", patch(v1::set_ledger_enabled))
         .route("/ledgers/{symbol}", get(v1::fetch_ledger))
         .route("/markets", get(v1::list_markets))
+        .route("/markets", post(v1::create_market))
         .route("/markets/{symbol}", get(v1::fetch_market))
         .route("/markets/{symbol}/orders", get(v1::list_market_orders))
         .route("/markets/{symbol}/trades", get(v1::list_market_trades))
@@ -100,6 +110,14 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
+}
+
+async fn connect_redis(url: &str) -> redis::RedisResult<redis::aio::ConnectionManager> {
+    let client = redis::Client::open(url)?;
+    let mut conn = redis::aio::ConnectionManager::new(client).await?;
+    let _pong: String = redis::cmd("PING").query_async(&mut conn).await?;
+    //println!("Redis connected: {pong}");
+    Ok(conn)
 }
 
 async fn shutdown_signal() {

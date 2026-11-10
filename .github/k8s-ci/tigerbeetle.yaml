@@ -1,0 +1,70 @@
+# CI-only TigerBeetle: a single development-mode replica on throwaway storage.
+# The real manifests in tigerbeetle/ run 3 replicas on PVCs, which is far too
+# heavy for a CI runner. The names (namespace `tigerbeetle`, service
+# `tb-node-0`) match the production ones so the backend's TB_HOSTS resolves the
+# same way; the workflow narrows TB_HOSTS down to this one node.
+#
+# Keep the image tag in step with the cn-tigerbeetle client version (see the
+# note in backend/scripts/integration-test.sh): a client/server mismatch fails
+# the handshake with "client release too low/high".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tigerbeetle
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tb-node-0
+  namespace: tigerbeetle
+spec:
+  selector:
+    app: tigerbeetle
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tigerbeetle
+  namespace: tigerbeetle
+spec:
+  serviceName: tb-node-0
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tigerbeetle
+  template:
+    metadata:
+      labels:
+        app: tigerbeetle
+    spec:
+      containers:
+        - name: tigerbeetle
+          image: ghcr.io/tigerbeetle/tigerbeetle:0.16.67
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+            capabilities:
+              add: ["IPC_LOCK"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              FILE=/data/0.tigerbeetle
+              [ -f "$FILE" ] || /tigerbeetle format --cluster=0 --replica=0 --replica-count=1 --development "$FILE"
+              exec /tigerbeetle start --addresses=0.0.0.0:3000 --cache-grid=256MiB --development "$FILE"
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

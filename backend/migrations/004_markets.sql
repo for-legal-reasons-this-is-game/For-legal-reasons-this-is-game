@@ -20,3 +20,14 @@ CREATE TABLE IF NOT EXISTS markets (
   UNIQUE (base_ledger_id, quote_ledger_id),
   FOREIGN KEY (fee_account_id, quote_ledger_id) REFERENCES accounts(account_id, account_ledger_id)
 );
+
+CREATE TABLE IF NOT EXISTS market_outbox (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  market_id INTEGER NOT NULL UNIQUE REFERENCES markets(market_id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_attempt_at TIMESTAMPTZ, -- null means never tried
+  processed_at TIMESTAMPTZ -- null means still pending
+ );
+-- partial index so the relay only looks at the pending rows, in the order it takes them
+CREATE INDEX IF NOT EXISTS market_outbox_unprocessed
+ON market_outbox(last_attempt_at NULLS FIRST, id) WHERE processed_at IS NULL;

@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-postgress
+  namespace: transcendence
+  labels:
+    app: backend-postgress
+spec:
+  selector:
+    app: backend-postgress
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
