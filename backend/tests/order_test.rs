@@ -110,8 +110,10 @@ struct World {
     quote_source: u128,
 }
 
-// two ledgers (their ledger_id is also the tigerbeetle ledger) with the given decimals and the fee
-// account of the quote one. Gives (base ledger, quote ledger, fee account)
+/// Two ledgers (their `ledger_id` is also the TigerBeetle ledger) with the given decimals, and
+/// the fee account of the quote one.
+///
+/// Returns `(base ledger, quote ledger, fee account)`.
 async fn ledgers_with_fee(
     pool: &PgPool,
     base_decimals: i16,
@@ -153,7 +155,7 @@ async fn ledgers_with_fee(
     (base_ledger, quote_ledger, fee_account)
 }
 
-// two ledgers, a fee account and a trading market
+/// Two ledgers, a fee account and a trading market.
 async fn world(pool: &PgPool, c: &tb::Client) -> World {
     let (base_ledger, quote_ledger, fee_account) = ledgers_with_fee(pool, 2, 2).await;
 
@@ -202,7 +204,8 @@ struct Party {
 
 const FUNDS: u128 = 1_000_000;
 
-// a user with an active account on each ledger, in postgres and in tigerbeetle, with FUNDS in each
+/// A user with an active account on each ledger, in Postgres and in TigerBeetle, with [`FUNDS`]
+/// in each.
 async fn party(pool: &PgPool, c: &tb::Client, w: &World) -> Party {
     let user = Uuid::new_v4();
     sqlx::query("INSERT INTO users (user_id, user_name) VALUES ($1, $2)")
@@ -249,8 +252,10 @@ async fn party(pool: &PgPool, c: &tb::Client, w: &World) -> Party {
     }
 }
 
-// a limit order for 1000 base at 1000, in the state the handler leaves it in after its first
-// transaction: `reserving`, with its outbox row. `reserved` is what it has to reserve
+/// A limit order for 1000 base at 1000, in the state the handler leaves it in after its first
+/// transaction: `reserving`, with its outbox row.
+///
+/// `reserved` is what it has to reserve.
 async fn insert_order(pool: &PgPool, w: &World, p: &Party, buyer: bool, reserved: u128) -> Uuid {
     let order_id = Uuid::new_v4();
     sqlx::query(
@@ -279,7 +284,7 @@ async fn insert_order(pool: &PgPool, w: &World, p: &Party, buyer: bool, reserved
     order_id
 }
 
-// (submission, reject_reason, reject_detail, status)
+/// Returns `(submission, reject_reason, reject_detail, status)`.
 async fn order_state(
     pool: &PgPool,
     id: Uuid,
@@ -305,7 +310,7 @@ async fn command_id_of(pool: &PgPool, id: Uuid) -> Uuid {
 
 use proto::trading_engine_server::{TradingEngine, TradingEngineServer};
 
-// what the fake does with the next PlaceOrder it gets
+/// What the fake engine does with the next [`PlaceOrder`](EngineClient::place_order) it gets.
 enum Script {
     Reply(proto::PlaceOrderResponse),
     Fail(Status),
@@ -315,7 +320,8 @@ enum Script {
 
 type Calls = Arc<Mutex<Vec<proto::PlaceOrderRequest>>>;
 
-// what the fake does with the next SetMarket it gets (nothing scripted: accepted)
+/// What the fake engine does with the next [`SetMarket`](EngineClient::set_market) it gets. With
+/// nothing scripted, it's accepted.
 enum MarketScript {
     Reply(i32), // the reject_reason to answer with
     Fail(Status),
@@ -425,7 +431,8 @@ fn rejected(reason: i32) -> proto::PlaceOrderResponse {
     }
 }
 
-// serves the scripted answers (the n-th PlaceOrder gets the n-th script) and gives the client for it
+/// Serves the scripted answers (the n-th `PlaceOrder` gets the n-th script) and gives the client
+/// for it.
 async fn engine(scripts: Vec<Script>) -> (EngineClient, Calls) {
     let calls: Calls = Arc::new(Mutex::new(Vec::new()));
     let fake = FakeEngine {
@@ -437,7 +444,7 @@ async fn engine(scripts: Vec<Script>) -> (EngineClient, Calls) {
     (serve(fake).await, calls)
 }
 
-// the same, for the SetMarket the market endpoint sends
+/// The same as [`engine`], for the `SetMarket` that the market endpoint sends.
 async fn market_engine(scripts: Vec<MarketScript>) -> (EngineClient, MarketCalls) {
     let market_calls: MarketCalls = Arc::new(Mutex::new(Vec::new()));
     let fake = FakeEngine {
@@ -745,8 +752,8 @@ async fn two_workers_on_one_order_apply_one_reservation_and_one_verdict() {
 
 // --- POST /users/{user_id}/orders ----------------------------------------------------
 
-// everything a request test needs: a seeded market and user, a fake engine and the handler served
-// on a local port
+/// Everything a request test needs: a seeded market and user, a fake engine, and the handler
+/// served on a local port.
 struct Env {
     pool: PgPool,
     c: Arc<tb::Client>,
@@ -779,7 +786,7 @@ async fn env(scripts: Vec<Script>) -> Env {
     }
 }
 
-// 10.00 base at 10.00 (all with 2 decimals): worth 100.00 quote, plus the 30 bps fee = 100.30
+/// 10.00 base at 10.00 (all with 2 decimals): worth 100.00 quote, plus the 30 bps fee = 100.30.
 fn limit_buy(e: &Env, key: Uuid) -> Value {
     json!({
         "idempotency_key": key.to_string(),
@@ -1036,7 +1043,7 @@ async fn an_account_on_the_wrong_ledger_returns_400() {
     assert_eq!(status, 400);
 }
 
-// a fresh limit buy with one field changed, the status it gets
+/// A fresh limit buy with one field changed. Returns the status it gets.
 async fn status_with(e: &Env, field: &str, value: &str) -> u16 {
     let mut body = limit_buy(e, Uuid::new_v4());
     body[field] = json!(value);
@@ -1110,8 +1117,8 @@ async fn a_gtd_order_in_the_future_is_sent_with_its_expiry() {
 
 use backend::relay::order_relay_tick;
 
-// the relay works on every pending order there is, so the relay tests take turns and each starts
-// with an empty queue
+/// The relay works on every pending order there is, so the relay tests take turns, and each
+/// starts with an empty queue.
 static RELAY_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn relay_turn(pool: &PgPool) -> tokio::sync::MutexGuard<'static, ()> {
@@ -1123,7 +1130,8 @@ async fn relay_turn(pool: &PgPool) -> tokio::sync::MutexGuard<'static, ()> {
     turn
 }
 
-// makes the order's outbox row old enough for the relay (it leaves a grace period for the handler)
+/// Makes the order's outbox row old enough for the relay (it leaves a grace period for the
+/// handler).
 async fn age_outbox(pool: &PgPool, order: Uuid) {
     sqlx::query(
         "UPDATE order_outbox SET created_at = now() - interval '1 minute' WHERE order_id = $1",
@@ -1429,8 +1437,8 @@ struct MarketEnv {
     fee_account: Uuid,
 }
 
-// two ledgers (base with 3 decimals, quote with 2) with the quote one's fee account, and the
-// endpoint served with a fake engine that answers SetMarket as scripted
+/// Two ledgers (base with 3 decimals, quote with 2) with the quote one's fee account, and the
+/// endpoint served with a fake engine that answers `SetMarket` as scripted.
 async fn market_env(scripts: Vec<MarketScript>) -> MarketEnv {
     let (pool, c) = (pool().await, tb_client());
     let (base_ledger, quote_ledger, fee_account) = ledgers_with_fee(&pool, 3, 2).await;
@@ -1465,7 +1473,8 @@ async fn market_env(scripts: Vec<MarketScript>) -> MarketEnv {
     }
 }
 
-// base has 3 decimals and quote 2: minimum 0.005 base is 5, minimum 1.50 quote is 150, steps 5 and 5
+/// Base has 3 decimals and quote 2: the minimum 0.005 base is 5, the minimum 1.50 quote is 150,
+/// and both steps are 5.
 fn market_body(e: &MarketEnv, symbol: &str) -> Value {
     json!({
         "symbol": symbol,
@@ -1717,8 +1726,9 @@ async fn activate_market_does_nothing_for_a_finished_row() {
 
 use backend::relay::market_relay_tick;
 
-// like relay_turn: the relay works on every aged pending market there is, so these tests take turns
-// and each starts without leftovers (only the old ones, the fresh rows belong to tests still running)
+/// Like [`relay_turn`]: the relay works on every aged pending market there is, so these tests
+/// take turns, and each starts without leftovers (only the old ones; the fresh rows belong to
+/// tests that are still running).
 async fn market_relay_turn(pool: &PgPool) -> tokio::sync::MutexGuard<'static, ()> {
     let turn = RELAY_TESTS.lock().await;
     sqlx::query(
@@ -1731,7 +1741,7 @@ async fn market_relay_turn(pool: &PgPool) -> tokio::sync::MutexGuard<'static, ()
     turn
 }
 
-// makes the outbox row old enough for the relay (it leaves a grace period for the handler)
+/// Makes the outbox row old enough for the relay (it leaves a grace period for the handler).
 async fn age_market_outbox(pool: &PgPool, symbol: &str) {
     sqlx::query(
         "UPDATE market_outbox SET created_at = now() - interval '1 minute' \
@@ -1776,7 +1786,8 @@ async fn the_market_relay_leaves_markets_inside_the_grace_period_to_the_handler(
     assert_eq!(e.calls.lock().unwrap().len(), 1);
 }
 
-// a halted market with its own ledger pair and an old, pending outbox row. Gives its market_id
+/// A halted market with its own ledger pair and an old, pending outbox row. Returns its
+/// `market_id`.
 async fn pending_market(pool: &PgPool) -> i32 {
     let (base_ledger, quote_ledger, fee_account) = ledgers_with_fee(pool, 2, 2).await;
     sqlx::query_scalar::<_, i32>(

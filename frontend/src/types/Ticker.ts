@@ -2,11 +2,20 @@
 
 export type Ticker = {
     market: string;
+    /**
+     * Price of the latest trade ever. Null only if the market never traded.
+     */
     last_price: string | null;
     open: string | null;
     high: string | null;
     low: string | null;
+    /**
+     * `last_price - open`
+     */
     change: string | null;
+    /**
+     * `change / open * 100`
+     */
     change_percent: string | null;
     base_volume: string;
     quote_volume: string;

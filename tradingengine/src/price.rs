@@ -1,6 +1,7 @@
 use crate::error::{EngineError, Result};
 
-// from_minor_units is the smallest value a currency cents for euro and usd, satoshi for btc
+/// A price in minor units: the smallest unit of a currency, like cents for EUR and USD,
+/// or satoshis for BTC. See [`Price::from_minor_units`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Price(u128);
 impl Price {

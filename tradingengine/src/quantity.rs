@@ -11,12 +11,14 @@ use crate::error::{EngineError, Result};
 pub struct BaseQuantity(u128);
 
 impl BaseQuantity {
-    // quantities can be zero after being filled
+    /// Quantities can be zero after being filled.
     pub const ZERO: BaseQuantity = BaseQuantity(0);
 
-    // minor units in case of quanity means a whole number including the
-    // smallest decimal value a currency can hold 5 dollars are saved as 500
-    // this scale is set only once per market
+    /// Creates a quantity from minor units.
+    ///
+    /// For a quantity, minor units are a whole number that counts the smallest unit the
+    /// currency can hold, so 5 dollars are saved as 500. This scale is set only once per
+    /// market.
     pub fn from_minor_units(minor_units: u128) -> BaseQuantity {
         BaseQuantity(minor_units)
     }

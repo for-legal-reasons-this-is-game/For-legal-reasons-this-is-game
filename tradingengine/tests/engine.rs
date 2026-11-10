@@ -12,7 +12,7 @@ fn market(symbol: &str, base_decimals: u32, quote_decimals: u32, price_decimals:
     }
 }
 
-// satoshis, cents, and a price written in cents: k = 2 + 8 - 2 = 8
+/// A market in satoshis and cents, with prices written in cents: k = 2 + 8 - 2 = 8.
 fn btc_usd() -> Market {
     market("BTC-USD", 8, 2, 2)
 }
@@ -70,8 +70,9 @@ fn markets_are_kept_apart_by_symbol() {
     assert!(engine.market("SOL-USD").is_none());
 }
 
-// which definitions are bad is tested on MarketInfo in tests/market.rs,
-// here only that a bad one comes back as BAD_DEFINITION and adds nothing
+/// Which definitions are bad is tested on
+/// [`MarketInfo`](tradingengine::market::MarketInfo) in `tests/market.rs`. This test only
+/// checks that a bad one comes back as `BAD_DEFINITION` and adds nothing.
 #[test]
 fn a_scale_above_38_is_a_bad_definition() {
     let mut engine = Engine::new();
