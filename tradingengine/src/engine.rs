@@ -6,23 +6,24 @@ use crate::error::{EngineError, Result};
 use crate::market::MarketInfo;
 use crate::wire::required;
 
-// the engine holds a hashmap of the key pair value of each market here
-// String is the name of the Market: btc-usd 
-// Market info is described in market.rs
+/// Holds every market, keyed by the market's name (for example `btc-usd`).
+///
+/// Each market is a [`MarketInfo`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Engine {
     markets: HashMap<String, MarketInfo>,
 }
 
 impl Engine {
-    // Engine starts without any books this might change for recovery
+    /// Creates an engine without any books. This might change for recovery.
     pub fn new() -> Self {
         Self::default()
     }
 
-    // set market tries to set a Market's values from backend
-    // it can also reconfigure a markets scale or values
-    // the market can only be be reconfigured if it has an empty book
+    /// Sets a market's values from the backend's [`SetMarketRequest`].
+    ///
+    /// It can also reconfigure an existing market's scale or values, but only if the
+    /// market's book is empty.
     pub fn set_market(&mut self, request: SetMarketRequest) -> SetMarketResponse {
         match self.try_set_market(request) {
             Ok(()) => SetMarketResponse::default(),

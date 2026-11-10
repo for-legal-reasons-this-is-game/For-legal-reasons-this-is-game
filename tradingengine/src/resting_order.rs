@@ -4,7 +4,7 @@ use crate::order::{OrderStatus, Side};
 use crate::price::Price;
 use crate::quantity::BaseQuantity;
 
-// each order sitting in the book
+/// An order sitting in the [`Book`](crate::book::Book).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestingOrder {
     id: OrderId,
@@ -58,10 +58,13 @@ impl RestingOrder {
         Ok(())
     }
 
-    // changes the order's total quantity and/or price, None leaves it as it was.
-    // the new total must be above what is already filled (BAD_QUANTITY in the
-    // contract), the remaining becomes new total minus filled. on an error
-    // nothing changes. where the order sits in the queue is up to Book::modify
+    /// Changes the order's total quantity and/or price. `None` leaves that value as it was.
+    ///
+    /// The new total must be above what is already filled (`BAD_QUANTITY` in the
+    /// contract), and the remaining quantity becomes the new total minus the filled part.
+    /// On an error, nothing changes.
+    ///
+    /// Where the order sits in the queue is up to [`Book::modify`](crate::book::Book::modify).
     pub fn modify(
         &mut self,
         new_quantity: Option<BaseQuantity>,
@@ -122,7 +125,7 @@ impl RestingOrder {
         self.status
     }
 
-    // returned by value now that CommandId is a plain number like OrderId
+    /// Returned by value, now that [`CommandId`] is a plain number like [`OrderId`].
     pub const fn command_id(&self) -> CommandId {
         self.command_id
     }

@@ -1,9 +1,13 @@
 use sha2::{Digest, Sha256};
 
-// Transfer ids must be the same every time the same event is replayed. The high 64 bits keep the
-// time prefix of the source id (tb::id() / UUIDv7) so tigerbeetle keeps its ordering; the low 64
-// bits come from a hash. `source + leg` would not be safe: ids inside one millisecond are
-// consecutive, so leg 2 of one trade could equal leg 1 of the next.
+/// Derives a transfer id.
+///
+/// Transfer ids must be the same every time the same event is replayed. The high 64 bits keep
+/// the time prefix of the source id (`tb::id()` or UUIDv7), so TigerBeetle keeps its ordering;
+/// the low 64 bits come from a hash.
+///
+/// `source + leg` would not be safe: ids inside one millisecond are consecutive, so leg 2 of
+/// one trade could equal leg 1 of the next.
 fn derive(tag: &[u8], source: u128, leg: u8) -> u128 {
     let mut hasher = Sha256::new();
     hasher.update(tag);
@@ -17,18 +21,20 @@ fn derive(tag: &[u8], source: u128, leg: u8) -> u128 {
     if id == 0 || id == u128::MAX { 1 } else { id }
 }
 
-// id of one leg (1..=4) of the transfer chain that settles a trade
+/// The id of one leg (1..=4) of the transfer chain that settles a trade.
 pub fn trade_leg_transfer_id(trade_id: u128, leg: u8) -> u128 {
     derive(b"trade-leg", trade_id, leg)
 }
 
-// id of the transfer that returns what is left in an order's hold account
+/// The id of the transfer that returns what is left in an order's hold account.
 pub fn refund_transfer_id(order_id: u128) -> u128 {
     derive(b"refund", order_id, 0)
 }
 
-// id of the transfer that moves the reservation from the user's account to an order's hold account
-// (a new tag, so it can never equal the refund of the same order)
+/// The id of the transfer that moves the reservation from the user's account to an order's
+/// hold account.
+///
+/// It uses a new tag, so it can never equal the [refund](refund_transfer_id) of the same order.
 pub fn reservation_transfer_id(order_id: u128) -> u128 {
     derive(b"reserve", order_id, 0)
 }

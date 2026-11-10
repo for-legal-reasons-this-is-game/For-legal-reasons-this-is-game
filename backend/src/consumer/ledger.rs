@@ -30,12 +30,17 @@ impl fmt::Display for LedgerError {
 
 impl std::error::Error for LedgerError {}
 
-// Sends all transfers in one request. Tigerbeetle only reports the transfers that did not come
-// out Ok, and it treats a chain as a unit: when one transfer of a chain fails (an `Exists` counts
-// as a failure here), the others in that chain are reported as `LinkedEventFailed`. So the result
-// is judged per chain, by its root cause: `Exists` means the whole chain was applied before (our
-// ids come from the trade, so a replayed chain is identical) and is a success; any other cause is
-// an error, and the error names the transfer that caused it, not its chain mates.
+/// Sends all transfers in one request.
+///
+/// TigerBeetle only reports the transfers that didn't come out `Ok`, and it treats a chain as a
+/// unit: when one transfer of a chain fails (an `Exists` counts as a failure here), the others in
+/// that chain are reported as `LinkedEventFailed`.
+///
+/// So the result is judged per chain, by its root cause:
+/// - `Exists` means the whole chain was applied before (our ids come from the trade, so a
+///   replayed chain is identical), and counts as a success.
+/// - Any other cause is an error. The error names the transfer that caused it, not the other
+///   transfers in its chain.
 pub async fn send(client: &tb::Client, transfers: &[tb::Transfer]) -> Result<(), LedgerError> {
     if transfers.is_empty() {
         return Ok(());

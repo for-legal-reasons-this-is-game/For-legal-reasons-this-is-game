@@ -13,7 +13,7 @@ fn market(symbol: &str, base_decimals: u32, quote_decimals: u32, price_decimals:
     }
 }
 
-// satoshis, cents, and a price written in cents: k = 2 + 8 - 2 = 8
+/// A market in satoshis and cents, with prices written in cents: k = 2 + 8 - 2 = 8.
 fn btc_usd() -> Market {
     market("BTC-USD", 8, 2, 2)
 }

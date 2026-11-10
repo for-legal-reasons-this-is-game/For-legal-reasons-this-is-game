@@ -9,8 +9,10 @@ use tokio::time::{Instant, sleep, sleep_until};
 use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
-// Waits between attempts to resubscribe: doubles up to a cap. The caller passes the jitter
-// (0.0..=1.0) so tests are deterministic; a delay is shortened by at most half.
+/// Waits between attempts to resubscribe, doubling up to a cap.
+///
+/// The caller passes the jitter (0.0..=1.0), so tests are deterministic. A delay is shortened
+/// by at most half.
 pub struct Backoff {
     min: Duration,
     max: Duration,
@@ -37,7 +39,7 @@ impl Backoff {
     }
 }
 
-// What the router sends: a source of events. A trait so tests can stand in for the router.
+/// What the router sends: a source of events. It's a trait, so tests can stand in for the router.
 pub trait EventSource {
     fn next(&mut self) -> impl Future<Output = Result<Option<EventItem>, Status>> + Send;
 }
@@ -49,17 +51,20 @@ impl EventSource for tonic::Streaming<EventItem> {
 }
 
 pub enum BatchRead {
-    // a batch that closed because it was full or because the wait ran out; the stream goes on
+    /// A batch that closed because it was full or because the wait ran out. The stream goes on.
     Items(Vec<EventItem>),
-    // the stream ended cleanly / broke: the items read so far, then resubscribe
+    /// The stream ended cleanly: the items read so far, then resubscribe.
     Ended(Vec<EventItem>),
+    /// The stream broke: the items read so far, then resubscribe.
     Failed(Vec<EventItem>, Status),
 }
 
-// Reads events until the batch has `max_items`, or `max_wait` has passed since its first item,
-// whichever comes first. Waits for the first item without a deadline, so it never returns an
-// empty `Items`. Dropping the call (on shutdown) drops the partial batch, which a replay brings
-// back.
+/// Reads events until the batch has `max_items`, or `max_wait` has passed since its first item,
+/// whichever comes first.
+///
+/// Waits for the first item without a deadline, so it never returns an empty
+/// [`Items`](BatchRead::Items). Dropping the call (on shutdown) drops the partial batch, which a
+/// replay brings back.
 pub async fn collect_batch<S: EventSource>(
     source: &mut S,
     max_items: usize,
@@ -118,7 +123,7 @@ impl SourceSettings {
     }
 }
 
-// false if shutdown came first
+/// Returns `false` if shutdown came first.
 async fn pause(delay: Duration, cancel: &CancellationToken) -> bool {
     tokio::select! {
         _ = cancel.cancelled() => false,
@@ -126,10 +131,13 @@ async fn pause(delay: Duration, cancel: &CancellationToken) -> bool {
     }
 }
 
-// Subscribes, batches, and hands the batches to the pipeline. When the subscription fails, ends or
-// breaks it flushes what it has, waits (backoff) and subscribes again, forever: the router sends
-// the whole retained history again and everything downstream is safe to repeat. Returns only on
-// shutdown or when the pipeline has gone away.
+/// Subscribes, batches, and hands the batches to the pipeline.
+///
+/// When the subscription fails, ends or breaks, it flushes what it has, waits ([`Backoff`]) and
+/// subscribes again, forever: the router sends the whole retained history again, and everything
+/// downstream is safe to repeat.
+///
+/// Returns only on shutdown, or when the pipeline has gone away.
 pub async fn run_source<S, F, Fut>(
     mut connect: F,
     settings: SourceSettings,

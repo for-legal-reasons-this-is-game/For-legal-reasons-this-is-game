@@ -28,7 +28,7 @@ pub struct MarketRow {
     pub market_id: i32,
     pub base_ledger_id: i32,
     pub quote_ledger_id: i32,
-    // the only account the fees of this market may go to
+    /// The only account the fees of this market may go to.
     pub fee_account_id: Uuid,
 }
 
@@ -118,7 +118,8 @@ fn push_unique<T: Clone + Eq + std::hash::Hash>(list: &mut Vec<T>, seen: &mut Ha
     }
 }
 
-// what to ask postgres for before planning: trade ids, order ids, market symbols of the batch
+/// What to ask Postgres for before planning: the trade ids, order ids and market symbols of the
+/// batch.
 pub fn wanted_ids(items: &[EventItem]) -> (Vec<Uuid>, Vec<Uuid>, Vec<String>) {
     let (mut trades, mut orders, mut symbols) = (vec![], vec![], vec![]);
     let (mut seen_t, mut seen_o, mut seen_s) = (HashSet::new(), HashSet::new(), HashSet::new());
@@ -147,18 +148,22 @@ pub fn wanted_ids(items: &[EventItem]) -> (Vec<Uuid>, Vec<Uuid>, Vec<String>) {
     (trades, orders, symbols)
 }
 
-// How far an order has got, as a sort key: (finished?, filled base, filled quote). Of two reports
-// of one order, the one with the bigger key is the newer.
+/// How far an order has got, as a sort key: (finished?, filled base, filled quote).
+///
+/// Of two reports of one order, the one with the bigger key is the newer.
 type Progress = (bool, u128, u128);
 
-// The newest limit price seen for each order that is still open. The consumer creates it once and
-// passes it to every batch.
-//
-// A modify can reprice an order into the book, so the trade that follows its REPLACED report must
-// be checked against the new limit. Postgres only learns the new limit when the batch with the
-// report is saved, and the next batch is prepared before that, so the consumer remembers it itself.
-// A report only replaces what is remembered if it has at least as much progress, so a replayed
-// older report cannot bring an old limit back. A finished order is forgotten, which keeps this small.
+/// The newest limit price seen for each order that is still open. The consumer creates it once
+/// and passes it to every batch.
+///
+/// A modify can reprice an order into the book, so the trade that follows its `REPLACED` report
+/// must be checked against the new limit. Postgres only learns the new limit when the batch with
+/// the report is saved, and the next batch is prepared before that, so the consumer remembers it
+/// itself.
+///
+/// A report only replaces what is remembered if it has at least as much progress, so a replayed
+/// older report can't bring an old limit back. A finished order is forgotten, which keeps this
+/// small.
 #[derive(Default)]
 pub struct LimitMemory {
     newest: HashMap<Uuid, (Progress, u128)>,
@@ -188,7 +193,7 @@ impl LimitMemory {
     }
 }
 
-// what the reports of one batch have decided so far
+/// What the reports of one batch have decided so far.
 #[derive(Default)]
 struct ReportState {
     refunded: HashSet<Uuid>,
@@ -405,7 +410,7 @@ fn plan_trade(
     Ok(())
 }
 
-// ceil(quote * bps / 10000) without a 256-bit intermediate; saturates instead of overflowing
+/// `ceil(quote * bps / 10000)` without a 256-bit intermediate. Saturates instead of overflowing.
 pub fn fee_cap(quote: u128, bps: i32) -> u128 {
     let bps = bps.max(0) as u128;
     let whole = (quote / 10_000).saturating_mul(bps);
@@ -508,12 +513,12 @@ mod tests {
     use crate::consumer::ids::{refund_transfer_id, trade_leg_transfer_id};
     use crate::domain::TransferCodeType;
 
-    // one batch on its own: the consumer's memory of limit prices starts empty
+    /// One batch on its own: the consumer's memory of limit prices ([`LimitMemory`]) starts empty.
     fn build_plan(items: &[EventItem], l: &Lookups) -> Result<BatchPlan, PlanError> {
         super::build_plan(items, l, &mut LimitMemory::default())
     }
 
-    // a batch planned with a memory that lives on between batches, like the consumer's
+    /// A batch planned with a memory that lives on between batches, like the consumer's.
     fn plan_with(
         memory: &mut LimitMemory,
         items: &[EventItem],
@@ -537,8 +542,9 @@ mod tests {
         Some(Uint128::from(n))
     }
 
-    // buyer: user 0xB0, base account 0xB2, quote account 0xB3; seller: user 0x50, 0x52, 0x53.
-    // base ledger 1, quote ledger 2. Both orders pay maker 10 bps / taker 30 bps.
+    /// Buyer: user `0xB0`, base account `0xB2`, quote account `0xB3`. Seller: user `0x50`, base
+    /// account `0x52`, quote account `0x53`. Base ledger 1, quote ledger 2. Both orders pay maker
+    /// 10 bps and taker 30 bps.
     fn lookups() -> Lookups {
         let order = |order: u128, user: u128, base: u128, quote: u128, buyer: bool, limit: u128| {
             (
@@ -588,7 +594,8 @@ mod tests {
         taker: Side,
     }
 
-    // buyer is the taker: cap 3000 (30 bps of 1_000_000); seller is the maker: cap 1000 (10 bps)
+    /// The buyer is the taker: cap 3000 (30 bps of 1_000_000). The seller is the maker: cap 1000
+    /// (10 bps).
     fn t(trade: u128) -> T {
         T {
             trade,

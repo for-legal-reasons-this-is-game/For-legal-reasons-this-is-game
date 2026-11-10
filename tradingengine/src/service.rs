@@ -11,8 +11,10 @@ use tonic::{Request, Response, Status};
 
 use crate::engine::Engine;
 
-// for now one engine per market but this will change when multi threading is
-// impemented
+/// The engine's gRPC service.
+///
+/// For now there is one [`Engine`] per market. This will change when multithreading is
+/// implemented.
 #[derive(Default)]
 pub struct EngineService {
     engine: Mutex<Engine>,

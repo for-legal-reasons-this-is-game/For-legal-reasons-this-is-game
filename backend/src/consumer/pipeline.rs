@@ -50,7 +50,9 @@ where
     Ok(())
 }
 
-// Runs the source and the three stages until they all end. Returns the first stage error, if any.
+/// Runs the source and the three stages until they all end.
+///
+/// Returns the first stage error, if any.
 pub async fn run_pipeline<Src, SrcFut, P, PFut, L, LFut, C, CFut>(
     source: Src,
     prepare: P,
@@ -117,7 +119,7 @@ mod tests {
         }]
     }
 
-    // a source that sends `count` batches and then ends, like a stream that was cancelled
+    /// A source that sends `count` batches and then ends, like a stream that was cancelled.
     async fn send_batches(tx: mpsc::Sender<Vec<EventItem>>, count: u64) {
         for n in 0..count {
             if tx.send(batch(n)).await.is_err() {

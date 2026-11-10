@@ -21,7 +21,7 @@ pub type ConsumerError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    // where the events come from. The router sits behind this url, like it does for the backend
+    /// Where the events come from. The router sits behind this URL, like it does for the backend.
     pub engine_url: String,
     pub database_url: String,
     pub tb_cluster_id: u128,
@@ -29,11 +29,11 @@ pub struct Config {
     pub batch_max_items: usize,
     pub batch_max_wait: Duration,
     pub queue_depth: usize,
-    // key of the postgres advisory lock that keeps a second consumer from starting
+    /// Key of the Postgres advisory lock that keeps a second consumer from starting.
     pub lock_key: i64,
 }
 
-// "tradecon" as bytes
+/// "tradecon" as bytes.
 pub const DEFAULT_LOCK_KEY: i64 = 0x7472_6164_6563_6F6E;
 
 impl Config {
@@ -67,7 +67,7 @@ impl Config {
     }
 }
 
-// reads what postgres knows about the batch (three lookups at once) and plans it
+/// Reads what Postgres knows about the batch (three lookups at once) and plans it.
 async fn prepare_batch(
     pool: &PgPool,
     limits: &Mutex<LimitMemory>,
@@ -89,8 +89,10 @@ async fn prepare_batch(
     Ok(plan::build_plan(&items, &lookups, &mut memory)?)
 }
 
-// Runs the consumer until `cancel` fires (graceful stop, Ok) or a stage fails (Err: the process
-// should exit non-zero and be restarted). Takes the single-consumer lock first.
+/// Runs the consumer until `cancel` fires (a graceful stop, `Ok`) or a stage fails (`Err`: the
+/// process should exit non-zero and be restarted).
+///
+/// Takes the single-consumer [lock](lock::try_lock) first.
 pub async fn run(cfg: Config, cancel: CancellationToken) -> Result<(), ConsumerError> {
     let pool = PgPoolOptions::new()
         .max_connections(10)

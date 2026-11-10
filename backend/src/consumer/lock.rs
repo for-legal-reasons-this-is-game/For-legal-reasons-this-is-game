@@ -21,7 +21,7 @@ pub async fn try_lock(database_url: &str, key: i64) -> Result<LockGuard, Consume
 }
 
 impl LockGuard {
-    // closes the connection politely; dropping the guard also releases the lock, a little later
+    /// Closes the connection politely. Dropping the guard also releases the lock, a little later.
     pub async fn release(self) {
         let _ = self.conn.close().await;
     }

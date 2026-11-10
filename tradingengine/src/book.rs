@@ -18,7 +18,7 @@ pub struct Fill {
     pub quantity: BaseQuantity,
 }
 
-// after a matching happens a an execution struct is returned
+/// The result returned after an order is matched against the [`Book`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Execution {
     fills: Vec<Fill>, // all the resting orders that were filled because of the new order
@@ -57,8 +57,8 @@ impl Book {
         Self::default()
     }
 
-    // insert tries to put the new incomming order into the book unless the order
-    // can be matched to the a price on the oposite side of the book
+    /// Puts a new incoming order into the book, unless it can be matched against a
+    /// price on the opposite side of the book.
     pub fn insert(&mut self, mut order: RestingOrder) -> Result<Execution> {
         let id = order.id();
         if self.all_orders.contains_key(&id) {
@@ -83,8 +83,9 @@ impl Book {
         Ok(Execution { fills, resting })
     }
 
-    // tries to match the incoming order to a the other side
-    // returns fills(matched)
+    /// Tries to match the incoming order against the other side of the book.
+    ///
+    /// Returns the [`Fill`]s it matched.
     fn match_incoming(&mut self, incoming: &mut RestingOrder) -> Result<Vec<Fill>> {
         let taker_side = incoming.side();
         let limit = incoming.price();
@@ -174,13 +175,15 @@ impl Book {
         Ok(order)
     }
 
-    // changes a resting order's quantity and/or price, None leaves it as it was.
-    // the contract (proto/how_to_use.md) decides where it ends up in the queue:
-    // - only a lower (or the same) quantity at the same price keeps its place,
-    //   it asks for less than it queued for so nobody behind it loses out
-    // - a higher quantity or a new price goes to the back of the line, and a
-    //   new price can cross the book and match right away like a new order
-    // a rejected modify leaves the book exactly as it was
+    /// Changes a resting order's quantity and/or price. `None` leaves that value as it was.
+    ///
+    /// The contract (`proto/how_to_use.md`) decides where the order ends up in the queue:
+    /// - Only a lower (or the same) quantity at the same price keeps its place. The order
+    ///   asks for less than it queued for, so nobody behind it loses out.
+    /// - A higher quantity or a new price goes to the back of the line. A new price can
+    ///   also cross the book and match right away, like a new order.
+    ///
+    /// A rejected modify leaves the book exactly as it was.
     pub fn modify(
         &mut self,
         id: OrderId,

@@ -1,6 +1,6 @@
-// given by backend for incoming orders this id is unique per resting
-// order that is opened and rejecter by the book if a duplicate is sent
-
+/// The id of an incoming order, given by the backend.
+///
+/// It is unique per resting order. The [`Book`](crate::book::Book) rejects a duplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OrderId(u128);
 
@@ -13,8 +13,9 @@ impl OrderId {
     }
 }
 
-// created by the engine this makes sure after resting orders are matched
-// by the book the trading engine has a log of each matched order
+/// The id of a trade, created by the engine.
+///
+/// When the book matches resting orders, this id gives the engine a log of each match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradeId(u128);
 
@@ -27,8 +28,9 @@ impl TradeId {
     }
 }
 
-// u128 because the backend's UUIDs are 128 bits; a u64 would truncate one.
-// required for self trade prevention sent by the backend
+/// The id of a user, sent by the backend. It is needed for self-trade prevention.
+///
+/// It is a `u128` because the backend's UUIDs are 128 bits; a `u64` would truncate one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UserId(u128);
 
@@ -42,9 +44,10 @@ impl UserId {
     }
 }
 
-// sent by the backend on every request to prevent duplication of a command
-// it used to be string but the contract says a u128 variable so it has been changed
-// each command has a unique id
+/// The unique id of a command. The backend sends it with every request, so that the
+/// same command isn't run twice.
+///
+/// It used to be a string, but the contract makes it a `u128`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommandId(u128);
 impl CommandId {

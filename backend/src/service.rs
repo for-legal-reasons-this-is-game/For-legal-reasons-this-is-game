@@ -23,8 +23,10 @@ impl EngineClient {
         })
     }
 
-    // Same as `new`, with HTTP/2 keepalive pings so a connection that died silently (a proxy
-    // dropped it, the router vanished) is noticed instead of leaving a stream waiting forever.
+    /// Same as [`new`](Self::new), but with HTTP/2 keepalive pings.
+    ///
+    /// That way a connection that died silently (a proxy dropped it, or the router vanished) is
+    /// noticed, instead of leaving a stream waiting forever.
     pub fn with_keepalive(
         url: &str,
         interval: std::time::Duration,

@@ -6,11 +6,11 @@ use crate::price::Price;
 use crate::quantity::{BaseQuantity, QuoteQuantity};
 use crate::quote::QuoteScale;
 
-// some incoming field from backend comes as and option the required()
-// makes sure these fields are not empty and if they are they are rejecte
-// a field make come in as some(0) and is accepted here but is rejected
-// down the line by the responsible field for example price(0) is
-// rejected but quantity(0) is sometimes accepted
+/// Makes sure an optional field from the backend is set, and rejects it if it's empty.
+///
+/// A field can come in as `Some(0)`. That is accepted here, and checked later by the type
+/// the field belongs to: for example, a zero [`Price`] is rejected, but a zero
+/// [`BaseQuantity`] is sometimes accepted.
 pub fn required<T>(field: Option<T>) -> Result<T> {
     field.ok_or(EngineError::RequiredFieldAbsent)
 }
@@ -33,8 +33,7 @@ impl From<Price> for Uint128 {
     }
 }
 
-// Zero cna be inserted in case of this value and is checked down the line
-// if the zero value is correct or not
+/// Zero is allowed here. Whether a zero quantity is correct is checked later.
 impl From<Uint128> for BaseQuantity {
     fn from(value: Uint128) -> BaseQuantity {
         BaseQuantity::from_minor_units(value.into())
@@ -71,17 +70,22 @@ impl From<FeeBps> for u32 {
     }
 }
 
-// Timestamps use std::time::SystemTime and the conversions prost-types already has.
-// This only turns its error into ours so `SystemTime::try_from(...)?` works in the engine.
+/// Turns a [`TimestampError`] into an [`EngineError`].
+///
+/// Timestamps use [`SystemTime`](std::time::SystemTime) and the conversions that
+/// `prost-types` already has. This only turns their error into ours, so that
+/// `SystemTime::try_from(...)?` works in the engine.
 impl From<TimestampError> for EngineError {
     fn from(_: TimestampError) -> EngineError {
         EngineError::TimestampOutOfRange
     }
 }
 
-// Reads the decimals by name. `QuoteScale::new` takes them positionally as
-// (price, base, quote) and `Market` declares them base, quote, price, so this
-// is the one call site that has to be right.
+/// Reads the decimals by name.
+///
+/// [`QuoteScale::new`] takes them by position, as (price, base, quote), while [`Market`]
+/// declares them as base, quote, price. So this is the one call site that has to get the
+/// order right.
 impl TryFrom<&Market> for QuoteScale {
     type Error = EngineError;
 
