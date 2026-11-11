@@ -2,8 +2,21 @@ use proto::Market;
 
 use crate::book::Book;
 use crate::error::{EngineError, Result};
+use crate::order::{OrderStatus, Side};
+use crate::quantity::{BaseQuantity, QuoteQuantity};
 use crate::quote::QuoteScale;
+use crate::resting_order::RestingOrder;
 use crate::wire::required;
+
+/// what happend to a new order when it was placed. its used for the
+/// [`PlaceOrderResponse`](proto::PlaceOrderResponse)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placed {
+    /// `New` `PartiallyFilled` or `Filled`
+    pub status: OrderStatus,
+    pub filled_base: BaseQuantity,
+    pub filled_quote: QuoteQuantity,
+}
 
 /// Everything a market needs: a [`Market`], a [`QuoteScale`] and a [`Book`].
 ///
@@ -50,6 +63,44 @@ impl MarketInfo {
 
     pub fn book(&self) -> &Book {
         &self.book
+    }
+
+    /// matches the order against the book and rests whats left
+    /// the matched and rest are returned as data in placed
+    pub fn place(&mut self, order: RestingOrder) -> Result<Placed> {
+        self.check_quote_fits(&order)?;
+
+        let execution = self.book.insert(order)?;
+
+        // round down per fill same as each TradeSettlement. the sum can come
+        // out lower then one quote_for on the total
+        let mut filled_quote = QuoteQuantity::ZERO;
+        for fill in execution.fills() {
+            let quote = self.scale.quote_for(fill.price, fill.quantity)?;
+            filled_quote = filled_quote.checked_add(quote)?;
+        }
+        let filled_base = execution.total_filled_quantity()?;
+
+        let status = match execution.resting_order_id() {
+            None => OrderStatus::Filled,
+            Some(_) if filled_base.is_zero() => OrderStatus::New,
+            Some(_) => OrderStatus::PartiallyFilled,
+        };
+        Ok(Placed {
+            status,
+            filled_base,
+            filled_quote,
+        })
+    }
+
+    /// make sure the quote does not over flow
+    fn check_quote_fits(&self, order: &RestingOrder) -> Result<()> {
+        let highest_price = match (order.side(), self.book.best_bid()) {
+            (Side::Sell, Some(best_bid)) => best_bid.max(order.price()),
+            _ => order.price(),
+        };
+        self.scale.quote_for(highest_price, order.qty_total())?;
+        Ok(())
     }
 }
 

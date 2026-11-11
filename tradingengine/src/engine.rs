@@ -21,7 +21,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Creates an engine without any books. This might change for recovery.
+    // Engine starts without any books this might change for recovery
     pub fn new() -> Self {
         Self::default()
     }
@@ -60,13 +60,43 @@ impl Engine {
         self.markets.get(symbol)
     }
 
-    /// checks a [`PlaceOrderRequest`] then matches it in its markets book and rests
-    /// whats left
-    ///
-    /// a rejected order changes nothing. the response is just the quick answer
-    /// for the user money only moves later with the `TradeSettlement`
+    /// the heart of the place order it trues to place the order
+    /// match it if possible against the book and keep the
+    /// remainder as rests in the book
+    /// this is only in case of limit
     pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
-        todo!("parse then try then place");
+        let command_id = request.command_id;
+        match self.try_place_order(request) {
+            Ok(placed) => {
+                let mut respone = PlaceOrderResponse {
+                    command_id,
+                    filled_base_quantity: Some(Uint128::from(placed.filled_base)),
+                    filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
+                    ..PlaceOrderResponse::default()
+                };
+                respone.set_status(order_status(placed.status));
+                respone
+            }
+            Err(error) => {
+                let mut response = PlaceOrderResponse {
+                    command_id,
+                    reject_detail: error.to_string(),
+                    ..PlaceOrderResponse::default()
+                };
+                response.set_reject_reason(reject_reason(&error));
+                response
+            }
+        }
+    }
+
+    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<Placed> {
+        let market = self
+            .markets
+            .get_mut(&request.market_symbol)
+            .ok_or(EngineError::UnknownMarket)?;
+
+        let order = parse_place_order(request)?;
+        market.place(order)
     }
 
     ///
@@ -91,36 +121,27 @@ fn config_reject_reason(error: &EngineError) -> ConfigRejectReason {
     }
 }
 
-/// the [`RejectReason`] for each error a place can hit like in
-/// `proto/how_to_use.md`
+// the contract's reject reasons for a place (how_to_use.md, validating a place)
 fn reject_reason(error: &EngineError) -> RejectReason {
     match error {
         EngineError::UnknownMarket => RejectReason::UnknownMarket,
-        // a reused order_id is the clients mistake so we answer it. a panic
-        // would let any client kill the pod. DUPLICATE_COMMAND is for command_id
         EngineError::BadOrderParams(_)
         | EngineError::RequiredFieldAbsent
         | EngineError::DuplicateOrderId => RejectReason::BadOrderParams,
-        // the contract says a quote over 128 bits is BAD_QUANTITY
         EngineError::QuantityNotPositive | EngineError::Overflow => RejectReason::BadQuantity,
         EngineError::PriceNotPositive => RejectReason::BadPrice,
         EngineError::Unsupported(_) => RejectReason::Unsupported,
-        // no reason in the contract for these. the team still has to decide
-        // wich ones panic untill then they are UNSUPPORTED
         _ => RejectReason::Unsupported,
     }
 }
 
-/// our [`OrderStatus`] as the proto one
-///
-/// the proto has no `Open` so a resting order with no fills is `New`
+// the proto has no Open, a resting order with no fills is New there
 fn order_status(status: OrderStatus) -> proto::OrderStatus {
     match status {
         OrderStatus::New | OrderStatus::Open => proto::OrderStatus::New,
         OrderStatus::PartiallyFilled => proto::OrderStatus::PartiallyFilled,
         OrderStatus::Filled => proto::OrderStatus::Filled,
         OrderStatus::Cancelled => proto::OrderStatus::Cancelled,
-        // a rejected order never existed so it has no status
         OrderStatus::Rejected => proto::OrderStatus::Unspecified,
     }
 }
