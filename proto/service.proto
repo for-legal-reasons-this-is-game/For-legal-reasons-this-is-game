@@ -99,6 +99,7 @@ message CancelOrderRequest {
   Id command_id = 1;
   Id order_id = 2;
   Id account_holder = 3;
+  string market_symbol = 4;
 }
 
 // same shape as the PlaceOrderResponse
@@ -134,6 +135,8 @@ message ModifyOrderRequest {
   Uint128 new_base_quantity = 4;
   Uint128 new_limit_price = 5;
   Uint128 new_trigger_price = 6;
+
+  string market_symbol = 7;
 }
 
 message ModifyOrderResponse {
