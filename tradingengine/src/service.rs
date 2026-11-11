@@ -47,8 +47,8 @@ impl TradingEngine for EngineService {
         &self,
         request: Request<CancelOrderRequest>,
     ) -> Result<Response<CancelOrderResponse>, Status> {
-        request.into_inner();
-        Err(Status::unimplemented("unimplemented"))
+        let mut engine = self.engine.lock().expect("engine lock poisoned");
+        Ok(Response::new(engine.cancel_order(request.into_inner())))
     }
 
     async fn cancel_orders(

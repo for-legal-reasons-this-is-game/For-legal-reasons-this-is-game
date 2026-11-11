@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use proto::{
-    ConfigRejectReason, PlaceOrderRequest, PlaceOrderResponse, RejectReason, SetMarketRequest,
-    SetMarketResponse, Uint128,
+    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, PlaceOrderRequest,
+    PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse, Uint128,
 };
 
 use crate::error::{EngineError, Result};
-use crate::market::{MarketInfo, Placed};
+use crate::market::MarketInfo;
+// use crate::market::{MarketInfo, Placed};
 use crate::order::OrderStatus;
-use crate::place::parse_place_order;
+// use crate::place::parse_place_order;
 use crate::wire::required;
 
 /// Holds every market, keyed by the market's name (for example `btc-usd`).
@@ -66,6 +67,20 @@ impl Engine {
     /// for the user money only moves later with the `TradeSettlement`
     pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
         todo!("parse then try then place");
+    }
+
+    ///
+    pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
+        let mut response = CancelOrderResponse {
+            ..CancelOrderResponse::default()
+        }
+        // if (request.market_symbol.is_empty()) {
+        //     response.set_reject_reason(config_reject_reason(error));
+        // }
+
+        // parse_cancel_order(request.);
+        let market = self.markets.get(&request.market_symbol);
+        CancelOrderResponse::default()
     }
 }
 
