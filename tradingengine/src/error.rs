@@ -14,6 +14,9 @@ pub enum EngineError {
     RequiredFieldAbsent,
     MarketSymbolEmpty,
     HasOpenOrders,
+    UnknownMarket,
+    BadOrderParams(&'static str),
+    Unsupported(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -53,6 +56,9 @@ impl std::fmt::Display for EngineError {
                 f,
                 "the decimals cannot change while the market has orders in its book"
             ),
+            Self::UnknownMarket => write!(f, "no market with this symbol, send SetMarket first"),
+            Self::BadOrderParams(detail) => write!(f, "bad order parameters: {detail}"),
+            Self::Unsupported(detail) => write!(f, "not supported yet: {detail}"),
         }
     }
 }
