@@ -80,20 +80,12 @@ async fn markets_are_kept_apart_by_symbol() {
     assert!(engine.market("SOL-USD").await.is_none());
 }
 
-<<<<<<< HEAD
-// which definitions are bad is tested on MarketInfo in tests/market.rs,
-// here only that a bad one comes back as BAD_DEFINITION and adds nothing
-#[tokio::test]
-async fn a_scale_above_38_is_a_bad_definition() {
-    let engine = Engine::new();
-=======
 /// Which definitions are bad is tested on
 /// [`MarketInfo`](tradingengine::market::MarketInfo) in `tests/market.rs`. This test only
 /// checks that a bad one comes back as `BAD_DEFINITION` and adds nothing.
-#[test]
-fn a_scale_above_38_is_a_bad_definition() {
-    let mut engine = Engine::new();
->>>>>>> 55564ca0340801403ee06c3a408bbd23074ebf04
+#[tokio::test]
+async fn a_scale_above_38_is_a_bad_definition() {
+    let engine = Engine::new();
 
     // k = 9 + 30 - 0 = 39, and 10^39 does not fit in a u128
     let response = set(&engine, market("BTC-USD", 30, 0, 9)).await;

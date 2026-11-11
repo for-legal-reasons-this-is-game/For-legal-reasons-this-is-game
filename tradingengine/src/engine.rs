@@ -18,7 +18,7 @@ const LOCK: &str = "engine lock poisoned";
 /// Each market is a [`MarketInfo`].
 /// the lock only guards the list of markets, never a book: it is held just long
 /// enough to find or add a handle and is never held while waiting on a market
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct Engine {
     markets: RwLock<HashMap<String, MarketHandle>>,
 }
