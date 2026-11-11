@@ -1,7 +1,9 @@
+use proto::place_order_request::Amount;
 use proto::{Id, Market, TimestampError, Uint128};
 
 use crate::error::{EngineError, Result};
 use crate::fee::FeeBps;
+use crate::order::Side;
 use crate::price::Price;
 use crate::quantity::{BaseQuantity, QuoteQuantity};
 use crate::quote::QuoteScale;
@@ -95,5 +97,30 @@ impl TryFrom<&Market> for QuoteScale {
             market.base_decimals,
             market.quote_decimals,
         )
+    }
+}
+
+/// turns the proto side into our [`Side`]
+///
+/// `check_place_order` already rejects `Unspecified`
+pub fn side_from_proto(side: proto::Side) -> Result<Side> {
+    match side {
+        proto::Side::Buy => Ok(Side::Buy),
+        proto::Side::Sell => Ok(Side::Sell),
+        proto::Side::Unspecified => Err(EngineError::RequiredFieldAbsent),
+    }
+}
+
+/// takes the `base_quantity` out of an orders amount
+///
+/// a `quote_quantity` or no amount is an error. zero is let through because the order
+/// rejects that itself
+pub fn base_quantity_from_proto(amount: Option<Amount>) -> Result<BaseQuantity> {
+    match amount {
+        Some(Amount::BaseQuantity(quantity)) => Ok(BaseQuantity::from(quantity)),
+        Some(Amount::QuoteQuantity(_)) => Err(EngineError::BadOrderParams(
+            "this order needs base_quantity, not quote_quantity",
+        )),
+        None => Err(EngineError::RequiredFieldAbsent),
     }
 }
