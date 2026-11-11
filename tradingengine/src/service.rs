@@ -39,8 +39,8 @@ impl TradingEngine for EngineService {
         &self,
         request: Request<PlaceOrderRequest>,
     ) -> Result<Response<PlaceOrderResponse>, Status> {
-        request.into_inner();
-        Err(Status::unimplemented("unimplemented"))
+        let mut engine = self.engine.lock().expect("engine lock poisoned");
+        Ok(Response::new(engine.place_order(request.into_inner())))
     }
 
     async fn cancel_order(
