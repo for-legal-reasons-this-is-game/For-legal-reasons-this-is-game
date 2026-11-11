@@ -4,10 +4,11 @@ use proto::{Id, Market, Timestamp as WireTimestamp, Uint128};
 
 use tradingengine::error::EngineError;
 use tradingengine::fee::FeeBps;
+use tradingengine::order::Side;
 use tradingengine::price::Price;
 use tradingengine::quantity::{BaseQuantity, QuoteQuantity};
 use tradingengine::quote::QuoteScale;
-use tradingengine::wire::{required, required_id};
+use tradingengine::wire::{base_quantity_from_proto, required, required_id, side_from_proto};
 
 fn wire(value: u128) -> Uint128 {
     Uint128::from(value)
@@ -216,4 +217,24 @@ fn a_whole_order_priced_from_wire_values() -> Result<(), EngineError> {
     assert_eq!(u128::from(Uint128::from(quote)), 358);
     assert_eq!(u128::from(Uint128::from(fee)), 0);
     Ok(())
+}
+
+// ---- PlaceOrderRequest fields ----
+
+#[test]
+fn side_from_proto_converts_buy_and_sell() {
+    assert_eq!(side_from_proto(proto::Side::Buy), Ok(Side::Buy));
+    assert_eq!(side_from_proto(proto::Side::Sell), Ok(Side::Sell));
+    assert!(side_from_proto(proto::Side::Unspecified).is_err());
+}
+
+#[test]
+fn base_quantity_from_proto_takes_only_the_base_arm() {
+    use proto::place_order_request::Amount;
+    assert_eq!(
+        base_quantity_from_proto(Some(Amount::BaseQuantity(wire(5)))),
+        Ok(BaseQuantity::from_minor_units(5))
+    );
+    assert!(base_quantity_from_proto(Some(Amount::QuoteQuantity(wire(5)))).is_err());
+    assert!(base_quantity_from_proto(None).is_err());
 }
