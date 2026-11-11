@@ -92,13 +92,13 @@ pub struct MarketRow {
     pub taker_fee_bps: i32,
 }
 
-// from i128 to Decimal type
+/// Converts a raw `i128` into a [`Decimal`].
 pub fn to_decimal(raw: i128, decimals: i16) -> Result<Decimal, StatusCode> {
     Decimal::try_from_i128_with_scale(raw, decimals as u32)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// scales raw decimal to the decimal stored in db
+/// Scales a raw decimal to the decimal stored in the database.
 fn scale_to_decimal(raw: Decimal, decimals: i16) -> Result<Decimal, StatusCode> {
     to_decimal(
         raw.to_i128().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
@@ -128,7 +128,7 @@ pub struct Market {
 }
 
 impl Market {
-    // builds the market from the row in the db
+    /// Builds the market from its [`MarketRow`] in the database.
     pub fn from_row(m: MarketRow, base: Ledger, quote: Ledger) -> Result<Self, StatusCode> {
         Ok(Market {
             market_id: m.market_id,
@@ -387,7 +387,7 @@ impl From<TriggerDirection> for proto::TriggerDirection {
     }
 }
 
-// the engine's view of the order
+/// The engine's view of the order.
 #[derive(Debug, Clone, Copy, PartialEq, FromPrimitive, ToPrimitive, Serialize, sqlx::Type, TS)]
 #[repr(i16)]
 #[serde(rename_all = "snake_case")]
@@ -443,7 +443,7 @@ pub enum Submission {
     Rejected,
 }
 
-// how an order comes from sql
+/// How an order comes from SQL.
 #[derive(Debug, sqlx::FromRow)]
 pub struct OrderRow {
     pub order_id: Uuid,
@@ -476,7 +476,7 @@ pub struct OrderRow {
     pub updated_at: String,
 }
 
-// the actual box to return
+/// The order as it is actually returned.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct Order {
@@ -508,7 +508,7 @@ pub struct Order {
 
     pub maker_fee_bps: i32,
     pub taker_fee_bps: i32,
-    // in the quote asset for a buy, in the base asset for a sell
+    /// In the quote asset for a buy, and in the base asset for a sell.
     #[ts(type = "string")]
     pub reserved_amount: Decimal,
     pub submission: Submission,
@@ -526,13 +526,13 @@ pub struct Order {
     pub updated_at: String,
 }
 
-// same as scale_to_decimal, for the columns that can be null
+/// Same as [`scale_to_decimal`], for the columns that can be null.
 fn scale_option(raw: Option<Decimal>, decimals: i16) -> Result<Option<Decimal>, StatusCode> {
     raw.map(|r| scale_to_decimal(r, decimals)).transpose()
 }
 
 impl Order {
-    // builds the order from the row in the db
+    /// Builds the order from its [`OrderRow`] in the database.
     pub fn from_row(
         o: OrderRow,
         market: &MarketRow,
@@ -583,7 +583,7 @@ pub struct OrderPage {
     pub next_cursor: Option<String>, // None means this was the last page
 }
 
-// how a trade comes from sql
+/// How a trade comes from SQL.
 #[derive(Debug, sqlx::FromRow)]
 pub struct TradeRow {
     pub trade_id: Uuid,
@@ -623,7 +623,7 @@ pub struct Trade {
 }
 
 impl Trade {
-    // builds the trade from the row in the db
+    /// Builds the trade from its [`TradeRow`] in the database.
     pub fn from_row(
         t: TradeRow,
         market: &MarketRow,
@@ -669,7 +669,7 @@ pub struct TickerStats {
 #[ts(export)]
 pub struct Ticker {
     pub market: String,
-    // price of the latest trade ever, null only if the market never traded
+    /// Price of the latest trade ever. Null only if the market never traded.
     #[ts(type = "string | null")]
     pub last_price: Option<Decimal>,
     // the next five are null when there were no trades in the window
@@ -679,11 +679,11 @@ pub struct Ticker {
     pub high: Option<Decimal>,
     #[ts(type = "string | null")]
     pub low: Option<Decimal>,
-    // last_price - open
+    /// `last_price - open`
     #[ts(type = "string | null")]
     pub change: Option<Decimal>,
 
-    // change / open * 100
+    /// `change / open * 100`
     #[ts(type = "string | null")]
     pub change_percent: Option<Decimal>,
 

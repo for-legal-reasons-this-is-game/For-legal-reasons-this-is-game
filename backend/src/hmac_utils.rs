@@ -27,8 +27,9 @@ use sha2::Sha256;
 * when someone wants to delete the key i just remove the encrupted key from database
 */
 
-//pass message and signature in hex format and key to verify the message if singature is incorrect
-//it will return err if key is incoret it will panic
+/// Verifies a message, given the message, its signature in hex format, and the key.
+///
+/// Returns an error if the signature is incorrect, and panics if the key is incorrect.
 pub fn verify_message(key: &[u8], message: &[u8], signature: &str) -> Result<bool, FromHexError> {
     let signature = hex::decode(signature)?;
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("Hmac reciveed incorect key");
@@ -36,8 +37,9 @@ pub fn verify_message(key: &[u8], message: &[u8], signature: &str) -> Result<boo
     Ok(mac.verify_slice(signature.as_slice()).is_ok())
 }
 
-//returns hex string which is signature of the request
-//time is from unix_epoch
+/// Returns the request's signature as a hex string.
+///
+/// `timestamp` is counted from the Unix epoch.
 pub fn construct_signature(
     httpmethod: Method,
     uripath: &str,

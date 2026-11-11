@@ -16,7 +16,7 @@ use cn_tigerbeetle as tb;
 
 use std::env;
 
-// how to stricture api /api/{version: String}/*
+/// How the API is structured: `/api/{version: String}/*`.
 #[tokio::main]
 async fn main() {
     // TB_CLUSTER_ID / TB_IP_ADRESSES come from the process environment

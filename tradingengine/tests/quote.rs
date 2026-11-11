@@ -29,14 +29,15 @@ fn exponent_is_price_plus_base_minus_quote() {
     assert_eq!(no_decimals.exponent(), 0);
 }
 
-// `Market` declares its decimals as base, quote, price. `new` takes them as
-// price, base, quote. Every other test here uses decimals where two of the
-// three are equal, so passing them in the wrong order still gives the right
-// answer and nothing fails. These three are all different, so the quote
-// decimals cannot be mistaken for either of the others.
-//
-// Only the quote slot matters: the formula adds price and base, so swapping
-// those two cannot change the result.
+/// [`Market`](proto::Market) declares its decimals as base, quote, price, while
+/// [`QuoteScale::new`] takes them as price, base, quote.
+///
+/// Every other test here uses decimals where two of the three are equal, so passing them
+/// in the wrong order still gives the right answer and nothing fails. Here all three are
+/// different, so the quote decimals can't be mistaken for either of the others.
+///
+/// Only the quote position matters: the formula adds price and base, so swapping those
+/// two can't change the result.
 #[test]
 fn three_different_decimals_pin_the_argument_order() {
     // 3 + 6 - 2 = 7

@@ -117,7 +117,8 @@ pub async fn fetch_markets_by_ids(
     .await
 }
 
-// gives the (base, quote) ledgers of a market. Both have to exist, a market can't point to a missing ledger
+/// Gives the (base, quote) ledgers of a market. Both have to exist: a market can't point to a
+/// missing ledger.
 pub async fn fetch_market_ledgers(
     pool: &PgPool,
     market: &MarketRow,
@@ -133,7 +134,7 @@ pub async fn fetch_market_ledgers(
     Ok((base, quote))
 }
 
-// limit of a page: default 50, max 100, 0 makes no sense
+/// The limit of a page: 50 by default, 100 at most. 0 makes no sense.
 fn page_limit(limit: Option<u32>) -> Result<u32, StatusCode> {
     match limit.unwrap_or(50).min(100) {
         0 => Err(StatusCode::BAD_REQUEST),
@@ -141,7 +142,7 @@ fn page_limit(limit: Option<u32>) -> Result<u32, StatusCode> {
     }
 }
 
-// splits the cursor the client sends back ("<timestamp>_<uuid>") into its two parts
+/// Splits the cursor the client sends back (`<timestamp>_<uuid>`) into its two parts.
 fn parse_cursor_pg(cursor: Option<String>) -> Result<(Option<String>, Option<Uuid>), StatusCode> {
     match cursor {
         None => Ok((None, None)),
@@ -153,7 +154,7 @@ fn parse_cursor_pg(cursor: Option<String>) -> Result<(Option<String>, Option<Uui
     }
 }
 
-// gives (status to filter by, only open orders) from what the client asked for
+/// Gives `(status to filter by, only open orders)` from what the client asked for.
 fn order_status_filter(filter: Option<OrderStatusFilter>) -> (Option<i16>, bool) {
     match filter {
         None => (None, false),
@@ -171,7 +172,7 @@ fn order_status_filter(filter: Option<OrderStatusFilter>) -> (Option<i16>, bool)
     }
 }
 
-// postgres rejecting the cursor's timestamp is the client's fault, anything else is ours
+/// Postgres rejecting the cursor's timestamp is the client's fault; anything else is ours.
 fn page_query_error(e: sqlx::Error) -> StatusCode {
     match e.as_database_error().and_then(|d| d.code()).as_deref() {
         Some("22007") | Some("22008") => StatusCode::BAD_REQUEST,
@@ -179,8 +180,8 @@ fn page_query_error(e: sqlx::Error) -> StatusCode {
     }
 }
 
-// the rows were asked for with limit + 1: cuts the extra one off and, if there was one,
-// gives the cursor of the next page (built from the last row that stays)
+/// The rows were asked for with `limit + 1`. This cuts the extra one off and, if there was one,
+/// gives the cursor of the next page (built from the last row that stays).
 fn next_page_cursor<T>(
     rows: &mut Vec<T>,
     limit: u32,
@@ -195,7 +196,8 @@ fn next_page_cursor<T>(
     }
 }
 
-// gives the ledger an account lives in. It has to exist, an account can't point to a missing ledger
+/// Gives the ledger an account lives in. It has to exist: an account can't point to a missing
+/// ledger.
 pub async fn fetch_account_ledger(pool: &PgPool, account: &Account) -> Result<Ledger, StatusCode> {
     fetch_ledger_by_id(pool, account.account_ledger_id)
         .await
@@ -203,7 +205,7 @@ pub async fn fetch_account_ledger(pool: &PgPool, account: &Account) -> Result<Le
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// looks for the (base, quote) ledgers of a market in an already loaded list of ledgers
+/// Looks for the (base, quote) ledgers of a market in an already loaded list of ledgers.
 fn find_market_ledgers<'a>(
     ledgers: &'a [Ledger],
     market: &MarketRow,
@@ -323,7 +325,8 @@ struct RawBalance {
     credits_pending: i128,
 }
 
-// if a idempotency key from the front end was already used with a different deposit/transfer(so if the other fields conflict) TB will reject it
+/// If an idempotency key from the frontend was already used with a different deposit or transfer
+/// (so the other fields conflict), TigerBeetle rejects it.
 fn is_deposit_conflict(result: &CreateTransferResult) -> bool {
     matches!(
         result,
@@ -343,7 +346,7 @@ fn is_deposit_conflict(result: &CreateTransferResult) -> bool {
     )
 }
 
-// a type name for the transfer response for each transfer so the frontend displays it
+/// A type name for each transfer in the transfer response, so the frontend can display it.
 fn transfer_kind(t: &tb::Transfer) -> &'static str {
     match TransferCodeType::try_from(t.code as i16) {
         Ok(TransferCodeType::Trade) => "trade",
@@ -365,7 +368,8 @@ pub struct OrderPayload {
     side: Side,
     order_type: OrderType,
     time_in_force: TimeInForce,
-    // base_quantity for everything except market/stop_market buys, those use quote_quantity
+    /// `base_quantity` is used for everything except market and stop-market buys; those use
+    /// `quote_quantity`.
     #[ts(type = "string | null")]
     base_quantity: Option<Decimal>,
     #[ts(type = "string | null")]
@@ -380,7 +384,7 @@ pub struct OrderPayload {
     expire_time: Option<String>,                 //gtd only
 }
 
-// converts an amount in human units to the smallest unit of an asset with `decimals` decimals
+/// Converts an amount in human units to the smallest unit of an asset with `decimals` decimals.
 fn to_units(amount: Decimal, decimals: u32) -> Result<u128, StatusCode> {
     if amount <= Decimal::ZERO {
         return Err(StatusCode::BAD_REQUEST);
@@ -395,8 +399,9 @@ fn to_units(amount: Decimal, decimals: u32) -> Result<u128, StatusCode> {
     scaled.to_u128().ok_or(StatusCode::BAD_REQUEST)
 }
 
-// quote = price * base / 10^(price_decimals + base_decimals - quote_decimals),
-// rounded down. None if the exponent is negative/doesn't fit or on overflow
+/// `quote = price * base / 10^(price_decimals + base_decimals - quote_decimals)`, rounded down.
+///
+/// Returns `None` if the exponent is negative or doesn't fit, or on overflow.
 fn quote_for(
     price: u128,
     base: u128,
@@ -414,8 +419,10 @@ fn quote_for(
     u128::try_from(quote).ok()
 }
 
-//calculates what an order has to reserve. sell reserves base quantity, buy reserves the quote amount
-// plus a fee at the higher of the two rates (rounded up)
+/// Calculates what an order has to reserve.
+///
+/// A sell reserves the base quantity. A buy reserves the quote amount plus a fee at the higher
+/// of the two rates (rounded up).
 fn reservation_amount(
     side: Side,
     order_type: OrderType,
@@ -447,7 +454,7 @@ fn reservation_amount(
         .ok_or(StatusCode::BAD_REQUEST)
 }
 
-// checks that the fields that are set are the ones the order type needs.
+/// Checks that the fields that are set are the ones the order type needs.
 fn validate_shape(p: &OrderPayload) -> Result<(), StatusCode> {
     let has_limit = matches!(p.order_type, OrderType::Limit | OrderType::StopLimit);
     let is_stop = matches!(p.order_type, OrderType::StopLimit | OrderType::StopMarket);
@@ -472,7 +479,7 @@ fn validate_shape(p: &OrderPayload) -> Result<(), StatusCode> {
     }
 }
 
-// checks the market rules the engine doesn't check
+/// Checks the market rules that the engine doesn't check.
 fn check_market_rules(
     m: &MarketRow,
     base: Option<u128>,
@@ -520,7 +527,8 @@ struct PlaceRow {
     taker_fee_bps: u32,
 }
 
-// engine's answer to an order, only for the reply of placeorder
+/// The engine's answer to an order. Only used for the reply to
+/// [`PlaceOrder`](EngineClient::place_order).
 #[derive(Debug, Clone, PartialEq)]
 pub struct EngineAnswer {
     pub status: Option<OrderStatus>,
@@ -529,16 +537,17 @@ pub struct EngineAnswer {
     pub filled_quote: Option<u128>,
 }
 
-// what a PlaceOrder attempt means for the order
+/// What a [`PlaceOrder`](EngineClient::place_order) attempt means for the order.
 #[derive(Debug, PartialEq)]
 enum PlaceVerdict {
-    // the engine took the order
+    /// The engine took the order.
     Accepted(EngineAnswer),
-    // the engine refused
+    /// The engine refused it.
     Rejected(DomainRejectReason),
-    //timeout/error occurred so send the same command again
+    /// A timeout or an error occurred, so send the same command again.
     Retry,
-    // an answer that doesn't fit, in this case we just log (because something is very very wrong so shouldnt happen usually)
+    /// An answer that doesn't fit. We only log it, because something is very wrong (this shouldn't
+    /// usually happen).
     Anomaly,
 }
 
@@ -549,7 +558,7 @@ fn timestamp_from_micros(micros: i64) -> proto::Timestamp {
     }
 }
 
-// builds the PlaceOrderRequest for an order from its stored row
+/// Builds the [`PlaceOrderRequest`] for an order from its stored row.
 fn build_place_request(row: &PlaceRow) -> PlaceOrderRequest {
     let uint = |v: u128| proto::Uint128::from(v);
     let amount = match (row.quote_quantity, row.base_quantity) {
@@ -582,7 +591,8 @@ fn build_place_request(row: &PlaceRow) -> PlaceOrderRequest {
     }
 }
 
-// reads what a PlaceOrder attempt means and gives a verdict
+/// Reads what a [`PlaceOrder`](EngineClient::place_order) attempt means and gives a
+/// [`PlaceVerdict`].
 fn classify_place(
     result: Result<Result<PlaceOrderResponse, tonic::Status>, tokio::time::error::Elapsed>,
 ) -> PlaceVerdict {
@@ -604,7 +614,7 @@ fn classify_place(
     }
 }
 
-// timeout for tb
+/// Timeout for TigerBeetle.
 const ORDER_STEP_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn parse_u128(s: &str) -> Result<u128, StatusCode> {
@@ -615,7 +625,7 @@ fn parse_u128_opt(s: &Option<String>) -> Result<Option<u128>, StatusCode> {
     s.as_deref().map(parse_u128).transpose()
 }
 
-// an order as the steps of advance_order need it.
+/// An order as the steps of [`advance_order`] need it.
 #[derive(sqlx::FromRow)]
 struct AdvanceRow {
     order_id: Uuid,
@@ -645,7 +655,7 @@ struct AdvanceRow {
 }
 
 impl AdvanceRow {
-    //gives account and ledger id of the correct reserved asset
+    /// Gives the account and ledger id of the correct reserved asset.
     fn reserved_asset(&self) -> (Uuid, i32) {
         match self.side {
             Side::Buy => (self.quote_account_id, self.quote_ledger_id),
@@ -654,7 +664,7 @@ impl AdvanceRow {
     }
 }
 
-// Where the order is at
+/// Where the order is at.
 #[derive(Debug)]
 pub struct Advance {
     pub submission: Submission,
@@ -662,9 +672,13 @@ pub struct Advance {
     pub answer: Option<EngineAnswer>,
 }
 
-// Does the next step of an order (as many as possible in a row): hold account + reservation
-// (reserving), PlaceOrder (sent), the refund of a rejection. A step that can't finish just stops and the order
-// stays where it is, the relay picks up
+/// Does the next step of an order (as many as possible in a row):
+/// - the hold account and reservation (`reserving`),
+/// - [`PlaceOrder`](EngineClient::place_order) (`sent`),
+/// - the refund of a rejection.
+///
+/// A step that can't finish just stops, and the order stays where it is. The
+/// [order relay](crate::relay::order_relay_loop) picks it up.
 pub async fn advance_order(
     state: &AppState,
     order_id: Uuid,
@@ -729,8 +743,10 @@ pub async fn advance_order(
     })
 }
 
-// creates the hold account, moves the money into it and marks the order `sent` or marks it
-// `rejected` when there's no funds. false if something couldn't be done right now
+/// Creates the hold account, moves the money into it, and marks the order `sent`, or marks it
+/// `rejected` when there are no funds.
+///
+/// Returns `false` if something couldn't be done right now.
 async fn reserve(state: &AppState, row: &AdvanceRow) -> Result<bool, StatusCode> {
     let hold_id = row.order_id.as_u128();
     let (user_account, ledger) = row.reserved_asset();
@@ -847,13 +863,14 @@ async fn reserve(state: &AppState, row: &AdvanceRow) -> Result<bool, StatusCode>
 }
 
 enum Sent {
-    // the order's state in postgres changed
+    /// The order's state in Postgres changed.
     Moved(Option<EngineAnswer>),
-    // no usable answer, same state, try again later
+    /// No usable answer and the same state. Try again later.
     Stuck,
 }
 
-// sends PlaceOrder, up to `attempts` and records what the engine says
+/// Sends [`PlaceOrder`](EngineClient::place_order) up to `attempts` times, and records what the
+/// engine says.
 async fn send(state: &AppState, row: &AdvanceRow, attempts: u32) -> Result<Sent, StatusCode> {
     let request = build_place_request(&PlaceRow {
         order_id: row.order_id,
@@ -936,7 +953,7 @@ async fn send(state: &AppState, row: &AdvanceRow, attempts: u32) -> Result<Sent,
     }
 }
 
-// gives the rest of the hold account back to the user. true when it is done
+/// Gives the rest of the hold account back to the user. Returns `true` when it's done.
 async fn refund(state: &AppState, row: &AdvanceRow) -> Result<bool, StatusCode> {
     let (user_account, ledger) = row.reserved_asset();
     let transfer = tb::Transfer {
@@ -983,7 +1000,8 @@ async fn refund(state: &AppState, row: &AdvanceRow) -> Result<bool, StatusCode> 
 }
 
 //                                                           API ENDPOINTS
-//create user and write it to postgress. returns the user details, or an error if it fails.
+
+/// Creates a user and writes it to Postgres. Returns the user's details, or an error if it fails.
 pub async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<UserPayload>,
@@ -996,7 +1014,7 @@ pub async fn create_user(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-//fetches all users; returns the list, or an error.
+/// Fetches all users. Returns the list, or an error.
 pub async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>, StatusCode> {
     sqlx::query_as::<_, User>("SELECT * FROM users")
         .fetch_all(&state.pg_connections)
@@ -1005,14 +1023,18 @@ pub async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-//create account with unique ID and writes it to postgres. It also creates an entry into the outbox,
-//which is monitored by the relay. after that, it attempts to create the tigerbeetle account by
-//itself and mark the outbox entry as done, while also marking the account as active.
-//If that fails, the relay will use the outbox to create the account. returns CREATED when
-// both writes succeed, ACCEPTED if only postgres succeeds. In any other case, returns error.
-//
-// this is probably the most critical endpoint of the API. change it with care and extensive
-// testing.
+/// Creates an account with a unique id and writes it to Postgres.
+///
+/// It also creates an entry in the outbox, which the [relay](crate::relay::relay_loop) monitors.
+/// After that, it tries to create the TigerBeetle account by itself, mark the outbox entry as
+/// done, and mark the account as active. If that fails, the relay uses the outbox to create the
+/// account.
+///
+/// Returns `CREATED` when both writes succeed, and `ACCEPTED` if only Postgres succeeds. In any
+/// other case, it returns an error.
+///
+/// This is probably the most critical endpoint of the API. Change it with care and extensive
+/// testing.
 pub async fn create_account(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -1124,9 +1146,10 @@ pub async fn create_account(
     Ok((StatusCode::ACCEPTED, Json(account)))
 }
 
-// closes an account and returns no content if it was able to do it/was already closed. It doesnt
-// need timeouts with tb because retrying is 100% safe.
-
+/// Closes an account. Returns no content if it was able to close it, or if it was already
+/// closed.
+///
+/// It doesn't need timeouts with TigerBeetle, because retrying is 100% safe.
 pub async fn close_account(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
@@ -1222,7 +1245,10 @@ pub async fn close_account(
     }
 }
 
-// reopens a closed account.Returns NO CONTENT for already open accounts and when it succeeds at reopening an account
+/// Reopens a closed account.
+///
+/// Returns `NO_CONTENT` when it succeeds at reopening the account, and for accounts that are
+/// already open.
 pub async fn reopen_account(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
@@ -1280,9 +1306,13 @@ pub async fn reopen_account(
     }
 }
 
-// credits an account from the ledger's source account. The idempotency key comes from frontend as UUIDv7 and
-// its there so we dont duplicate deposits on retries, returns CREATED with the transfer when we succeed at making the deposit,
-// OK with the same transfer if its a retry of an already successful deposit and  CONFLICT if there is a conflict (for example that its same key but different amount)
+/// Credits an account from the ledger's source account.
+///
+/// The idempotency key comes from the frontend as a UUIDv7. It's there so retries don't
+/// duplicate deposits. Returns:
+/// - `CREATED` with the transfer, when the deposit succeeds.
+/// - `OK` with the same transfer, if it's a retry of a deposit that already succeeded.
+/// - `CONFLICT` if there is a conflict (for example, the same key but a different amount).
 pub async fn create_deposit(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
@@ -1406,7 +1436,7 @@ pub async fn create_deposit(
     ))
 }
 
-// returns information about the user
+/// Returns information about the user.
 pub async fn fetch_user(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -1422,7 +1452,7 @@ pub async fn fetch_user(
         })
 }
 
-//returns with information about the account. use this endpoint to poll the account's status.
+/// Returns information about the account. Use this endpoint to poll the account's status.
 pub async fn fetch_account(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
@@ -1438,7 +1468,7 @@ pub async fn fetch_account(
         })
 }
 
-//returns with information about the account's position
+/// Returns information about the account's position.
 pub async fn fetch_account_position(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
@@ -1498,10 +1528,15 @@ pub async fn fetch_account_position(
     Ok(Json(position))
 }
 
-// gives am account's transfers, newest first, limited to a page per call (the limit part of the TransferQuery, which should be max 100 and is 50 if you dont set it)
-// when you call the endpoint the first time you dont set the cursor so you get the first page,
-// the response of that call will give you next_cursor which is a timestamp of the first element of next page,
-// so you can send it back with youre query again and you get the next page. if next_cursor is none its the last page
+/// Gives an account's transfers, newest first, one page per call.
+///
+/// The page size is the `limit` of the [`TransferQuery`]: at most 100, and 50 if you don't set
+/// it.
+///
+/// The first time you call the endpoint, don't set the cursor, so you get the first page. The
+/// response gives you `next_cursor`, which is the timestamp of the first element of the next
+/// page. Send it back with your query to get the next page. If `next_cursor` is `None`, it's the
+/// last page.
 pub async fn list_account_transfers(
     State(state): State<AppState>,
     Path(account_id): Path<Uuid>,
@@ -1576,7 +1611,7 @@ pub async fn list_account_transfers(
     Ok(Json(TransferPage { items, next_cursor }))
 }
 
-//lists all ledgers
+/// Lists all ledgers.
 pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledger>>, StatusCode> {
     load_ledgers(&state.pg_connections)
         .await
@@ -1584,7 +1619,7 @@ pub async fn list_ledgers(State(state): State<AppState>) -> Result<Json<Vec<Ledg
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-// fetches a ledger by its symbol
+/// Fetches a ledger by its symbol.
 pub async fn fetch_ledger(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -1596,9 +1631,11 @@ pub async fn fetch_ledger(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-// creates a new ledger. It also enforces the db requirements.
-// Additionally, creates the fee account (for collecting fees) and the source account (for giving
-// money to users). if those accounts cant be created, the relay picks them up
+/// Creates a new ledger, and enforces the database requirements.
+///
+/// It also creates the fee account (for collecting fees) and the source account (for giving
+/// money to users). If those accounts can't be created, the [relay](crate::relay::relay_loop)
+/// picks them up.
 pub async fn create_ledger(
     State(state): State<AppState>,
     Json(payload): Json<LedgerPayload>,
@@ -1638,7 +1675,7 @@ pub async fn create_ledger(
     }
 }
 
-//enable/disable the ledger. payload must contain information on if it's on or off
+/// Enables or disables the ledger. The [`LedgerEnabledPayload`] says whether it's on or off.
 pub async fn set_ledger_enabled(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -1659,9 +1696,12 @@ pub async fn set_ledger_enabled(
     Ok(Json(updated))
 }
 
-// creates a market. It starts halted but its activated once the engine confirms it, which can fail,
-// so there's a relay to pick that up too.
-// The fee account is the quote ledger's system fee account
+/// Creates a market.
+///
+/// It starts halted, and is activated once the engine confirms it. That can fail, so there's a
+/// [relay](crate::relay::market_relay_loop) to pick it up too.
+///
+/// The fee account is the quote ledger's system fee account.
 pub async fn create_market(
     State(state): State<AppState>,
     Json(payload): Json<MarketPayload>,
@@ -1790,7 +1830,7 @@ pub async fn create_market(
     Ok((status, Json(Market::from_row(row, base, quote)?)))
 }
 
-// what the engine said to a SetMarket
+/// What the engine said to a [`SetMarket`](EngineClient::set_market).
 #[derive(Debug, PartialEq)]
 pub enum MarketVerdict {
     Accepted,
@@ -1799,8 +1839,7 @@ pub enum MarketVerdict {
     Anomaly, // an answer a retry can't fix, its logged only (something very wrong in our code)
 }
 
-// One attempt at telling the engine about a market
-//repeating it is safe
+/// One attempt at telling the engine about a market. Repeating it is safe.
 pub async fn advance_market(state: &AppState, market_id: i32) -> Result<MarketVerdict, StatusCode> {
     let (symbol, price_decimals, base_decimals, quote_decimals, fee_account) =
         sqlx::query_as::<_, (String, i16, i16, i16, Uuid)>(
@@ -1854,7 +1893,7 @@ pub async fn advance_market(state: &AppState, market_id: i32) -> Result<MarketVe
     }
 }
 
-// takes a market out
+/// Takes a market out.
 pub async fn remove_market(
     conn: &mut sqlx::PgConnection,
     market_id: i32,
@@ -1868,7 +1907,8 @@ pub async fn remove_market(
     Ok(())
 }
 
-// stamps the outbox row and turns it on, only happens once either directly in the backend or via the relay
+/// Stamps the outbox row and turns the market on. This only happens once, either directly in
+/// the backend or via the [relay](crate::relay::market_relay_loop).
 pub async fn activate_market(
     executor: impl sqlx::PgExecutor<'_>,
     market_id: i32,
@@ -1888,7 +1928,7 @@ pub async fn activate_market(
     Ok(())
 }
 
-// lists all markets
+/// Lists all markets.
 pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Market>>, StatusCode> {
     let market_rows = load_markets(&state.pg_connections)
         .await
@@ -1908,7 +1948,7 @@ pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Mark
     Ok(Json(markets))
 }
 
-// fetches a specific market by its symbol
+/// Fetches a specific market by its symbol.
 pub async fn fetch_market(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -1923,10 +1963,11 @@ pub async fn fetch_market(
     Ok(Json(Market::from_row(m, base, quote)?))
 }
 
-// how many times the backend itself sends PlaceOrder, after that the relay keeps trying
+/// How many times the backend itself sends [`PlaceOrder`](EngineClient::place_order). After that,
+/// the [order relay](crate::relay::order_relay_loop) keeps trying.
 const HANDLER_ENGINE_ATTEMPTS: u32 = 2;
 
-// figures out the HTTP answer for PlaceOrder and gives it back.
+/// Figures out the HTTP answer for [`PlaceOrder`](EngineClient::place_order) and gives it back.
 fn order_outcome(
     submission: Submission,
     reject_reason: Option<DomainRejectReason>,
@@ -1951,7 +1992,7 @@ fn order_outcome(
     }
 }
 
-// checks that this user can trade with the account on this ledger
+/// Checks that this user can trade with the account on this ledger.
 async fn check_order_account(
     pool: &PgPool,
     account_id: Uuid,
@@ -1978,8 +2019,8 @@ async fn check_order_account(
     Ok(())
 }
 
-// a database error about the text the client sent (a bad format, bad characters: class 22) is the
-// client's fault, anything else is ours
+/// A database error about the text the client sent (a bad format, or bad characters: class 22)
+/// is the client's fault; anything else is ours.
 fn bad_text_or_500(e: sqlx::Error) -> StatusCode {
     match e.as_database_error().and_then(|d| d.code()).as_deref() {
         Some(code) if code.starts_with("22") => StatusCode::BAD_REQUEST,
@@ -1987,7 +2028,7 @@ fn bad_text_or_500(e: sqlx::Error) -> StatusCode {
     }
 }
 
-// the quantities and prices of an order as text
+/// The quantities and prices of an order, as text.
 struct OrderTexts {
     base: Option<String>,
     quote: Option<String>,
@@ -1996,7 +2037,10 @@ struct OrderTexts {
     protection: Option<String>,
 }
 
-// looks for the order an idempotency_key was used for. Some((order_id, same)): same says whether its the same order or simething else
+/// Looks for the order an `idempotency_key` was used for.
+///
+/// Returns `Some((order_id, same))`, where `same` says whether it's the same order or something
+/// else.
 async fn find_order_by_key(
     pool: &PgPool,
     user_id: Uuid,
@@ -2037,9 +2081,15 @@ async fn find_order_by_key(
     .map_err(bad_text_or_500)
 }
 
-// Places an order, doing checks in the way: first that all the fields are properly set in the request,
-// then if the user/market exists, then the units and then if the idempotency key was used before (and in that case we give the order back so retrying is safe).
-// it saves the order and tries to complete it, whatever isnt finished is completed by the order relay.
+/// Places an order, doing checks along the way:
+/// 1. That all the fields are properly set in the request.
+/// 2. That the user and the market exist.
+/// 3. The units.
+/// 4. Whether the idempotency key was used before. If it was, the order is given back, so
+///    retrying is safe.
+///
+/// It saves the order and tries to complete it. Whatever isn't finished is completed by the
+/// [order relay](crate::relay::order_relay_loop).
 pub async fn create_order(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -2294,7 +2344,8 @@ pub async fn create_order(
     order_outcome(order.submission, order.reject_reason, fresh).map(|code| (code, Json(order)))
 }
 
-// returns an order by id. Submission comes from the side of the backend, and status from the engine
+/// Returns an order by id. The submission comes from the backend's side, and the status from
+/// the engine.
 pub async fn fetch_order(
     State(state): State<AppState>,
     Path(order_id): Path<Uuid>,
@@ -2331,9 +2382,12 @@ pub async fn fetch_order(
     Ok(Json(Order::from_row(o, &m, &base, &quote)?))
 }
 
-// gives a user's orders, newest first
-// market (a symbol) and status can be used to filter, status can also be "open" which is every order that can still trade
-// returns the page + next cursor
+/// Gives a user's orders, newest first.
+///
+/// `market` (a symbol) and `status` can be used to filter. `status` can also be `open`, which is
+/// every order that can still trade.
+///
+/// Returns the page and the next cursor.
 pub async fn list_user_orders(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -2432,9 +2486,12 @@ pub async fn list_user_orders(
     Ok(Json(OrderPage { items, next_cursor }))
 }
 
-// gives the orders of a market (by symbol), newest first
-// status can be used to filter, it can also be "open" which is every order that can still trade
-// returns the page + next cursor
+/// Gives the orders of a market (by symbol), newest first.
+///
+/// `status` can be used to filter. It can also be `open`, which is every order that can still
+/// trade.
+///
+/// Returns the page and the next cursor.
 pub async fn list_market_orders(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -2499,7 +2556,7 @@ pub async fn list_market_orders(
     Ok(Json(OrderPage { items, next_cursor }))
 }
 
-// gives every trade an order took part in (as buyer or seller), oldest first
+/// Gives every trade an order took part in (as buyer or seller), oldest first.
 pub async fn list_order_trades(
     State(state): State<AppState>,
     Path(order_id): Path<Uuid>,
@@ -2543,8 +2600,9 @@ pub async fn list_order_trades(
     Ok(Json(trades))
 }
 
-// gives the trades of a market (by symbol), newest first
-// returns the page + next cursor
+/// Gives the trades of a market (by symbol), newest first.
+///
+/// Returns the page and the next cursor.
 pub async fn list_market_trades(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -2595,7 +2653,7 @@ pub async fn list_market_trades(
     Ok(Json(TradePage { items, next_cursor }))
 }
 
-// 24 hour summary of a market (by symbol), computed from its trades
+/// A 24-hour summary of a market (by symbol), computed from its trades.
 pub async fn fetch_market_ticker(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -2639,7 +2697,7 @@ mod order_tests {
         Decimal::new(mantissa, scale)
     }
 
-    // a valid limit buy, each test changes the fields it is about
+    /// A valid limit buy. Each test changes the fields it is about.
     fn payload() -> OrderPayload {
         OrderPayload {
             idempotency_key: Uuid::from_u128(1),

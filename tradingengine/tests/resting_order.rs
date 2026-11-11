@@ -1,4 +1,4 @@
-// One whole unit at 8 decimals. A test fixture only: scale is per market now.
+/// One whole unit at 8 decimals. Only a test fixture: the scale is set per market now.
 const ONE: u128 = 100_000_000;
 use tradingengine::error::EngineError;
 use tradingengine::ids::{CommandId, OrderId, UserId};

@@ -140,7 +140,7 @@ async fn party(pool: &PgPool, w: &World) -> Party {
     }
 }
 
-// a limit order with limit price 1000, `status` still NULL as before any engine report
+/// A limit order with limit price 1000, and `status` still NULL, as before any engine report.
 async fn order(pool: &PgPool, w: &World, p: &Party, buyer: bool) -> Uuid {
     let order_id = Uuid::new_v4();
     sqlx::query(
@@ -190,7 +190,7 @@ fn update(order_id: Uuid, status: i16, filled_base: u128, filled_quote: u128) ->
     }
 }
 
-// (status, filled_base, filled_quote, limit_price)
+/// Returns `(status, filled_base, filled_quote, limit_price)`.
 async fn order_state(pool: &PgPool, id: Uuid) -> (Option<i16>, String, String, Option<String>) {
     sqlx::query_as(
         "SELECT status, filled_base_quantity::text, filled_quote_quantity::text, limit_price::text \
@@ -355,7 +355,7 @@ fn tb_client() -> tb::Client {
     tb::Client::new(cluster, &addresses).expect("tigerbeetle client")
 }
 
-// ledger numbers are cluster-wide, so every test takes a fresh one
+/// Ledger numbers are cluster-wide, so every test takes a fresh one.
 fn fresh_tb_ledger() -> u32 {
     (Uuid::new_v4().as_u128() as u32) | 1
 }
@@ -679,7 +679,8 @@ impl TradingEngine for FakeRouter {
     }
 }
 
-// serves the scripted subscriptions (the n-th subscribe gets the n-th script) and returns its url
+/// Serves the scripted subscriptions (the n-th subscribe gets the n-th script) and returns its
+/// URL.
 async fn serve(subs: Vec<Sub>) -> (String, Arc<AtomicUsize>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -769,8 +770,8 @@ struct Scenario {
     seller: Party,
     buy_order: Uuid,
     sell_order: Uuid,
-    // each scenario has its own trade id: a trade that is already recorded is skipped, so a shared
-    // id would make parallel tests (and reruns on the same database) skip each other's trades
+    /// Each scenario has its own trade id. A trade that is already recorded is skipped, so a shared
+    /// id would make parallel tests (and reruns on the same database) skip each other's trades.
     trade: u128,
 }
 
@@ -780,8 +781,10 @@ const BUYER_FEE: u128 = 3000;
 const SELLER_FEE: u128 = 1000;
 const BUY_RESERVATION: u128 = 1_010_000;
 
-// Postgres rows and funded tigerbeetle accounts for one buyer and one seller. Each order has a
-// hold account (id = order id) holding what it reserved: the buyer quote, the seller base.
+/// Postgres rows and funded TigerBeetle accounts for one buyer and one seller.
+///
+/// Each order has a hold account (id = order id) holding what it reserved: quote for the buyer,
+/// base for the seller.
 async fn scenario(pool: &PgPool, c: &tb::Client) -> Scenario {
     let w = world(pool).await;
     let (buyer, seller) = (party(pool, &w).await, party(pool, &w).await);
@@ -896,7 +899,7 @@ async fn is_settled(pool: &PgPool, s: &Scenario) -> bool {
         == 2
 }
 
-// the money must have moved exactly once, however many times the events were delivered
+/// The money must have moved exactly once, however many times the events were delivered.
 async fn assert_settled_exactly_once(pool: &PgPool, c: &tb::Client, s: &Scenario) {
     let id = |u: Uuid| u.as_u128();
     assert_eq!(

@@ -5,9 +5,10 @@ use crate::error::{EngineError, Result};
 use crate::quote::QuoteScale;
 use crate::wire::required;
 
-// every market requires a Market, a scale and a book
-// scale is calculated by the engine market is given by backend and
-// book is help by the Market
+/// Everything a market needs: a [`Market`], a [`QuoteScale`] and a [`Book`].
+///
+/// The backend gives the [`Market`], the engine calculates the scale, and the book is
+/// held by the market.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarketInfo {
     market: Market,
@@ -25,8 +26,10 @@ impl MarketInfo {
         })
     }
 
-    // if a market already exists it can be configured only if it has no open orders in the book
-    // the book cannot be modified here only but that will be implemented seperately (CancelOrdersRequest event)
+    /// Reconfigures an existing market. This only works if its book has no open orders.
+    ///
+    /// The book can't be changed here. That will be implemented separately, with a
+    /// [`CancelOrdersRequest`](proto::CancelOrdersRequest).
     pub fn reconfigure(&mut self, market: Market) -> Result<()> {
         let scale = check_definition_and_get_scale(&market)?;
         if !self.book.is_empty() && !same_decimals(&self.market, &market) {
@@ -50,9 +53,10 @@ impl MarketInfo {
     }
 }
 
-// everything a market must have before it can be initialized
-// checking the scale also returns the scale so to avoid doing
-// the calculations twice the funtion returns the scale as well
+/// Checks everything a market must have before it can be created.
+///
+/// Checking the scale already calculates it, so the function returns the
+/// [`QuoteScale`] as well, to avoid doing the calculation twice.
 fn check_definition_and_get_scale(market: &Market) -> Result<QuoteScale> {
     if market.symbol.is_empty() {
         return Err(EngineError::MarketSymbolEmpty);

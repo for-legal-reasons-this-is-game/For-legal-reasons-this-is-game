@@ -8,9 +8,12 @@ pub mod trading {
 
 pub use trading::v1::*;
 
-// seconds: i64 plus nanos: i32. prost-types provides conversions to and from std::time::SystemTime:
-//- Going from SystemTime to Timestamp always succeeds, so it uses From.
-//- Going from Timestamp to SystemTime can fail for example if the nanoseconds are out of range, so it uses TryFrom. handle the error by rejecting or logging the message.
+/// A [`Timestamp`] is `seconds: i64` plus `nanos: i32`. `prost-types` provides conversions
+/// to and from [`SystemTime`](std::time::SystemTime):
+/// - Going from `SystemTime` to `Timestamp` always succeeds, so it uses [`From`].
+/// - Going from `Timestamp` to `SystemTime` can fail, for example if the nanoseconds are
+///   out of range, so it uses [`TryFrom`]. Handle the error by rejecting or logging the
+///   message.
 pub use prost_types::{Timestamp, TimestampError};
 
 impl From<u128> for Uint128 {

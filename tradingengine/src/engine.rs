@@ -13,24 +13,26 @@ pub const MAX_MARKETS: usize = 8;
 
 const LOCK: &str = "engine lock poisoned";
 
-// the engine routes each command to the thread of its market.
-// String is the name of the Market: btc-usd
-// the lock only guards the list of markets, never a book: it is held just long
-// enough to find or add a handle and is never held while waiting on a market
-#[derive(Debug, Default)]
+/// Holds every market, keyed by the market's name (for example `btc-usd`).
+///
+/// Each market is a [`MarketInfo`].
+/// the lock only guards the list of markets, never a book: it is held just long
+/// enough to find or add a handle and is never held while waiting on a market
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Engine {
     markets: RwLock<HashMap<String, MarketHandle>>,
 }
 
 impl Engine {
-    // Engine starts without any books this might change for recovery
+    /// Creates an engine without any books. This might change for recovery.
     pub fn new() -> Self {
         Self::default()
     }
 
-    // set market tries to set a Market's values from backend
-    // it can also reconfigure a markets scale or values
-    // the market can only be be reconfigured if it has an empty book
+    /// Sets a market's values from the backend's [`SetMarketRequest`].
+    ///
+    /// It can also reconfigure an existing market's scale or values, but only if the
+    /// market's book is empty.
     pub async fn set_market(&self, request: SetMarketRequest) -> SetMarketResponse {
         match self.try_set_market(request).await {
             Ok(()) => SetMarketResponse::default(),

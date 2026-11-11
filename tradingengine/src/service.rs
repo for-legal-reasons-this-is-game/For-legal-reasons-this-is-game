@@ -9,8 +9,10 @@ use tonic::{Request, Response, Status};
 
 use crate::engine::Engine;
 
-// every market runs on its own thread inside the engine, so the service holds
-// no lock of its own and a slow market does not hold up the others
+/// The engine's gRPC service.
+///
+/// For now there is one [`Engine`] per market. This will change when multithreading is
+/// implemented.
 #[derive(Default)]
 pub struct EngineService {
     engine: Engine,

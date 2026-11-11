@@ -17,7 +17,7 @@ fn parse_u128(s: &str) -> sqlx::Result<u128> {
     s.parse().map_err(|e| sqlx::Error::Decode(Box::new(e)))
 }
 
-// which of these trades are already recorded
+/// Which of these trades are already recorded.
 pub async fn known_trade_ids(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<HashSet<Uuid>> {
     if ids.is_empty() {
         return Ok(HashSet::new());
@@ -32,7 +32,7 @@ pub async fn known_trade_ids(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<HashSe
 
 type OrderTuple = (Uuid, Uuid, i32, Uuid, Uuid, i16, Option<String>, i32, i32);
 
-// the backend writes these columns while we run, so they are read fresh for every batch
+/// The backend writes these columns while we run, so they are read fresh for every batch.
 pub async fn load_orders(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<HashMap<Uuid, OrderRow>> {
     if ids.is_empty() {
         return Ok(HashMap::new());
@@ -100,10 +100,15 @@ pub async fn load_markets(
         .collect())
 }
 
-// Writes a whole batch in one transaction. `updates` must hold at most one entry per order
-// (build_plan guarantees it). An update only applies if the order is not finished and its filled
-// amounts do not go down; anything else is a replay of something older and is skipped. `status IS
-// NULL` is explicit: a new order has no status, and NULL NOT IN (...) is never true.
+/// Writes a whole batch in one transaction.
+///
+/// `updates` must hold at most one entry per order
+/// ([`build_plan`](crate::consumer::plan::build_plan) guarantees it). An update only applies if
+/// the order isn't finished and its filled amounts don't go down; anything else is a replay of
+/// something older and is skipped.
+///
+/// `status IS NULL` is explicit: a new order has no status, and `NULL NOT IN (...)` is never
+/// true.
 pub async fn commit(
     pool: &PgPool,
     trades: &[TradeInsert],

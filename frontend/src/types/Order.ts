@@ -8,6 +8,9 @@ import type { Submission } from "./Submission";
 import type { TimeInForce } from "./TimeInForce";
 import type { TriggerDirection } from "./TriggerDirection";
 
+/**
+ * The order as it is actually returned.
+ */
 export type Order = {
     order_id: string;
     idempotency_key: string;
@@ -27,6 +30,9 @@ export type Order = {
     expire_time: string | null;
     maker_fee_bps: number;
     taker_fee_bps: number;
+    /**
+     * In the quote asset for a buy, and in the base asset for a sell.
+     */
     reserved_amount: string;
     submission: Submission;
     reject_reason: RejectReason | null;

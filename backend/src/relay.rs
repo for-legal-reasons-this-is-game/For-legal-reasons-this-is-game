@@ -15,8 +15,9 @@ struct TbOutbox {
     code: AccountCodeType,
     user_id: Uuid,
 }
-// The relay gets launched as a working thread, drains postgres' outbox, creates the account for tb.
-// basically, it polls every, more or less, second.
+/// Drains Postgres' outbox and creates the accounts in TigerBeetle.
+///
+/// The relay is launched as a worker thread and polls roughly once per second.
 pub async fn relay_loop(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -126,7 +127,15 @@ pub async fn relay_loop(state: AppState) {
     }
 }
 
-// this relay completes the steps of an order that the backend didnt do: its hold account and reservation, the PlaceOrder, or the refund of a rejection.
+/// Completes order-processing steps that the backend didn't finish.
+///
+/// The relay handles three operations:
+/// - Creating the order's hold account.
+/// - Creating the required reservation.
+/// - Executing [`PlaceOrder`](crate::service::EngineClient::place_order) or refunding a
+///   rejected order.
+///
+/// This function runs continuously, checking for incomplete operations once per second.
 pub async fn order_relay_loop(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -136,7 +145,7 @@ pub async fn order_relay_loop(state: AppState) {
     }
 }
 
-// one pass of order_relay_loop
+/// One pass of [`order_relay_loop`].
 pub async fn order_relay_tick(state: &AppState) {
     let tx = state.pg_connections.begin().await;
     if let Err(e) = tx {
@@ -192,7 +201,7 @@ pub async fn order_relay_tick(state: &AppState) {
     }
 }
 
-// relay for markets. We need one because of all the network calls
+/// The relay for markets. It is needed because of all the network calls.
 pub async fn market_relay_loop(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -202,7 +211,7 @@ pub async fn market_relay_loop(state: AppState) {
     }
 }
 
-// one pass of market_relay_loop
+/// One pass of [`market_relay_loop`].
 pub async fn market_relay_tick(state: &AppState) {
     let tx = state.pg_connections.begin().await;
     if let Err(e) = tx {

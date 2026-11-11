@@ -4,4 +4,9 @@ import type { Side } from "./Side";
 import type { TimeInForce } from "./TimeInForce";
 import type { TriggerDirection } from "./TriggerDirection";
 
-export type OrderPayload = { idempotency_key: string, market: string, base_account_id: string, quote_account_id: string, side: Side, order_type: OrderType, time_in_force: TimeInForce, base_quantity: string | null, quote_quantity: string | null, limit_price: string | null, trigger_price: string | null, trigger_direction: TriggerDirection | null, protection_price: string | null, expire_time: string | null, };
+export type OrderPayload = { idempotency_key: string, market: string, base_account_id: string, quote_account_id: string, side: Side, order_type: OrderType, time_in_force: TimeInForce, 
+/**
+ * `base_quantity` is used for everything except market and stop-market buys; those use
+ * `quote_quantity`.
+ */
+base_quantity: string | null, quote_quantity: string | null, limit_price: string | null, trigger_price: string | null, trigger_direction: TriggerDirection | null, protection_price: string | null, expire_time: string | null, };
