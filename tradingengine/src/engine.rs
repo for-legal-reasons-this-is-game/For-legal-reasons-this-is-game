@@ -109,13 +109,10 @@ impl Engine {
         let command_id = request.command_id;
         match self.try_cancel_order(request) {
             Ok((cancelled_order, filled_base)) => {
-                // TODO(mehras): RestingOrder doesn't keep the quote it has filled, so the answer
-                // has no filled_quote_quantity yet. The contract wants both filled amounts
-                // (how_to_use.md, "Handling command responses"). Settle how to track it, and
-                // until then tell Alvaro that a cancel answer only has the filled base
                 let mut response = CancelOrderResponse {
                     command_id,
                     filled_base_quantity: Some(Uint128::from(filled_base)),
+                    filled_quote_quantity: Some(Uint128::from(cancelled_order.filled_quote())),
                     ..CancelOrderResponse::default()
                 };
                 response.set_status(order_status(cancelled_order.status()));

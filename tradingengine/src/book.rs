@@ -4,7 +4,8 @@ use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::Side;
 use crate::price::Price;
-use crate::quantity::BaseQuantity;
+use crate::quantity::{BaseQuantity, QuoteQuantity};
+use crate::quote::QuoteScale;
 use crate::resting_order::RestingOrder;
 
 type Level = VecDeque<RestingOrder>; // all the orders at the same price 
@@ -16,6 +17,8 @@ pub struct Fill {
     pub taker: OrderId,
     pub price: Price,
     pub quantity: BaseQuantity,
+    /// What the fill was worth in the quote asset, rounded down like its `TradeSettlement`.
+    pub quote: QuoteQuantity,
 }
 
 /// The result returned after an order is matched against the [`Book`].
@@ -53,18 +56,29 @@ impl Execution {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Book {
     bids: BookSide, // wants to buy
     asks: BookSide, // wants to sell
     all_orders: HashMap<OrderId, (Side, Price)>,
     // orders are a general index of each order id to prevent double insertion and
     // faster search instead of walking down a whole bookside
+    scale: QuoteScale, // the market's scale, to work out what each fill is worth in quote
 }
 
 impl Book {
-    pub fn new() -> Self {
-        Self::default()
+    /// An empty book for a market with this [`QuoteScale`].
+    pub fn new(scale: QuoteScale) -> Self {
+        Self {
+            bids: BookSide::new(),
+            asks: BookSide::new(),
+            all_orders: HashMap::new(),
+            scale,
+        }
+    }
+
+    pub fn scale(&self) -> QuoteScale {
+        self.scale
     }
 
     /// Puts a new incoming order into the book, unless it can be matched against a
@@ -112,6 +126,7 @@ impl Book {
     ) -> Result<(Vec<Fill>, Vec<RestingOrder>)> {
         let taker_side = incoming.side();
         let limit = incoming.price();
+        let scale = self.scale;
 
         let opposite_side = match taker_side {
             Side::Buy => &mut self.asks,
@@ -151,15 +166,18 @@ impl Book {
                 let maker_id = maker.id();
                 let quantity = incoming.qty_remaining().min(maker.qty_remaining());
 
-                maker.fill(quantity)?;
+                // both sides trade at the maker's price, so the fill is worth the same to each
+                let quote = scale.quote_for(price, quantity)?;
+                maker.fill(quantity, quote)?;
                 let exhausted = maker.qty_remaining().is_zero();
-                incoming.fill(quantity)?;
+                incoming.fill(quantity, quote)?;
 
                 fills.push(Fill {
                     maker: maker_id,
                     taker: incoming.id(),
                     price,
                     quantity,
+                    quote,
                 });
 
                 if exhausted {

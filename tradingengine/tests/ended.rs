@@ -2,7 +2,7 @@ use tradingengine::ended::{EndedOrder, EndedOrders};
 use tradingengine::ids::{CommandId, OrderId, UserId};
 use tradingengine::order::{OrderStatus, Side};
 use tradingengine::price::Price;
-use tradingengine::quantity::BaseQuantity;
+use tradingengine::quantity::{BaseQuantity, QuoteQuantity};
 use tradingengine::resting_order::RestingOrder;
 
 fn owner(id: u128) -> UserId {
@@ -42,7 +42,10 @@ fn an_ended_order_is_remembered_with_its_owner_and_status() {
     let mut ended = EndedOrders::default();
     let mut filled = open(2);
     filled
-        .fill(BaseQuantity::from_minor_units(10))
+        .fill(
+            BaseQuantity::from_minor_units(10),
+            QuoteQuantity::from_minor_units(290),
+        )
         .expect("a fill of the whole order");
 
     ended.record(&cancelled(1));

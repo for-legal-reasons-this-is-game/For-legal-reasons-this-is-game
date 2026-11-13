@@ -20,15 +20,14 @@ pub struct Placed {
     pub filled_quote: QuoteQuantity,
 }
 
-/// Everything a market needs: a [`Market`], a [`QuoteScale`], a [`Book`], and the
-/// [`EndedOrders`] that have left the book.
+/// Everything a market needs: a [`Market`], a [`Book`] that knows the market's
+/// [`QuoteScale`], and the [`EndedOrders`] that have left the book.
 ///
 /// The backend gives the [`Market`], the engine calculates the scale, and the book and the
 /// ended orders are held by the market.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarketInfo {
     market: Market,
-    scale: QuoteScale,
     book: Book,
     ended: EndedOrders,
 }
@@ -38,8 +37,7 @@ impl MarketInfo {
         let scale = check_definition_and_get_scale(&market)?;
         Ok(MarketInfo {
             market,
-            scale,
-            book: Book::new(),
+            book: Book::new(scale),
             ended: EndedOrders::default(),
         })
     }
@@ -53,8 +51,12 @@ impl MarketInfo {
         if !self.book.is_empty() && !same_decimals(&self.market, &market) {
             return Err(EngineError::HasOpenOrders);
         }
+        // the scale only changes with the decimals, and those only change while the book is
+        // empty, so an empty book is swapped for one with the new scale
+        if self.book.is_empty() {
+            self.book = Book::new(scale);
+        }
         self.market = market;
-        self.scale = scale;
         Ok(())
     }
 
@@ -63,7 +65,7 @@ impl MarketInfo {
     }
 
     pub fn scale(&self) -> QuoteScale {
-        self.scale
+        self.book.scale()
     }
 
     pub fn book(&self) -> &Book {
@@ -92,12 +94,11 @@ impl MarketInfo {
             self.ended.record(ended_order);
         }
 
-        // round down per fill same as each TradeSettlement. the sum can come
-        // out lower then one quote_for on the total
+        // the book rounds each fill's quote down on its own, same as each TradeSettlement.
+        // the sum can come out lower then one quote_for on the total
         let mut filled_quote = QuoteQuantity::ZERO;
         for fill in execution.fills() {
-            let quote = self.scale.quote_for(fill.price, fill.quantity)?;
-            filled_quote = filled_quote.checked_add(quote)?;
+            filled_quote = filled_quote.checked_add(fill.quote)?;
         }
         let filled_base = execution.total_filled_quantity()?;
 
@@ -134,7 +135,7 @@ impl MarketInfo {
             (Side::Sell, Some(best_bid)) => best_bid.max(order.price()),
             _ => order.price(),
         };
-        self.scale.quote_for(highest_price, order.qty_total())?;
+        self.scale().quote_for(highest_price, order.qty_total())?;
         Ok(())
     }
 }

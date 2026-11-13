@@ -5,7 +5,8 @@ use tradingengine::error::EngineError;
 use tradingengine::ids::{CommandId, OrderId, UserId};
 use tradingengine::order::{OrderStatus, Side};
 use tradingengine::price::Price;
-use tradingengine::quantity::BaseQuantity;
+use tradingengine::quantity::{BaseQuantity, QuoteQuantity};
+use tradingengine::quote::QuoteScale;
 use tradingengine::resting_order::RestingOrder;
 
 fn order(id: u128, side: Side, whole_price: u128) -> RestingOrder {
@@ -28,9 +29,15 @@ fn price(whole: u128) -> Price {
     Price::from_minor_units(whole * ONE).expect("valid price")
 }
 
+/// Prices, quantities and quotes all at 8 decimals, so a fill's quote is
+/// price × quantity / 10^8.
+fn scale() -> QuoteScale {
+    QuoteScale::new(8, 8, 8).expect("valid scale")
+}
+
 #[test]
 fn an_empty_book_has_no_top_of_book() {
-    let book = Book::new();
+    let book = Book::new(scale());
 
     assert!(book.is_empty());
     assert_eq!(book.len(), 0);
@@ -40,7 +47,7 @@ fn an_empty_book_has_no_top_of_book() {
 
 #[test]
 fn insert_puts_an_order_where_get_can_find_it() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
 
@@ -55,13 +62,13 @@ fn insert_puts_an_order_where_get_can_find_it() {
 
 #[test]
 fn get_returns_nothing_for_an_unknown_id() {
-    let book = Book::new();
+    let book = Book::new(scale());
     assert!(book.get_by_id(OrderId::new(99)).is_none());
 }
 
 #[test]
 fn best_bid_is_the_highest_and_best_ask_the_lowest() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     // inserted out of order on purpose; the map is what sorts them
     for (id, side, whole_price) in [
         (1, Side::Buy, 29_000),
@@ -81,7 +88,7 @@ fn best_bid_is_the_highest_and_best_ask_the_lowest() {
 
 #[test]
 fn bids_read_highest_price_first_and_asks_lowest_first() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for (id, side, whole_price) in [
         (1, Side::Buy, 29_000),
         (2, Side::Buy, 29_002),
@@ -103,7 +110,7 @@ fn bids_read_highest_price_first_and_asks_lowest_first() {
 
 #[test]
 fn orders_at_one_price_read_oldest_first() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(order(id, Side::Buy, 29_000))
             .expect("valid insert");
@@ -115,7 +122,7 @@ fn orders_at_one_price_read_oldest_first() {
 
 #[test]
 fn time_priority_holds_across_price_levels() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     // two at the better price, two at the worse one, interleaved on insert
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
@@ -133,7 +140,7 @@ fn time_priority_holds_across_price_levels() {
 
 #[test]
 fn the_two_sides_hold_the_same_price_only_when_it_does_not_cross() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     // a bid below every ask: the two sides coexist because nothing crosses
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
@@ -149,7 +156,7 @@ fn the_two_sides_hold_the_same_price_only_when_it_does_not_cross() {
 
 #[test]
 fn remove_returns_the_order_and_takes_it_out() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
 
@@ -165,7 +172,7 @@ fn remove_returns_the_order_and_takes_it_out() {
 
 #[test]
 fn removing_the_last_order_at_a_price_drops_the_level() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_001))
         .expect("valid insert");
     book.insert(order(2, Side::Buy, 29_000))
@@ -181,7 +188,7 @@ fn removing_the_last_order_at_a_price_drops_the_level() {
 
 #[test]
 fn removing_one_order_leaves_the_rest_of_its_level() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(order(id, Side::Buy, 29_000))
             .expect("valid insert");
@@ -197,7 +204,7 @@ fn removing_one_order_leaves_the_rest_of_its_level() {
 
 #[test]
 fn remove_rejects_an_unknown_id_without_changing_the_book() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
     let before = book.clone();
@@ -211,7 +218,7 @@ fn remove_rejects_an_unknown_id_without_changing_the_book() {
 
 #[test]
 fn remove_twice_rejects_the_second_time() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
 
@@ -225,7 +232,7 @@ fn remove_twice_rejects_the_second_time() {
 
 #[test]
 fn insert_rejects_a_duplicate_id_without_changing_the_book() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
     let before = book.clone();
@@ -239,7 +246,7 @@ fn insert_rejects_a_duplicate_id_without_changing_the_book() {
 
 #[test]
 fn remove_returns_the_order_without_touching_its_status() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
 
@@ -257,7 +264,7 @@ fn remove_returns_the_order_without_touching_its_status() {
 
 #[test]
 fn modify_lowering_quantity_keeps_its_place() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(order(id, Side::Buy, 29_000))
             .expect("valid insert");
@@ -275,7 +282,7 @@ fn modify_lowering_quantity_keeps_its_place() {
 
 #[test]
 fn modify_changing_nothing_keeps_its_place() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(order(id, Side::Buy, 29_000))
             .expect("valid insert");
@@ -290,7 +297,7 @@ fn modify_changing_nothing_keeps_its_place() {
 
 #[test]
 fn modify_raising_quantity_sends_it_to_the_back() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(order(id, Side::Buy, 29_000))
             .expect("valid insert");
@@ -306,7 +313,7 @@ fn modify_raising_quantity_sends_it_to_the_back() {
 
 #[test]
 fn modify_to_a_new_price_goes_to_the_back_of_that_level() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
     book.insert(order(2, Side::Buy, 29_005))
@@ -323,7 +330,7 @@ fn modify_to_a_new_price_goes_to_the_back_of_that_level() {
 
 #[test]
 fn modify_after_a_partial_fill_keeps_what_was_filled() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
     book.insert(sized(2, Side::Sell, 29_000, 10))
@@ -344,7 +351,7 @@ fn modify_after_a_partial_fill_keeps_what_was_filled() {
 
 #[test]
 fn modify_rejects_a_quantity_not_above_what_is_filled() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
     book.insert(sized(2, Side::Buy, 29_000, 4))
@@ -367,7 +374,7 @@ fn modify_rejects_a_quantity_not_above_what_is_filled() {
 
 #[test]
 fn modify_rejects_an_unknown_id_without_changing_the_book() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
     let before = book.clone();
@@ -399,7 +406,7 @@ fn qty(minor_units: u128) -> BaseQuantity {
 
 #[test]
 fn an_order_that_does_not_cross_just_rests() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_010, 10))
         .expect("valid insert");
 
@@ -414,7 +421,7 @@ fn an_order_that_does_not_cross_just_rests() {
 
 #[test]
 fn a_crossing_order_trades_instead_of_resting() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
 
@@ -431,7 +438,7 @@ fn a_crossing_order_trades_instead_of_resting() {
 
 #[test]
 fn a_fill_happens_at_the_makers_price() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
 
@@ -448,7 +455,7 @@ fn a_fill_happens_at_the_makers_price() {
 
 #[test]
 fn a_partial_fill_leaves_the_remainder_resting() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 4))
         .expect("valid insert");
 
@@ -471,7 +478,7 @@ fn a_partial_fill_leaves_the_remainder_resting() {
 
 #[test]
 fn a_maker_that_is_not_exhausted_stays_with_less_left() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
 
@@ -489,7 +496,7 @@ fn a_maker_that_is_not_exhausted_stays_with_less_left() {
 
 #[test]
 fn a_taker_walks_levels_cheapest_first() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_002, 5))
         .expect("valid insert");
     book.insert(sized(2, Side::Sell, 29_000, 5))
@@ -512,7 +519,7 @@ fn a_taker_walks_levels_cheapest_first() {
 
 #[test]
 fn a_taker_stops_at_the_limit_price() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 5))
         .expect("valid insert");
     book.insert(sized(2, Side::Sell, 29_005, 5))
@@ -531,7 +538,7 @@ fn a_taker_stops_at_the_limit_price() {
 
 #[test]
 fn fills_take_the_oldest_order_at_a_price_first() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(sized(id, Side::Sell, 29_000, 5))
             .expect("valid insert");
@@ -552,7 +559,7 @@ fn fills_take_the_oldest_order_at_a_price_first() {
 
 #[test]
 fn a_selling_taker_walks_the_bids_highest_first() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Buy, 29_000, 5))
         .expect("valid insert");
     book.insert(sized(2, Side::Buy, 29_002, 5))
@@ -573,7 +580,7 @@ fn a_selling_taker_walks_the_bids_highest_first() {
 
 #[test]
 fn a_repriced_order_matches_like_a_new_arrival() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
     book.insert(sized(2, Side::Buy, 28_000, 10))
@@ -593,7 +600,7 @@ fn a_repriced_order_matches_like_a_new_arrival() {
 
 #[test]
 fn an_order_that_rests_has_not_ended() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
 
     let execution = book
         .insert(sized(1, Side::Buy, 29_000, 10))
@@ -604,7 +611,7 @@ fn an_order_that_rests_has_not_ended() {
 
 #[test]
 fn a_match_hands_back_every_order_that_ended() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     for id in [1, 2, 3] {
         book.insert(sized(id, Side::Sell, 29_000, 5))
             .expect("valid insert");
@@ -628,7 +635,7 @@ fn a_match_hands_back_every_order_that_ended() {
 
 #[test]
 fn a_repriced_order_that_fills_ends_with_its_maker() {
-    let mut book = Book::new();
+    let mut book = Book::new(scale());
     book.insert(sized(1, Side::Sell, 29_000, 10))
         .expect("valid insert");
     book.insert(sized(2, Side::Buy, 28_000, 10))
@@ -639,4 +646,44 @@ fn a_repriced_order_that_fills_ends_with_its_maker() {
         .expect("the order is in the book");
 
     assert_eq!(ids(execution.ended().iter()), vec![1, 2]);
+}
+
+// ---- what fills are worth in quote ----
+
+#[test]
+fn a_fill_is_worth_its_quantity_at_the_makers_price() {
+    let mut book = Book::new(scale());
+    book.insert(sized(1, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+
+    // the buyer would pay up to 29_005, but the fill happens at the maker's 29_000
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_005, 4))
+        .expect("valid insert");
+
+    // 4 at 29_000: 29_000 × 10^8 × 4 / 10^8
+    let worth = QuoteQuantity::from_minor_units(116_000);
+    assert_eq!(execution.fills()[0].quote, worth);
+    let maker = book.get_by_id(OrderId::new(1)).expect("the maker remains");
+    assert_eq!(maker.filled_quote(), worth);
+}
+
+#[test]
+fn an_order_adds_up_the_quote_of_each_of_its_fills() {
+    let mut book = Book::new(scale());
+    book.insert(sized(1, Side::Sell, 29_000, 5))
+        .expect("valid insert");
+    book.insert(sized(2, Side::Sell, 29_001, 5))
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(3, Side::Buy, 29_001, 10))
+        .expect("valid insert");
+
+    // 5 at 29_000 and 5 at 29_001
+    let buy = execution.ended().last().expect("the buy filled completely");
+    assert_eq!(
+        buy.filled_quote(),
+        QuoteQuantity::from_minor_units(145_000 + 145_005)
+    );
 }

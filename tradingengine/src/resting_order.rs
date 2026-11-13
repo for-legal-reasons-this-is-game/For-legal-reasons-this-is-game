@@ -2,7 +2,7 @@ use crate::error::{EngineError, Result};
 use crate::ids::{CommandId, OrderId, UserId};
 use crate::order::{OrderStatus, Side};
 use crate::price::Price;
-use crate::quantity::BaseQuantity;
+use crate::quantity::{BaseQuantity, QuoteQuantity};
 
 /// An order sitting in the [`Book`](crate::book::Book).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub struct RestingOrder {
     price: Price,
     qty_total: BaseQuantity,
     qty_remaining: BaseQuantity,
+    /// The quote this order has filled so far.
+    filled_quote: QuoteQuantity,
     status: OrderStatus,
     command_id: CommandId,
 }
@@ -35,18 +37,25 @@ impl RestingOrder {
             price,
             qty_total,
             qty_remaining: qty_total,
+            filled_quote: QuoteQuantity::ZERO,
             status: OrderStatus::Open,
             command_id,
         })
     }
 
-    pub fn fill(&mut self, quantity: BaseQuantity) -> Result<()> {
+    /// Fills `quantity` of the order. The fill was worth `quote` in the quote asset.
+    ///
+    /// The caller works out the quote, because only the market knows its scale; see
+    /// [`QuoteScale::quote_for`](crate::quote::QuoteScale::quote_for). On an error, nothing
+    /// changes.
+    pub fn fill(&mut self, quantity: BaseQuantity, quote: QuoteQuantity) -> Result<()> {
         let quantity = quantity.require_positive()?;
         if quantity > self.qty_remaining {
             return Err(EngineError::FillExceedsRemaining);
         }
 
         let qty_remaining = self.qty_remaining.checked_sub(quantity)?;
+        let filled_quote = self.filled_quote.checked_add(quote)?;
         let status = if qty_remaining.is_zero() {
             OrderStatus::Filled
         } else {
@@ -54,6 +63,7 @@ impl RestingOrder {
         };
 
         self.qty_remaining = qty_remaining;
+        self.filled_quote = filled_quote;
         self.status = status;
         Ok(())
     }
@@ -119,6 +129,12 @@ impl RestingOrder {
 
     pub const fn qty_remaining(&self) -> BaseQuantity {
         self.qty_remaining
+    }
+
+    /// The quote this order has filled so far: each fill's quote, rounded down on its own like
+    /// each `TradeSettlement`, added up.
+    pub const fn filled_quote(&self) -> QuoteQuantity {
+        self.filled_quote
     }
 
     pub const fn status(&self) -> OrderStatus {
