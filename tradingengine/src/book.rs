@@ -99,13 +99,7 @@ impl Book {
             ended.push(order);
             None
         } else {
-            let side = order.side();
-            let price = order.price();
-            self.all_orders.insert(id, (side, price));
-            self.side_mut(side)
-                .entry(price)
-                .or_default()
-                .push_back(order);
+            self.rest(order);
             Some(id)
         };
 
@@ -114,6 +108,30 @@ impl Book {
             resting,
             ended,
         })
+    }
+
+    /// Puts back an order that was resting in the book when the engine's state was saved: at
+    /// the back of its price level, without matching it.
+    ///
+    /// Orders must come back in the order [`bids`](Self::bids) and [`asks`](Self::asks) list
+    /// them, so that each price level keeps its time priority.
+    pub fn restore(&mut self, order: RestingOrder) -> Result<()> {
+        if self.all_orders.contains_key(&order.id()) {
+            return Err(EngineError::DuplicateOrderId);
+        }
+        self.rest(order);
+        Ok(())
+    }
+
+    /// Puts an order at the back of its price level.
+    fn rest(&mut self, order: RestingOrder) {
+        let side = order.side();
+        let price = order.price();
+        self.all_orders.insert(order.id(), (side, price));
+        self.side_mut(side)
+            .entry(price)
+            .or_default()
+            .push_back(order);
     }
 
     /// Tries to match the incoming order against the other side of the book.

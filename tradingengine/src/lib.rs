@@ -13,6 +13,8 @@ pub mod quantity;
 pub mod quote;
 pub mod resting_order;
 pub mod service;
+pub mod state;
+pub mod store;
 pub mod wire;
 
 mod wide;

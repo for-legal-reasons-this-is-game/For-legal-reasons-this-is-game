@@ -1,23 +1,63 @@
-use std::sync::Mutex;
-
 use proto::trading_engine_server::TradingEngine;
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse, EventItem,
-    MarketDataItem, ModifyOrderRequest, ModifyOrderResponse, PlaceOrderRequest, PlaceOrderResponse,
-    SetMarketRequest, SetMarketResponse, SubscribeEventsRequest, SubscribeMarketDataRequest,
+    CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse,
+    ConfigRejectReason, EventItem, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse,
+    PlaceOrderRequest, PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse,
+    SubscribeEventsRequest, SubscribeMarketDataRequest,
 };
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use crate::engine::Engine;
+use crate::store::RedisStore;
 
 /// The engine's gRPC service.
 ///
-/// For now there is one [`Engine`] per market. This will change when multithreading is
-/// implemented.
+/// Commands run one at a time. With a [`RedisStore`], each command that changes a market is
+/// saved before its answer is sent, so a restarted engine never forgets something the backend
+/// was told. Without one, the state lives only in memory.
 #[derive(Default)]
 pub struct EngineService {
-    engine: Mutex<Engine>,
+    state: Mutex<State>,
+}
+
+/// The engine and where its state is saved. One lock covers both, so a save always sees the
+/// state its command left behind.
+#[derive(Default)]
+struct State {
+    engine: Engine,
+    store: Option<RedisStore>,
+}
+
+impl EngineService {
+    /// A service that saves its state to `store`, starting from `engine`, which is usually
+    /// what [`RedisStore::load`] returned.
+    pub fn with_store(engine: Engine, store: RedisStore) -> Self {
+        Self {
+            state: Mutex::new(State {
+                engine,
+                store: Some(store),
+            }),
+        }
+    }
+}
+
+impl State {
+    /// Saves the market a command just changed, before the command's answer is sent.
+    ///
+    /// As agreed at the weekly meeting, an unexpected failure panics: if Redis can't take the
+    /// save, the engine stops. Answering a command whose change isn't saved would let a
+    /// restart forget something the backend was told. The restarted engine loads the last
+    /// saved state, and the backend retries the command that got no answer.
+    async fn save(&mut self, symbol: &str) {
+        let Some(store) = &mut self.store else {
+            return;
+        };
+        if let Err(error) = store.save_market(&self.engine, symbol).await {
+            panic!("ENGINE: couldn't save market {symbol} to redis, stopping: {error}");
+        }
+    }
 }
 
 // the functions from the trait currently have an into_inner() conversion. This is just to silence
@@ -29,26 +69,44 @@ impl TradingEngine for EngineService {
         &self,
         request: Request<SetMarketRequest>,
     ) -> Result<Response<SetMarketResponse>, Status> {
-        // as talked over weekly meet up unspecified errors should panic
-        // expect panics when err comes from lock
-        let mut engine = self.engine.lock().expect("engine lock poisoned");
-        Ok(Response::new(engine.set_market(request.into_inner())))
+        let request = request.into_inner();
+        let symbol = request.market.as_ref().map(|market| market.symbol.clone());
+        let mut state = self.state.lock().await;
+        let response = state.engine.set_market(request);
+        // a rejected command changed nothing, so there is nothing to save
+        let accepted = response.reject_reason() == ConfigRejectReason::Unspecified;
+        if accepted && let Some(symbol) = symbol {
+            state.save(&symbol).await;
+        }
+        Ok(Response::new(response))
     }
 
     async fn place_order(
         &self,
         request: Request<PlaceOrderRequest>,
     ) -> Result<Response<PlaceOrderResponse>, Status> {
-        let mut engine = self.engine.lock().expect("engine lock poisoned");
-        Ok(Response::new(engine.place_order(request.into_inner())))
+        let request = request.into_inner();
+        let symbol = request.market_symbol.clone();
+        let mut state = self.state.lock().await;
+        let response = state.engine.place_order(request);
+        if response.reject_reason() == RejectReason::Unspecified {
+            state.save(&symbol).await;
+        }
+        Ok(Response::new(response))
     }
 
     async fn cancel_order(
         &self,
         request: Request<CancelOrderRequest>,
     ) -> Result<Response<CancelOrderResponse>, Status> {
-        let mut engine = self.engine.lock().expect("engine lock poisoned");
-        Ok(Response::new(engine.cancel_order(request.into_inner())))
+        let request = request.into_inner();
+        let symbol = request.market_symbol.clone();
+        let mut state = self.state.lock().await;
+        let response = state.engine.cancel_order(request);
+        if response.reject_reason() == RejectReason::Unspecified {
+            state.save(&symbol).await;
+        }
+        Ok(Response::new(response))
     }
 
     async fn cancel_orders(

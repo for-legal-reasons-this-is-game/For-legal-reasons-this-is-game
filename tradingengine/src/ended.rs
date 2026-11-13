@@ -54,13 +54,21 @@ impl EndedOrders {
             order.status().is_terminal(),
             "only an order that has ended is recorded"
         );
-        let ended = EndedOrder {
-            owner: order.user_id(),
-            status: order.status(),
-        };
+        self.insert(
+            order.id(),
+            EndedOrder {
+                owner: order.user_id(),
+                status: order.status(),
+            },
+        );
+    }
+
+    /// Remembers an ended order, like [`record`](Self::record). Saved state comes back this
+    /// way, oldest first.
+    pub fn insert(&mut self, id: OrderId, ended: EndedOrder) {
         // an id that is already here keeps its place in the line
-        if self.by_id.insert(order.id(), ended).is_none() {
-            self.oldest_first.push_back(order.id());
+        if self.by_id.insert(id, ended).is_none() {
+            self.oldest_first.push_back(id);
         }
         while self.oldest_first.len() > self.capacity {
             if let Some(oldest) = self.oldest_first.pop_front() {
@@ -83,6 +91,32 @@ impl EndedOrders {
 
     pub fn is_empty(&self) -> bool {
         self.by_id.is_empty()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// The order that ended last, if any.
+    pub fn newest(&self) -> Option<OrderId> {
+        self.oldest_first.back().copied()
+    }
+
+    /// The ended orders, oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = (OrderId, &EndedOrder)> {
+        self.after(None)
+    }
+
+    /// The orders that ended after `id`, oldest first. If `id` is `None`, or is no longer
+    /// remembered, that is every order here.
+    pub fn after(&self, id: Option<OrderId>) -> impl Iterator<Item = (OrderId, &EndedOrder)> {
+        let start = id
+            .and_then(|id| self.oldest_first.iter().rposition(|&ended| ended == id))
+            .map_or(0, |position| position + 1);
+        self.oldest_first
+            .iter()
+            .skip(start)
+            .filter_map(|&id| self.by_id.get(&id).map(|ended| (id, ended)))
     }
 }
 

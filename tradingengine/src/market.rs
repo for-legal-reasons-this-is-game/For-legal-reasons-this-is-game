@@ -1,7 +1,7 @@
 use proto::Market;
 
 use crate::book::Book;
-use crate::ended::EndedOrders;
+use crate::ended::{EndedOrder, EndedOrders};
 use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::{OrderStatus, Side};
@@ -40,6 +40,24 @@ impl MarketInfo {
             book: Book::new(scale),
             ended: EndedOrders::default(),
         })
+    }
+
+    /// Rebuilds a market from saved state: its definition, the orders that rest in its book
+    /// in the order [`Book::bids`] and [`Book::asks`] list them, and its ended orders, oldest
+    /// first.
+    pub fn restore(
+        market: Market,
+        orders: impl IntoIterator<Item = RestingOrder>,
+        ended: impl IntoIterator<Item = (OrderId, EndedOrder)>,
+    ) -> Result<MarketInfo> {
+        let mut info = MarketInfo::new(market)?;
+        for order in orders {
+            info.book.restore(order)?;
+        }
+        for (id, ended_order) in ended {
+            info.ended.insert(id, ended_order);
+        }
+        Ok(info)
     }
 
     /// Reconfigures an existing market. This only works if its book has no open orders.

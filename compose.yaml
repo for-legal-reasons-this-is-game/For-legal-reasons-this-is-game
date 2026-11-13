@@ -81,6 +81,14 @@ services:
     # the host port is published for grpcurl/grpcui (reflection is enabled).
     ports:
       - "${TRADINGENGINE_PORT:-50051}:50051"
+    # the engine saves its state in its own Redis and loads it back when it restarts
+    # (tradingengine/src/store.rs). ENGINE_INSTANCE names this engine's keys in it.
+    environment:
+      REDIS_URL: redis://tradingengine-redis:6379
+      ENGINE_INSTANCE: tradingengine-0
+    depends_on:
+      tradingengine-redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "grpc_health_probe", "-addr=localhost:50051", "-service=trading.v1.TradingEngine"]
       start_period: 30s
@@ -88,6 +96,21 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+
+  # the trading engine's own Redis, like k8s/redis_tradingengine_deployment.yaml:
+  # append-only, so the state survives a Redis restart too
+  tradingengine-redis:
+    image: redis:7-alpine
+    container_name: tradingengine-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - tradingengine_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   db:
     image: postgres:16-alpine
@@ -178,5 +201,6 @@ volumes:
   tigerbeetle_0_data:
   tigerbeetle_1_data:
   tigerbeetle_2_data:
+  tradingengine_redis_data:
   # shared with the Infisical stack (also declared in secret_managment/docker-compose.yaml)
   infisical_shared:

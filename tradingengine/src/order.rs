@@ -1,9 +1,15 @@
+use serde::{Deserialize, Serialize};
+
 use crate::price::Price;
 
 // No Hash and no Ord on any of these: nothing keys or sorts by them, and Ord on
 // OrderStatus would compare by declaration order, which is not the lifecycle.
+//
+// Side and OrderStatus are saved in Redis by name, in snake_case (see crate::state).
+// Renaming a variant breaks loading the state that is already saved.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Side {
     Buy,
     Sell,
@@ -31,7 +37,8 @@ pub enum TimeInForce {
     FillOrKill,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OrderStatus {
     New,
     Open,

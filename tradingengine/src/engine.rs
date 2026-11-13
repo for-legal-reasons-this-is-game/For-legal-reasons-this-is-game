@@ -23,9 +23,20 @@ pub struct Engine {
 }
 
 impl Engine {
-    // Engine starts without any books this might change for recovery
+    // Engine starts without any books. A restarted engine gets its markets back from Redis
+    // with Engine::restore
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An engine with markets that were restored from saved state.
+    pub fn restore(markets: impl IntoIterator<Item = MarketInfo>) -> Self {
+        Self {
+            markets: markets
+                .into_iter()
+                .map(|market| (market.market().symbol.clone(), market))
+                .collect(),
+        }
     }
 
     /// Sets a market's values from the backend's [`SetMarketRequest`].
