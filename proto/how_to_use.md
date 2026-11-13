@@ -423,12 +423,12 @@ whole life.
 
 | Condition | Reject reason |
 |---|---|
+| The market doesn't exist | `UNKNOWN_MARKET` |
 | The order doesn't exist | `UNKNOWN_ORDER` |
 | The order has already ended | `ORDER_NOT_WORKING` |
 | `account_holder` doesn't own the order | `NOT_ORDER_OWNER` |
 | Modify: the new quantity isn't above the filled quantity | `BAD_QUANTITY` |
 | Modify: the order isn't base-denominated | `ORDER_NOT_WORKING` |
-| The market doesn't exist | `UNKNOWN_MARKET` |
 
 ### Matching
 

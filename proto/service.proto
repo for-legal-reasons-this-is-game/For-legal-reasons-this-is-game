@@ -99,6 +99,9 @@ message CancelOrderRequest {
   Id command_id = 1;
   Id order_id = 2;
   Id account_holder = 3;
+  // the market the order is in, so the command can reach the engine that runs it.
+  // The engine rejects an empty or unknown one with UNKNOWN_MARKET.
+  // TODO(alvaro): new field, the backend's cancel endpoint has to fill it
   string market_symbol = 4;
 }
 
@@ -136,6 +139,8 @@ message ModifyOrderRequest {
   Uint128 new_limit_price = 5;
   Uint128 new_trigger_price = 6;
 
+  // the market the order is in, like in CancelOrderRequest.
+  // TODO(alvaro): new field, the backend's modify endpoint has to fill it
   string market_symbol = 7;
 }
 

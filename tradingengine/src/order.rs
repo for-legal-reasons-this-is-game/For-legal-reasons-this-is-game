@@ -33,9 +33,9 @@ pub enum TimeInForce {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderStatus {
-    New,             // cancelable. CHECK again
-    Open,            // cancelable
-    PartiallyFilled, // cancelable
+    New,
+    Open,
+    PartiallyFilled,
     Filled,
     Cancelled,
     Rejected,

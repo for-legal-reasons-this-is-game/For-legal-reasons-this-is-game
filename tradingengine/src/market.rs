@@ -2,6 +2,7 @@ use proto::Market;
 
 use crate::book::Book;
 use crate::error::{EngineError, Result};
+use crate::ids::OrderId;
 use crate::order::{OrderStatus, Side};
 use crate::quantity::{BaseQuantity, QuoteQuantity};
 use crate::quote::QuoteScale;
@@ -91,6 +92,20 @@ impl MarketInfo {
             filled_base,
             filled_quote,
         })
+    }
+
+    /// Cancels a resting order and takes it out of the book.
+    ///
+    /// The cancel is tried on a copy first, so a rejected cancel leaves the book as it was.
+    pub fn cancel(&mut self, order_id: OrderId) -> Result<RestingOrder> {
+        let mut order = self
+            .book
+            .get_by_id(order_id)
+            .ok_or(EngineError::OrderNotFound)?
+            .clone();
+        order.cancel()?;
+        self.book.remove(order_id)?;
+        Ok(order)
     }
 
     /// make sure the quote does not over flow

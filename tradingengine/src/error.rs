@@ -15,6 +15,7 @@ pub enum EngineError {
     MarketSymbolEmpty,
     HasOpenOrders,
     UnknownMarket,
+    NotOrderOwner,
     BadOrderParams(&'static str),
     Unsupported(&'static str),
 }
@@ -57,6 +58,12 @@ impl std::fmt::Display for EngineError {
                 "the decimals cannot change while the market has orders in its book"
             ),
             Self::UnknownMarket => write!(f, "no market with this symbol, send SetMarket first"),
+            Self::NotOrderOwner => {
+                write!(
+                    f,
+                    "account_holder doesn't match the owner in the book's order"
+                )
+            }
             Self::BadOrderParams(detail) => write!(f, "bad order parameters: {detail}"),
             Self::Unsupported(detail) => write!(f, "not supported yet: {detail}"),
         }

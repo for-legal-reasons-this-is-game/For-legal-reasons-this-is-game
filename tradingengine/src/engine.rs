@@ -5,11 +5,13 @@ use proto::{
     PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse, Uint128,
 };
 
+use crate::cancel::parse_cancel_order;
 use crate::error::{EngineError, Result};
-use crate::market::MarketInfo;
-// use crate::market::{MarketInfo, Placed};
+use crate::market::{MarketInfo, Placed};
 use crate::order::OrderStatus;
-// use crate::place::parse_place_order;
+use crate::place::parse_place_order;
+use crate::quantity::BaseQuantity;
+use crate::resting_order::RestingOrder;
 use crate::wire::required;
 
 /// Holds every market, keyed by the market's name (for example `btc-usd`).
@@ -99,18 +101,47 @@ impl Engine {
         market.place(order)
     }
 
+    /// Cancels an order at its owner's request, and answers with the order's final state.
     ///
+    /// A rejected cancel changes nothing.
     pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
-        let mut response = CancelOrderResponse {
-            ..CancelOrderResponse::default()
+        let command_id = request.command_id;
+        match self.try_cancel_order(request) {
+            Ok((cancelled_order, filled_base)) => {
+                // TODO(mehras): RestingOrder doesn't keep the quote it has filled, so the answer
+                // has no filled_quote_quantity yet. The contract wants both filled amounts
+                // (how_to_use.md, "Handling command responses"). Settle how to track it, and
+                // until then tell Alvaro that a cancel answer only has the filled base
+                let mut response = CancelOrderResponse {
+                    command_id,
+                    filled_base_quantity: Some(Uint128::from(filled_base)),
+                    ..CancelOrderResponse::default()
+                };
+                response.set_status(order_status(cancelled_order.status()));
+                response.set_cancel_reason(proto::CancelReason::UserRequest);
+                response
+            }
+            Err(error) => {
+                let mut response = CancelOrderResponse {
+                    command_id,
+                    reject_detail: error.to_string(),
+                    ..CancelOrderResponse::default()
+                };
+                response.set_reject_reason(reject_reason(&error));
+                response
+            }
         }
-        // if (request.market_symbol.is_empty()) {
-        //     response.set_reject_reason(config_reject_reason(error));
-        // }
+    }
 
-        // parse_cancel_order(request.);
-        let market = self.markets.get(&request.market_symbol);
-        CancelOrderResponse::default()
+    /// The cancelled order and how much of its base it filled before the cancel.
+    fn try_cancel_order(
+        &mut self,
+        request: CancelOrderRequest,
+    ) -> Result<(RestingOrder, BaseQuantity)> {
+        let (market, order_id) = parse_cancel_order(request, &mut self.markets)?;
+        let order = market.cancel(order_id)?;
+        let filled_base = order.qty_total().checked_sub(order.qty_remaining())?;
+        Ok((order, filled_base))
     }
 }
 
@@ -121,7 +152,8 @@ fn config_reject_reason(error: &EngineError) -> ConfigRejectReason {
     }
 }
 
-// the contract's reject reasons for a place (how_to_use.md, validating a place)
+// the contract's reject reasons for a place and a cancel (how_to_use.md, validating a place,
+// validating a cancel or modify command)
 fn reject_reason(error: &EngineError) -> RejectReason {
     match error {
         EngineError::UnknownMarket => RejectReason::UnknownMarket,
@@ -131,6 +163,9 @@ fn reject_reason(error: &EngineError) -> RejectReason {
         EngineError::QuantityNotPositive | EngineError::Overflow => RejectReason::BadQuantity,
         EngineError::PriceNotPositive => RejectReason::BadPrice,
         EngineError::Unsupported(_) => RejectReason::Unsupported,
+        EngineError::OrderNotFound => RejectReason::UnknownOrder,
+        EngineError::NotOrderOwner => RejectReason::NotOrderOwner,
+        EngineError::OrderNotLive => RejectReason::OrderNotWorking,
         _ => RejectReason::Unsupported,
     }
 }
