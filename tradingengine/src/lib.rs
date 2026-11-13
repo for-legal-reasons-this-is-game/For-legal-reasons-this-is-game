@@ -1,5 +1,6 @@
 pub mod book;
 pub mod cancel;
+pub mod ended;
 pub mod engine;
 pub mod error;
 pub mod fee;

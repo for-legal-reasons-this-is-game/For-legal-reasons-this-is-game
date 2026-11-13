@@ -13,7 +13,8 @@ use crate::{
 ///
 /// Returns that market and the order's id once the order is in the market's book and
 /// `account_holder` owns it. The checks follow `proto/how_to_use.md`, "Validating a cancel or
-/// modify command".
+/// modify command". An order that has already ended is rejected with its final status, but only
+/// to its owner: anyone else gets `NOT_ORDER_OWNER`, so a cancel tells them nothing about it.
 pub fn parse_cancel_order(
     request: CancelOrderRequest,
     markets: &mut HashMap<String, MarketInfo>,
@@ -39,16 +40,21 @@ pub fn parse_cancel_order(
     let order_id = OrderId::new(required_id(request.order_id)?);
     let account_holder = UserId::new(required_id(request.account_holder)?);
 
-    match market.book().get_by_id(order_id) {
-        Some(resting_order) if resting_order.user_id() != account_holder => {
-            // ERR #4 from contract
+    match (
+        market.book().get_by_id(order_id),
+        market.ended().get(order_id),
+    ) {
+        // ERR #3 from contract, for an order in the book
+        (Some(resting_order), _) if resting_order.user_id() != account_holder => {
             Err(EngineError::NotOrderOwner)
         }
-        Some(_) => Ok((market, order_id)),
-        // ERR #2 and ERR #3 from contract (the order has ended) can't be told apart yet: the book
-        // forgets an order once it is filled or cancelled, so an ended order lands here too.
-        // TODO(mehras): the contract wants ORDER_NOT_WORKING for an ended order, not
-        // UNKNOWN_ORDER. Settle where ended orders are remembered, then check them here
-        None => Err(EngineError::OrderNotFound),
+        (Some(_), _) => Ok((market, order_id)),
+        // ERR #3 from contract, for an order that has ended
+        (None, Some(ended)) if ended.owner != account_holder => Err(EngineError::NotOrderOwner),
+        // ERR #4 from contract: ORDER_NOT_WORKING, with how the order ended
+        (None, Some(ended)) => Err(EngineError::OrderNotLive(ended.status)),
+        // ERR #2 from contract: never placed, rejected when it was placed, or ended so long ago
+        // that it was forgotten
+        (None, None) => Err(EngineError::OrderNotFound),
     }
 }

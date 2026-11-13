@@ -23,6 +23,7 @@ pub struct Fill {
 pub struct Execution {
     fills: Vec<Fill>, // all the resting orders that were filled because of the new order
     resting: Option<OrderId>, // the remainder of the new order NONE if it was filled
+    ended: Vec<RestingOrder>, // the orders that filled completely and left the book
 }
 
 impl Execution {
@@ -32,6 +33,15 @@ impl Execution {
 
     pub const fn resting_order_id(&self) -> Option<OrderId> {
         self.resting
+    }
+
+    /// The orders that filled completely and left the book, in the order they ended: the
+    /// makers first, then the incoming order if nothing of it was left to rest.
+    ///
+    /// The book forgets them, so the caller has to remember them, in
+    /// [`EndedOrders`](crate::ended::EndedOrders).
+    pub fn ended(&self) -> &[RestingOrder] {
+        &self.ended
     }
 
     pub fn total_filled_quantity(&self) -> Result<BaseQuantity> {
@@ -59,15 +69,20 @@ impl Book {
 
     /// Puts a new incoming order into the book, unless it can be matched against a
     /// price on the opposite side of the book.
+    ///
+    /// The orders that fill completely leave the book and come back in
+    /// [`Execution::ended`].
     pub fn insert(&mut self, mut order: RestingOrder) -> Result<Execution> {
         let id = order.id();
         if self.all_orders.contains_key(&id) {
             return Err(EngineError::DuplicateOrderId);
         }
 
-        let fills = self.match_incoming(&mut order)?;
+        let (fills, mut ended) = self.match_incoming(&mut order)?;
 
         let resting = if order.qty_remaining().is_zero() {
+            // filled completely on arrival, so it ends without ever resting
+            ended.push(order);
             None
         } else {
             let side = order.side();
@@ -80,13 +95,21 @@ impl Book {
             Some(id)
         };
 
-        Ok(Execution { fills, resting })
+        Ok(Execution {
+            fills,
+            resting,
+            ended,
+        })
     }
 
     /// Tries to match the incoming order against the other side of the book.
     ///
-    /// Returns the [`Fill`]s it matched.
-    fn match_incoming(&mut self, incoming: &mut RestingOrder) -> Result<Vec<Fill>> {
+    /// Returns the [`Fill`]s it matched, and the makers that filled completely and left the
+    /// book.
+    fn match_incoming(
+        &mut self,
+        incoming: &mut RestingOrder,
+    ) -> Result<(Vec<Fill>, Vec<RestingOrder>)> {
         let taker_side = incoming.side();
         let limit = incoming.price();
 
@@ -97,6 +120,7 @@ impl Book {
         let orders = &mut self.all_orders;
 
         let mut fills = Vec::new();
+        let mut ended = Vec::new();
 
         while !incoming.qty_remaining().is_zero() {
             let best = match taker_side {
@@ -139,7 +163,9 @@ impl Book {
                 });
 
                 if exhausted {
-                    level.pop_front();
+                    if let Some(maker) = level.pop_front() {
+                        ended.push(maker);
+                    }
                     orders.remove(&maker_id);
                 }
             }
@@ -149,31 +175,27 @@ impl Book {
             }
         }
 
-        Ok(fills)
+        Ok((fills, ended))
     }
 
+    /// Takes an order out of the book and returns it, without changing its status.
+    ///
+    /// The order is found first and only then removed, so an id the book doesn't hold leaves
+    /// the book as it was.
     pub fn remove(&mut self, id: OrderId) -> Result<RestingOrder> {
-        let (side, price) = self
-            .all_orders
-            .remove(&id)
-            .ok_or(EngineError::OrderNotFound)?;
+        let &(side, price) = self.all_orders.get(&id).ok_or(EngineError::OrderNotFound)?;
         let levels = self.side_mut(side);
-
-        // TODO: what if order was removed from all_orders, and one of
-        //  the next checks fail?
-        let Some(level) = levels.get_mut(&price) else {
-            return Err(EngineError::OrderNotFound);
-        };
-        let Some(position) = level.iter().position(|resting| resting.id() == id) else {
-            return Err(EngineError::OrderNotFound);
-        };
-        let Some(order) = level.remove(position) else {
-            return Err(EngineError::OrderNotFound);
-        };
+        let level = levels.get_mut(&price).ok_or(EngineError::OrderNotFound)?;
+        let position = level
+            .iter()
+            .position(|resting| resting.id() == id)
+            .ok_or(EngineError::OrderNotFound)?;
+        let order = level.remove(position).ok_or(EngineError::OrderNotFound)?;
 
         if level.is_empty() {
             levels.remove(&price);
         }
+        self.all_orders.remove(&id);
         Ok(order)
     }
 
@@ -206,8 +228,8 @@ impl Book {
             // changed in place, so it keeps its position in the level
             order.modify(new_quantity, None)?;
             return Ok(Execution {
-                fills: Vec::new(),
                 resting: Some(id),
+                ..Execution::default()
             });
         }
 

@@ -103,7 +103,8 @@ impl Engine {
 
     /// Cancels an order at its owner's request, and answers with the order's final state.
     ///
-    /// A rejected cancel changes nothing.
+    /// A rejected cancel changes nothing. An order that has already ended gets
+    /// `ORDER_NOT_WORKING`, and `status` says how it ended, like FIX's "too late to cancel".
     pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
         let command_id = request.command_id;
         match self.try_cancel_order(request) {
@@ -128,6 +129,9 @@ impl Engine {
                     ..CancelOrderResponse::default()
                 };
                 response.set_reject_reason(reject_reason(&error));
+                if let EngineError::OrderNotLive(status) = error {
+                    response.set_status(order_status(status));
+                }
                 response
             }
         }
@@ -165,7 +169,7 @@ fn reject_reason(error: &EngineError) -> RejectReason {
         EngineError::Unsupported(_) => RejectReason::Unsupported,
         EngineError::OrderNotFound => RejectReason::UnknownOrder,
         EngineError::NotOrderOwner => RejectReason::NotOrderOwner,
-        EngineError::OrderNotLive => RejectReason::OrderNotWorking,
+        EngineError::OrderNotLive(_) => RejectReason::OrderNotWorking,
         _ => RejectReason::Unsupported,
     }
 }

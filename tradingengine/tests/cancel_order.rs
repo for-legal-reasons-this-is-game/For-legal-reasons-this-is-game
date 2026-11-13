@@ -122,8 +122,13 @@ fn assert_cancelled(engine: &mut Engine, request: CancelOrderRequest) -> CancelO
 }
 
 /// Sends a cancel and checks that it was rejected with `reason`: it says why, the same
-/// `command_id` comes back, and nothing in the engine changed.
-fn assert_rejected(engine: &mut Engine, request: CancelOrderRequest, reason: RejectReason) {
+/// `command_id` comes back, and nothing in the engine changed. Returns the response, for the
+/// tests that check more of it.
+fn assert_rejected(
+    engine: &mut Engine,
+    request: CancelOrderRequest,
+    reason: RejectReason,
+) -> CancelOrderResponse {
     let before = engine.clone();
     let command_id = request.command_id;
     let response = engine.cancel_order(request);
@@ -136,6 +141,7 @@ fn assert_rejected(engine: &mut Engine, request: CancelOrderRequest, reason: Rej
     assert!(!response.reject_detail.is_empty());
     assert_eq!(response.command_id, command_id);
     assert_eq!(*engine, before);
+    response
 }
 
 // ---- accepted ----
@@ -257,9 +263,10 @@ fn a_second_cancel_of_the_same_order_is_rejected() {
         command_id: Some(Id::from(6_001)),
         ..cancel(1)
     };
-    // TODO(mehras): the contract wants ORDER_NOT_WORKING for an order that has ended, but the
-    // book forgets ended orders. Until the engine remembers them, it can only say UNKNOWN_ORDER
-    assert_rejected(&mut engine, again, RejectReason::UnknownOrder);
+    let response = assert_rejected(&mut engine, again, RejectReason::OrderNotWorking);
+
+    // like FIX's "too late to cancel", the reject says how the order ended
+    assert_eq!(response.status(), OrderStatus::Cancelled);
 }
 
 #[test]
@@ -269,7 +276,46 @@ fn a_filled_order_cannot_be_cancelled() {
     // fills all of order 1, which leaves the book
     place(&mut engine, limit(2, Side::Buy, PRICE_29_000, HALF_BTC));
 
-    // UNKNOWN_ORDER for the same reason as in a_second_cancel_of_the_same_order_is_rejected
+    let response = assert_rejected(&mut engine, cancel(1), RejectReason::OrderNotWorking);
+
+    assert_eq!(response.status(), OrderStatus::Filled);
+}
+
+#[test]
+fn an_order_that_filled_on_arrival_cannot_be_cancelled() {
+    let mut engine = engine();
+    place(&mut engine, limit(1, Side::Sell, PRICE_29_000, HALF_BTC));
+    // order 2 fills completely the moment it arrives, so it never rests in the book
+    place(&mut engine, limit(2, Side::Buy, PRICE_29_000, HALF_BTC));
+
+    let response = assert_rejected(&mut engine, cancel(2), RejectReason::OrderNotWorking);
+
+    assert_eq!(response.status(), OrderStatus::Filled);
+}
+
+#[test]
+fn only_the_owner_learns_that_an_order_ended() {
+    let mut engine = engine();
+    place(&mut engine, limit(1, Side::Buy, PRICE_29_000, HALF_BTC));
+    assert_cancelled(&mut engine, cancel(1));
+
+    let stranger = CancelOrderRequest {
+        command_id: Some(Id::from(6_001)),
+        account_holder: Some(Id::from(owner(2))),
+        ..cancel(1)
+    };
+    let response = assert_rejected(&mut engine, stranger, RejectReason::NotOrderOwner);
+
+    assert_eq!(response.status(), OrderStatus::Unspecified);
+}
+
+#[test]
+fn an_order_whose_place_was_rejected_is_unknown() {
+    let mut engine = engine();
+    // a zero price is rejected, so order 1 never existed
+    let rejected = engine.place_order(limit(1, Side::Buy, 0, HALF_BTC));
+    assert_eq!(rejected.reject_reason(), RejectReason::BadPrice);
+
     assert_rejected(&mut engine, cancel(1), RejectReason::UnknownOrder);
 }
 

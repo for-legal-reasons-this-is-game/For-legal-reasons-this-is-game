@@ -120,7 +120,10 @@ fn cancel_rejects_a_filled_order_without_changing_it() {
     order.fill(qty(10)).expect("valid final fill");
     let before = order.clone();
 
-    assert_eq!(order.cancel(), Err(EngineError::OrderNotLive));
+    assert_eq!(
+        order.cancel(),
+        Err(EngineError::OrderNotLive(OrderStatus::Filled))
+    );
     assert_eq!(order, before);
 }
 
@@ -129,7 +132,10 @@ fn cancel_twice_rejects_the_second_time() {
     let mut order = order(qty(10));
     order.cancel().expect("the order is open");
 
-    assert_eq!(order.cancel(), Err(EngineError::OrderNotLive));
+    assert_eq!(
+        order.cancel(),
+        Err(EngineError::OrderNotLive(OrderStatus::Cancelled))
+    );
     assert_eq!(order.status(), OrderStatus::Cancelled);
 }
 
@@ -183,6 +189,6 @@ fn modify_rejects_a_finished_order() {
 
     assert_eq!(
         order.modify(Some(qty(5)), None),
-        Err(EngineError::OrderNotLive)
+        Err(EngineError::OrderNotLive(OrderStatus::Cancelled))
     );
 }

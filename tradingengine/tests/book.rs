@@ -196,16 +196,17 @@ fn removing_one_order_leaves_the_rest_of_its_level() {
 }
 
 #[test]
-fn remove_rejects_an_unknown_id() {
+fn remove_rejects_an_unknown_id_without_changing_the_book() {
     let mut book = Book::new();
     book.insert(order(1, Side::Buy, 29_000))
         .expect("valid insert");
+    let before = book.clone();
 
     assert_eq!(
         book.remove(OrderId::new(99)),
         Err(EngineError::OrderNotFound)
     );
-    assert_eq!(book.len(), 1);
+    assert_eq!(book, before);
 }
 
 #[test]
@@ -586,4 +587,56 @@ fn a_repriced_order_matches_like_a_new_arrival() {
     assert_eq!(execution.total_filled_quantity(), Ok(qty(10)));
     assert_eq!(execution.resting_order_id(), None);
     assert!(book.is_empty());
+}
+
+// ---- orders that end ----
+
+#[test]
+fn an_order_that_rests_has_not_ended() {
+    let mut book = Book::new();
+
+    let execution = book
+        .insert(sized(1, Side::Buy, 29_000, 10))
+        .expect("valid insert");
+
+    assert!(execution.ended().is_empty());
+}
+
+#[test]
+fn a_match_hands_back_every_order_that_ended() {
+    let mut book = Book::new();
+    for id in [1, 2, 3] {
+        book.insert(sized(id, Side::Sell, 29_000, 5))
+            .expect("valid insert");
+    }
+
+    // fills makers 1 and 2 completely and 2 of maker 3's 5, which uses up the whole buy
+    let execution = book
+        .insert(sized(4, Side::Buy, 29_000, 12))
+        .expect("valid insert");
+
+    // the makers in the order they filled, then the buy, which never rested
+    assert_eq!(ids(execution.ended().iter()), vec![1, 2, 4]);
+    assert!(
+        execution
+            .ended()
+            .iter()
+            .all(|order| order.status() == OrderStatus::Filled)
+    );
+    assert_eq!(ids(book.asks()), vec![3]);
+}
+
+#[test]
+fn a_repriced_order_that_fills_ends_with_its_maker() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 10))
+        .expect("valid insert");
+    book.insert(sized(2, Side::Buy, 28_000, 10))
+        .expect("valid insert");
+
+    let execution = book
+        .modify(OrderId::new(2), None, Some(price(29_000)))
+        .expect("the order is in the book");
+
+    assert_eq!(ids(execution.ended().iter()), vec![1, 2]);
 }

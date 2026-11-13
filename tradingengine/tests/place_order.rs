@@ -373,6 +373,20 @@ fn a_duplicate_order_id_is_rejected_and_the_book_kept() {
 }
 
 #[test]
+fn the_order_id_of_an_ended_order_cannot_be_used_again() {
+    let mut engine = engine();
+    engine.place_order(limit(1, Side::Sell, PRICE_29_000, HALF_BTC));
+    // fills all of order 1 and all of order 2, so both leave the book
+    engine.place_order(limit(2, Side::Buy, PRICE_29_000, HALF_BTC));
+
+    for n in [1, 2] {
+        let mut again = limit(n, Side::Buy, 2_800_000, HALF_BTC);
+        again.command_id = Some(Id::from(9_000 + n));
+        assert_rejected(&mut engine, again, RejectReason::BadOrderParams);
+    }
+}
+
+#[test]
 fn open_orders_stop_a_market_from_changing_its_decimals() {
     // the HAS_OPEN_ORDERS rule from SetMarket, testable now that an order can rest
     let mut engine = engine();

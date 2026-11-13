@@ -71,7 +71,7 @@ impl RestingOrder {
         new_price: Option<Price>,
     ) -> Result<()> {
         if self.status.is_terminal() {
-            return Err(EngineError::OrderNotLive);
+            return Err(EngineError::OrderNotLive(self.status));
         }
 
         let filled = self.qty_total.checked_sub(self.qty_remaining)?;
@@ -90,7 +90,7 @@ impl RestingOrder {
 
     pub fn cancel(&mut self) -> Result<()> {
         if self.status.is_terminal() {
-            return Err(EngineError::OrderNotLive);
+            return Err(EngineError::OrderNotLive(self.status));
         }
 
         self.status = OrderStatus::Cancelled;

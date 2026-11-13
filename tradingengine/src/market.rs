@@ -1,6 +1,7 @@
 use proto::Market;
 
 use crate::book::Book;
+use crate::ended::EndedOrders;
 use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::{OrderStatus, Side};
@@ -19,15 +20,17 @@ pub struct Placed {
     pub filled_quote: QuoteQuantity,
 }
 
-/// Everything a market needs: a [`Market`], a [`QuoteScale`] and a [`Book`].
+/// Everything a market needs: a [`Market`], a [`QuoteScale`], a [`Book`], and the
+/// [`EndedOrders`] that have left the book.
 ///
-/// The backend gives the [`Market`], the engine calculates the scale, and the book is
-/// held by the market.
+/// The backend gives the [`Market`], the engine calculates the scale, and the book and the
+/// ended orders are held by the market.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarketInfo {
     market: Market,
     scale: QuoteScale,
     book: Book,
+    ended: EndedOrders,
 }
 
 impl MarketInfo {
@@ -37,6 +40,7 @@ impl MarketInfo {
             market,
             scale,
             book: Book::new(),
+            ended: EndedOrders::default(),
         })
     }
 
@@ -66,12 +70,27 @@ impl MarketInfo {
         &self.book
     }
 
+    /// The orders that have left the book because they filled or were cancelled.
+    pub fn ended(&self) -> &EndedOrders {
+        &self.ended
+    }
+
     /// matches the order against the book and rests whats left
-    /// the matched and rest are returned as data in placed
+    /// the matched and rest are returned as data in placed.
+    /// the orders that filled completely are remembered as ended
     pub fn place(&mut self, order: RestingOrder) -> Result<Placed> {
         self.check_quote_fits(&order)?;
+        // the book rejects an id it holds. an order that ended has left the book, but its id
+        // stays taken
+        if self.ended.contains(order.id()) {
+            return Err(EngineError::DuplicateOrderId);
+        }
 
         let execution = self.book.insert(order)?;
+        // recorded before anything below can fail, so the book and the ended orders agree
+        for ended_order in execution.ended() {
+            self.ended.record(ended_order);
+        }
 
         // round down per fill same as each TradeSettlement. the sum can come
         // out lower then one quote_for on the total
@@ -94,7 +113,7 @@ impl MarketInfo {
         })
     }
 
-    /// Cancels a resting order and takes it out of the book.
+    /// Cancels a resting order, takes it out of the book, and remembers it as ended.
     ///
     /// The cancel is tried on a copy first, so a rejected cancel leaves the book as it was.
     pub fn cancel(&mut self, order_id: OrderId) -> Result<RestingOrder> {
@@ -105,6 +124,7 @@ impl MarketInfo {
             .clone();
         order.cancel()?;
         self.book.remove(order_id)?;
+        self.ended.record(&order);
         Ok(order)
     }
 

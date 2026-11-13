@@ -1,3 +1,5 @@
+use crate::order::OrderStatus;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineError {
     PriceNotPositive,
@@ -7,7 +9,8 @@ pub enum EngineError {
     QuantityNotAboveFilled,
     DuplicateOrderId,
     OrderNotFound,
-    OrderNotLive,
+    /// The order has already ended, with this final status.
+    OrderNotLive(OrderStatus),
     Overflow,
     DecimalsOutOfRange,
     TimestampOutOfRange,
@@ -34,9 +37,9 @@ impl std::fmt::Display for EngineError {
             Self::QuantityNotAboveFilled => {
                 write!(f, "new quantity must be above the quantity already filled")
             }
-            Self::DuplicateOrderId => write!(f, "an order with this id is already in the book"),
+            Self::DuplicateOrderId => write!(f, "an order with this id was already placed"),
             Self::OrderNotFound => write!(f, "no order with this id is in the book"),
-            Self::OrderNotLive => write!(f, "the order is already in a terminal state"),
+            Self::OrderNotLive(status) => write!(f, "the order has already ended: {status:?}"),
             Self::Overflow => write!(f, "arithmetic overflow"),
             Self::DecimalsOutOfRange => write!(
                 f,

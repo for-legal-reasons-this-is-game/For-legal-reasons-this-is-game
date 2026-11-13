@@ -169,15 +169,25 @@ A command response never changes the order's `status` or filled amounts. Only
 the event stream writes those columns. The response only updates `submission`
 and the HTTP reply.
 
+Only a `PlaceOrder` response can lead to a refund. A `CancelOrder`,
+`CancelOrders`, or `ModifyOrder` acts on orders that were accepted earlier, and
+the stream refunds each of them when it ends. Never refund such an order, or
+change its `submission`, because of one of these responses or a transport
+error: the order may still be working, or its last trade may not be settled
+yet. Emptying its hold account first makes that settlement fail, and the
+consumer stops on it.
+
 | Outcome | What to do |
 |---|---|
-| `reject_reason` is `UNSPECIFIED` (accepted) | Set `submission` to `accepted`. Return `status` and the filled amounts to the HTTP caller. |
+| `reject_reason` is `UNSPECIFIED` (accepted) | For a `PlaceOrder`, set `submission` to `accepted`. Return `status` and the filled amounts to the HTTP caller. |
 | Accepted with `status` `CANCELLED` and a `cancel_reason` | Normal outcome, not an error. For example, an IOC order that crossed nothing. |
-| Accepted with `status` `FILLED` after a modify or cancel | Normal outcome. A modify can reprice into the book, and a cancel can lose a race with a fill. |
-| `reject_reason` is set, except `INTERNAL_ERROR` on a cancel or modify | Refund the whole reservation and set `submission` to `rejected`. Nothing about this order arrives on the stream. |
+| Accepted with `status` `FILLED` after a modify | Normal outcome. A modify can reprice into the book and fill. |
+| `reject_reason` is set on a `PlaceOrder` | Refund the whole reservation and set `submission` to `rejected`. Nothing about this order arrives on the stream. |
 | `INTERNAL_ERROR` on a `PlaceOrder` | The engine stopped before it processed the order, so the order never existed. Refund the whole reservation, set `submission` to `rejected`, and tell the user the order failed. This is a rejection like any other: the engine saves its state only after it answers everything that was queued. |
-| `INTERNAL_ERROR` on a `CancelOrder`, `CancelOrders`, or `ModifyOrder` | The command wasn't applied and the order is untouched. Don't refund. For a modify that raised the reservation, return the extra amount you already transferred to the hold account. Tell the user the request failed so they can try again. |
-| Transport error, and the engine certainly didn't receive the command | Refund the whole reservation. |
+| `reject_reason` is set on a `CancelOrder`, `CancelOrders`, or `ModifyOrder` | The command wasn't applied. Tell the user why. For a modify that raised the reservation, return the extra amount you already transferred to the hold account. |
+| `ORDER_NOT_WORKING` on a `CancelOrder` or `ModifyOrder` | The order ended before the command arrived, for example because a fill got there first. `status` says how it ended: `FILLED`, `CANCELLED`, or `EXPIRED`. A normal outcome, not an error. The stream brings the order's final report and its refund. |
+| `INTERNAL_ERROR` on a `CancelOrder`, `CancelOrders`, or `ModifyOrder` | The command wasn't applied and the order is untouched. Tell the user the request failed so they can try again. |
+| Transport error, and the engine certainly didn't receive the command | For a `PlaceOrder`, refund the whole reservation. For any other command, nothing happened: handle it like a rejection of that command. |
 | Transport error, and you aren't certain | Treat it as a timeout. |
 | Timeout | Retry with the **same** `command_id`. Don't refund yet. |
 | Retries exhausted | Still don't refund. Wait for the stream to resolve the order. |
@@ -333,8 +343,8 @@ A modify changes the reservation without ending the order:
 ### Handling an engine restart
 
 An engine restart is not an event the backend has to act on. The engine saves
-its book, command cache, and event history to Redis when it stops and loads
-them when it starts, so nothing the backend knows becomes wrong.
+its books, ended orders, command cache, and event history to Redis when it
+stops and loads them when it starts, so nothing the backend knows becomes wrong.
 
 - Commands that were still queued when the engine stopped come back with
   `INTERNAL_ERROR`. See [Handling command responses](#handling-command-responses).
@@ -378,10 +388,11 @@ The market data stream is for display only. Nothing decides from it.
 
 ### Startup
 
-- Load the markets, the order books, the command cache, the event history, and
-  the last `sequence` from Redis. On the very first start, Redis is empty:
-  start with no markets, start the event sequence at 1, and reject every
-  command with `UNKNOWN_MARKET` until the backend sends `SetMarket`.
+- Load the markets, the order books, the ended orders, the command cache, the
+  event history, and the last `sequence` from Redis. On the very first start,
+  Redis is empty: start with no markets, start the event sequence at 1, and
+  reject every command with `UNKNOWN_MARKET` until the backend sends
+  `SetMarket`.
 - Don't answer any command until the load is complete.
 
 ### Handling a command
@@ -415,20 +426,34 @@ stream. Don't check minimums, steps, or market status; the backend already did.
 | `protection_price` is set on an order that isn't a market order | `BAD_ORDER_PARAMS` |
 | The result doesn't fit in 128 bits after division | `BAD_QUANTITY` |
 | The feature isn't implemented yet | `UNSUPPORTED` |
+| The `order_id` is taken: an order with this ID is in the book, or has ended and is still remembered (see the next section) | `BAD_ORDER_PARAMS` |
 
 Store `maker_fee_bps` and `taker_fee_bps` from the request on the order for its
 whole life.
 
 ### Validating a cancel or modify command
 
+Check in this order. The first condition that holds decides the reject reason.
+
 | Condition | Reject reason |
 |---|---|
 | The market doesn't exist | `UNKNOWN_MARKET` |
 | The order doesn't exist | `UNKNOWN_ORDER` |
-| The order has already ended | `ORDER_NOT_WORKING` |
 | `account_holder` doesn't own the order | `NOT_ORDER_OWNER` |
+| The order has already ended | `ORDER_NOT_WORKING` |
 | Modify: the new quantity isn't above the filled quantity | `BAD_QUANTITY` |
 | Modify: the order isn't base-denominated | `ORDER_NOT_WORKING` |
+
+- The owner check comes before the ended check, so a command for another
+  user's order learns nothing about how that order ended.
+- For an order that has already ended, set `status` in the response to how it
+  ended: `FILLED`, `CANCELLED`, or `EXPIRED`. FIX's "too late to cancel"
+  reject carries the order's status the same way.
+- Remember the last 100,000 orders that ended in each market, with their owner
+  and final status, and save them with the book. An order that ended before
+  that gets `UNKNOWN_ORDER`, like one that never existed. The backend doesn't
+  need the engine for those: its `orders` table already shows that they ended.
+- An order rejected by `PlaceOrder` never existed, so it gets `UNKNOWN_ORDER`.
 
 ### Matching
 
@@ -529,8 +554,8 @@ on shutdown, and `SIGINT`). When either fires, in this order:
 2. Answer every command that is queued and not yet processed with
    `INTERNAL_ERROR`. This applies to every command type. Don't store these
    answers in the command cache; a retry must run the command for real.
-3. Write to Redis everything the engine holds in memory: the books, the command
-   cache, the event history, and the last `sequence`.
+3. Write to Redis everything the engine holds in memory: the books, the ended
+   orders, the command cache, the event history, and the last `sequence`.
 4. Exit.
 
 A hard kill (`SIGKILL`, an out-of-memory kill, a node failure) runs no handler,
@@ -538,8 +563,8 @@ so the engine must also be safe without one. The rule: **nothing leaves the
 engine until the state it depends on is in Redis.**
 
 1. Take a batch of queued commands and process them.
-2. Write the resulting books, command cache entries, events, and `sequence` to
-   Redis once.
+2. Write the resulting books, ended orders, command cache entries, events, and
+   `sequence` to Redis once.
 3. Only then send the batch's command responses and events.
 
 This keeps one Redis write per batch, but every response and event waits for

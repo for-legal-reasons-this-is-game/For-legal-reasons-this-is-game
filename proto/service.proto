@@ -105,7 +105,9 @@ message CancelOrderRequest {
   string market_symbol = 4;
 }
 
-// same shape as the PlaceOrderResponse
+// same shape as the PlaceOrderResponse. With ORDER_NOT_WORKING for an order that
+// has already ended, status says how it ended (FILLED, CANCELLED or EXPIRED),
+// like FIX's "too late to cancel"
 message CancelOrderResponse {
   Id command_id = 1;
   RejectReason reject_reason = 2; 
@@ -144,6 +146,8 @@ message ModifyOrderRequest {
   string market_symbol = 7;
 }
 
+// same shape as the PlaceOrderResponse. With ORDER_NOT_WORKING for an order that
+// has already ended, status says how it ended, like in CancelOrderResponse
 message ModifyOrderResponse {
   Id command_id = 1;
   RejectReason reject_reason = 2; 
