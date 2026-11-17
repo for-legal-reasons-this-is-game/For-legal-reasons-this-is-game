@@ -38,7 +38,14 @@ impl Default for CommandCache {
 }
 
 impl CommandCache {
-    pub fn with_capacity(n: usize) -> Self {
+    /// Returns a [`CommandCache`] with [`CommandCache::capacity`] set to `n`
+    ///   and both [`CommandCache::by_id`] and [`CommandCache::oldest_first`]
+    ///   called with `n` capacity
+    /// `n == 0` is treated as [`DEFAULT_CAPACITY`]
+    pub fn with_capacity(mut n: usize) -> Self {
+        if n == 0 {
+            n = DEFAULT_CAPACITY;
+        }
         CommandCache {
             capacity: n,
             by_id: HashMap::with_capacity(n),
@@ -48,11 +55,20 @@ impl CommandCache {
 
     /// - Inserts the key `command_id` and the value (`request`, `response`)
     ///   to the cache hashmap [`CommandCache::by_id`].
-    /// - Pushes the `command_id` to the VecDeque [`CommandCache::oldest_first`]
+    /// - Pushes the `command_id` to the VecDeque [`CommandCache::oldest_first`].
     pub fn add_entry(&mut self, command_id: Id, request: Command, response: Answer) {
+        if self.by_id.len() == self.capacity {
+            let removed = self
+                .oldest_first
+                .pop_front()
+                .expect("major bug that will never happen just happened");
+            self.by_id
+                .remove(&removed)
+                .expect("major bug that will never happen just happened");
+        }
         if self.by_id.insert(command_id, (request, response)).is_some() {
             panic!(
-                "major bug in Engine::command_cahe, found identical command_id on inserting an entry"
+                "major bug in Engine::command_cache, found identical command_id on inserting an entry"
             )
         }
         self.oldest_first.push_back(command_id);
