@@ -1,5 +1,6 @@
 pub mod book;
 pub mod cancel;
+pub mod command_cache;
 pub mod engine;
 pub mod error;
 pub mod fee;

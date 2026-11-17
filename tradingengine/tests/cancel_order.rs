@@ -64,7 +64,7 @@ fn limit(n: u128, side: Side, price: u128, base_quantity: u128) -> PlaceOrderReq
 ///
 /// Its `command_id` (`5_000 + n`) differs from the place's (`1_000 + n`). The engine answers a
 /// `command_id` it has seen before from its command cache, so a cancel that reused the place's
-/// id would get the place's answer back.
+/// id would get DUPLICATE_COMMAND.
 fn cancel(n: u128) -> CancelOrderRequest {
     CancelOrderRequest {
         command_id: Some(Id::from(5_000 + n)),
@@ -122,9 +122,9 @@ fn assert_cancelled(engine: &mut Engine, request: CancelOrderRequest) -> CancelO
 }
 
 /// Sends a cancel and checks that it was rejected with `reason`: it says why, the same
-/// `command_id` comes back, and nothing in the engine changed.
+/// `command_id` comes back, and nothing in the markets changed.
 fn assert_rejected(engine: &mut Engine, request: CancelOrderRequest, reason: RejectReason) {
-    let before = engine.clone();
+    let before = engine.markets().clone();
     let command_id = request.command_id;
     let response = engine.cancel_order(request);
     assert_eq!(
@@ -135,7 +135,7 @@ fn assert_rejected(engine: &mut Engine, request: CancelOrderRequest, reason: Rej
     );
     assert!(!response.reject_detail.is_empty());
     assert_eq!(response.command_id, command_id);
-    assert_eq!(*engine, before);
+    assert_eq!(*engine.markets(), before);
 }
 
 // ---- accepted ----
@@ -219,7 +219,7 @@ fn an_unknown_or_empty_market_is_rejected() {
 
     let no_market = CancelOrderRequest {
         market_symbol: String::new(),
-        ..cancel(1)
+        ..cancel(2)
     };
     assert_rejected(&mut engine, no_market, RejectReason::UnknownMarket);
 }
@@ -287,7 +287,7 @@ fn a_cancel_without_an_order_id_or_holder_is_rejected() {
 
     let no_holder = CancelOrderRequest {
         account_holder: None,
-        ..cancel(1)
+        ..cancel(2)
     };
     assert_rejected(&mut engine, no_holder, RejectReason::BadOrderParams);
 }
