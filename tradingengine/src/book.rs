@@ -159,6 +159,8 @@ impl Book {
             .ok_or(EngineError::OrderNotFound)?;
         let levels = self.side_mut(side);
 
+        // TODO: what if order was removed from all_orders, and one of
+        //  the next checks fail?
         let Some(level) = levels.get_mut(&price) else {
             return Err(EngineError::OrderNotFound);
         };

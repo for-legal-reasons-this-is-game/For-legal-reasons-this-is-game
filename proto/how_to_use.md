@@ -423,6 +423,7 @@ whole life.
 
 | Condition | Reject reason |
 |---|---|
+| The market doesn't exist | `UNKNOWN_MARKET` |
 | The order doesn't exist | `UNKNOWN_ORDER` |
 | The order has already ended | `ORDER_NOT_WORKING` |
 | `account_holder` doesn't own the order | `NOT_ORDER_OWNER` |
