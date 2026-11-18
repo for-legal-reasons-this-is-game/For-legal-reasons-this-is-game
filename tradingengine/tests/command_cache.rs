@@ -283,6 +283,7 @@ fn oldest_cache_entry_is_dropped_and_a_newer_one_returns_stored_response_for_can
     let rerun = engine.cancel_order(cancel(1));
     assert_eq!(
         rerun.reject_reason(),
+        // TODO this will change to OrderNotWorking after implementing ended orders handling
         RejectReason::UnknownOrder,
         "{}",
         rerun.reject_detail
