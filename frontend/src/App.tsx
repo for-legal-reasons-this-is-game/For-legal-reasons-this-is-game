@@ -3,6 +3,7 @@ import { useState } from "react";
 import { CreateUser } from "./user/CreateUser";
 import { ListUsers } from "./user/ListUsers";
 import { ListUserOrders } from "./user/ListUserOrders";
+import { UserLookup } from "./user/UserLookup";
 
 import { CreateAccount } from "./account/CreateAccount";
 import { AccountLookup } from "./account/AccountLookup";
@@ -13,8 +14,10 @@ import { LedgerLookup } from "./ledger/LedgerLookup";
 
 import { MarketLookup } from "./market/MarketLookup";
 import { ListMarkets } from "./market/ListMarkets";
+import { CreateMarket } from "./market/CreateMarket";
 
 import { OrderLookup } from "./order/OrderLookup";
+import { CreateOrder } from "./order/CreateOrder";
 
 function App() {
     const [userID, setUserID] = useState<string>("");
@@ -29,6 +32,9 @@ function App() {
     const [listMarkets, setListMarkets] = useState(false);
     const [userOrders, setUserOrders] = useState(false);
     const [orderLookup, setOrderLookup] = useState(false);
+    const [userLookup, setUserLookup] = useState(false);
+    const [createMarket, setCreateMarket] = useState(false);
+    const [createOrder, setCreateOrder] = useState(false);
 
     return (
         <div>
@@ -43,6 +49,12 @@ function App() {
                 style={{ background: users ? "green" : "grey" }}
                 onClick={() => setUsers(!users)}>
                 List Users
+            </button>
+            <br />
+            <button
+                style={{ background: userLookup ? "green" : "grey" }}
+                onClick={() => setUserLookup(!userLookup)}>
+                Get User
             </button>
             <br />
             <button
@@ -96,6 +108,12 @@ function App() {
                 List Markets
             </button>
             <br />
+            <button
+                style={{ background: createMarket ? "green" : "grey" }}
+                onClick={() => setCreateMarket(!createMarket)}>
+                Create Market
+            </button>
+            <br />
             <br />
             <button
                 style={{ background: orderLookup ? "green" : "grey" }}
@@ -103,8 +121,15 @@ function App() {
                 Order Lookup
             </button>
             <br />
+            <button
+                style={{ background: createOrder ? "green" : "grey" }}
+                onClick={() => setCreateOrder(!createOrder)}>
+                Create Order
+            </button>
+            <br />
             {createUser && <CreateUser />}
             {users && <ListUsers setUserID={setUserID} />}
+            {userLookup && <UserLookup setUserID={setUserID} />}
             {userOrders && <ListUserOrders userID={userID} />}
             {createAccount && <CreateAccount userID={userID} />}
             {account && <AccountLookup />}
@@ -113,7 +138,9 @@ function App() {
             {ledger && <LedgerLookup />}
             {marketLookup && <MarketLookup />}
             {listMarkets && <ListMarkets />}
+            {createMarket && <CreateMarket />}
             {orderLookup && <OrderLookup />}
+            {createOrder && <CreateOrder userID={userID} />}
         </div>
     );
 }

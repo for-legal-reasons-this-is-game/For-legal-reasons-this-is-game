@@ -14,8 +14,10 @@ import type { Transfer } from "../types/Transfer";
 import type { TransferQuery } from "../types/TransferQuery";
 import type { TransferPage } from "../types/TransferPage";
 import type { Market } from "../types/Market";
+import type { MarketPayload } from "../types/MarketPayload";
 import type { Ticker } from "../types/Ticker";
 import type { Order } from "../types/Order";
+import type { OrderPayload } from "../types/OrderPayload";
 import type { OrderPage } from "../types/OrderPage";
 import type { OrderQuery } from "../types/OrderQuery";
 import type { MarketOrderQuery } from "../types/MarketOrderQuery";
@@ -54,6 +56,8 @@ export const api = {
             http.post<Account>(`/users/${seg(userId)}/accounts`, payload),
         orders: (userId: string, query: OrderQuery) =>
             http.get<OrderPage>(`/users/${seg(userId)}/orders${toQueryString(query)}`),
+        createOrder: (userId: string, payload: OrderPayload) =>
+            http.post<Order>(`/users/${seg(userId)}/orders`, payload),
     },
     accounts: {
         get: (accountId: string) => http.get<Account>(`/accounts/${seg(accountId)}`),
@@ -80,6 +84,7 @@ export const api = {
     markets: {
         list: () => http.get<Market[]>("/markets"),
         get: (symbol: string) => http.get<Market>(`/markets/${seg(symbol)}`),
+        create: (payload: MarketPayload) => http.post<Market>("/markets", payload),
         ticker: (symbol: string) => http.get<Ticker>(`/markets/${seg(symbol)}/ticker`),
         orders: (symbol: string, query: MarketOrderQuery) =>
             http.get<OrderPage>(`/markets/${seg(symbol)}/orders${toQueryString(query)}`),
