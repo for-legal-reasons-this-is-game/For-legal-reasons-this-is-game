@@ -5,9 +5,11 @@
 // when buying the client has the quote part of the market and recieves base in exchange
 // when sell the client has the base part and recieves quote
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{EngineError, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BaseQuantity(u128);
 
 impl BaseQuantity {

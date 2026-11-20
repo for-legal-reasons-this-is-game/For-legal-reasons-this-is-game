@@ -7,7 +7,9 @@ use proto::{
 
 use crate::cancel::parse_cancel_order;
 use crate::command_cache::{Answer, Command, CommandCache};
+use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
+use crate::ids::CommandId;
 use crate::market::{MarketInfo, Placed};
 use crate::order::OrderStatus;
 use crate::place::parse_place_order;
@@ -30,6 +32,39 @@ impl Engine {
     // Engine starts without any books this might change for recovery
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn load(engine_state: EngineState, cache_capacity: usize) -> Result<Engine> {
+        let markets = engine_state
+            .markets
+            .into_iter()
+            .map(|m| {
+                Ok((
+                    m.market.symbol.clone(),
+                    MarketInfo::load(m.market, m.orders)?,
+                ))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        let command_cache = CommandCache::load(cache_capacity, engine_state.command_cache);
+        Ok(Engine {
+            markets,
+            command_cache,
+        })
+    }
+
+    pub fn save(&self) -> EngineState {
+        EngineState {
+            markets: self
+                .markets
+                .values()
+                .map(|info| MarketState {
+                    market: info.market().clone(),
+                    orders: info.book().save(),
+                })
+                .collect(),
+            command_cache: self.command_cache.save(),
+        }
     }
 
     pub fn with_cache_capacity(n: usize) -> Self {
@@ -82,9 +117,10 @@ impl Engine {
     /// remainder as rests in the book
     /// this is only in case of limit
     pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
-        let Some(command_id) = request.command_id else {
+        let Some(id) = request.command_id else {
             return self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
         };
+        let command_id = CommandId::from(id);
         let command = Command::Place(Box::new(request.clone()));
 
         match self.command_cache.search(command_id, &command) {
@@ -97,7 +133,7 @@ impl Engine {
         let response = match self.try_place_order(request) {
             Ok(placed) => {
                 let mut response = PlaceOrderResponse {
-                    command_id: Some(command_id),
+                    command_id: Some(command_id.into()),
                     filled_base_quantity: Some(Uint128::from(placed.filled_base)),
                     filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
                     ..Default::default()
@@ -125,11 +161,11 @@ impl Engine {
 
     fn reject_place_order(
         &self,
-        command_id: Option<Id>,
+        command_id: Option<CommandId>,
         error: &EngineError,
     ) -> PlaceOrderResponse {
         let mut response = PlaceOrderResponse {
-            command_id,
+            command_id: command_id.map(Id::from),
             reject_detail: error.to_string(),
             ..Default::default()
         };
@@ -140,9 +176,10 @@ impl Engine {
     ///
     /// A rejected cancel changes nothing.
     pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
-        let Some(command_id) = request.command_id else {
+        let Some(id) = request.command_id else {
             return self.reject_cancel_order(None, &EngineError::RequiredFieldAbsent);
         };
+        let command_id = CommandId::from(id);
         let command = Command::Cancel(request.clone());
 
         match self.command_cache.search(command_id, &command) {
@@ -159,7 +196,7 @@ impl Engine {
                 // (how_to_use.md, "Handling command responses"). Settle how to track it, and
                 // until then tell Alvaro that a cancel answer only has the filled base
                 let mut response = CancelOrderResponse {
-                    command_id: Some(command_id),
+                    command_id: Some(command_id.into()),
                     filled_base_quantity: Some(Uint128::from(filled_base)),
                     ..Default::default()
                 };
@@ -187,11 +224,11 @@ impl Engine {
 
     fn reject_cancel_order(
         &self,
-        command_id: Option<Id>,
+        command_id: Option<CommandId>,
         error: &EngineError,
     ) -> CancelOrderResponse {
         let mut response = CancelOrderResponse {
-            command_id,
+            command_id: command_id.map(Id::from),
             reject_detail: error.to_string(),
             ..Default::default()
         };

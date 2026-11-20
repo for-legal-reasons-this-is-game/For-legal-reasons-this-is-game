@@ -83,6 +83,28 @@ impl Book {
         Ok(Execution { fills, resting })
     }
 
+    /// Orders must come in their queue order within each price level, front first. [Book::save] returns them that way.
+    pub fn load(&mut self, order: RestingOrder) -> Result<()> {
+        let id = order.id();
+        if self.all_orders.contains_key(&id) {
+            return Err(EngineError::DuplicateOrderId);
+        }
+
+        let side = order.side();
+        let price = order.price();
+        self.all_orders.insert(id, (side, price));
+        self.side_mut(side)
+            .entry(price)
+            .or_default()
+            .push_back(order);
+
+        Ok(())
+    }
+
+    pub fn save(&self) -> Vec<RestingOrder> {
+        self.bids().chain(self.asks()).cloned().collect()
+    }
+
     /// Tries to match the incoming order against the other side of the book.
     ///
     /// Returns the [`Fill`]s it matched.

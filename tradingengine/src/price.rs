@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use crate::error::{EngineError, Result};
 
 /// A price in minor units: the smallest unit of a currency, like cents for EUR and USD,
 /// or satoshis for BTC. See [`Price::from_minor_units`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Price(u128);
 impl Price {
     pub fn from_minor_units(minor_units: u128) -> Result<Self> {

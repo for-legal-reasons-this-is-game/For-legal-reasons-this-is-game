@@ -1,29 +1,34 @@
 use std::collections::{HashMap, VecDeque};
 
-use proto::{CancelOrderRequest, CancelOrderResponse, Id, PlaceOrderRequest, PlaceOrderResponse};
+use proto::{CancelOrderRequest, CancelOrderResponse, PlaceOrderRequest, PlaceOrderResponse};
+use serde::{Deserialize, Serialize};
 
-use crate::error::{EngineError, Result};
+use crate::{
+    error::{EngineError, Result},
+    ids::CommandId,
+    proto_bytes,
+};
 
 /// This will have to change accordingly with the period the backend takes for retries.
 /// And imo shouldn't be hardcoded at all
 const DEFAULT_CAPACITY: usize = 100_000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
-    // this is a box because clippy screams, change this whole enum better.
-    Place(Box<PlaceOrderRequest>),
-    Cancel(CancelOrderRequest),
+    // this is a box because clippy screams.
+    Place(#[serde(with = "proto_bytes")] Box<PlaceOrderRequest>),
+    Cancel(#[serde(with = "proto_bytes")] CancelOrderRequest),
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Answer {
-    Place(PlaceOrderResponse),
-    Cancel(CancelOrderResponse),
+    Place(#[serde(with = "proto_bytes")] PlaceOrderResponse),
+    Cancel(#[serde(with = "proto_bytes")] CancelOrderResponse),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandCache {
-    by_id: HashMap<Id, (Command, Answer)>,
-    oldest_first: VecDeque<Id>,
+    by_id: HashMap<CommandId, (Command, Answer)>,
+    oldest_first: VecDeque<CommandId>,
     capacity: usize,
 }
 
@@ -53,23 +58,41 @@ impl CommandCache {
         }
     }
 
+    pub fn load(n: usize, oldest_first: Vec<(CommandId, Command, Answer)>) -> Self {
+        let mut command_cache = CommandCache::with_capacity(n);
+        for (command_id, command, answer) in oldest_first {
+            command_cache.add_entry(command_id, command, answer);
+        }
+        command_cache
+    }
+
+    pub fn save(&self) -> Vec<(CommandId, Command, Answer)> {
+        let mut res = Vec::new();
+        for id in &self.oldest_first {
+            let (command, answer) = self
+                .by_id
+                .get(id)
+                .expect("error while saving `CommandCache`");
+            res.push((*id, command.clone(), answer.clone()));
+        }
+        res
+    }
+
     /// - Inserts the key `command_id` and the value (`request`, `response`)
     ///   to the cache hashmap [`CommandCache::by_id`].
     /// - Pushes the `command_id` to the VecDeque [`CommandCache::oldest_first`].
-    pub fn add_entry(&mut self, command_id: Id, request: Command, response: Answer) {
+    pub fn add_entry(&mut self, command_id: CommandId, request: Command, response: Answer) {
         if self.by_id.len() == self.capacity {
             let removed = self
                 .oldest_first
                 .pop_front()
-                .expect("major bug that will never happen just happened");
+                .expect("error on adding entry to cache: `CommandCache::add_entry`");
             self.by_id
                 .remove(&removed)
-                .expect("major bug that will never happen just happened");
+                .expect("error on adding entry to cache: `CommandCache::add_entry`");
         }
         if self.by_id.insert(command_id, (request, response)).is_some() {
-            panic!(
-                "major bug in Engine::command_cache, found identical command_id on inserting an entry"
-            )
+            panic!("error in `CommandCache`, found identical `command_id` on inserting an entry")
         }
         self.oldest_first.push_back(command_id);
     }
@@ -80,7 +103,7 @@ impl CommandCache {
     /// - Returns [`Ok(None)`] if no `command_id` found in cache.
     ///
     /// For Redis I assume we will search each command separately (ask redis for a place_order request).
-    pub fn search(&self, command_id: Id, request: &Command) -> Result<Option<&Answer>> {
+    pub fn search(&self, command_id: CommandId, request: &Command) -> Result<Option<&Answer>> {
         match self.by_id.get(&command_id) {
             None => Ok(None),
             Some((cached_request, response)) if cached_request == request => Ok(Some(response)),

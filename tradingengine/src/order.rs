@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::price::Price;
 
 // No Hash and no Ord on any of these: nothing keys or sorts by them, and Ord on
 // OrderStatus would compare by declaration order, which is not the lifecycle.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
     Buy,
     Sell,
@@ -31,7 +33,7 @@ pub enum TimeInForce {
     FillOrKill,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OrderStatus {
     New,
     Open,

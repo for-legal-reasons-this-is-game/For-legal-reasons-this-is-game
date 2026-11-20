@@ -40,6 +40,14 @@ impl MarketInfo {
         })
     }
 
+    pub fn load(market: Market, orders: Vec<RestingOrder>) -> Result<MarketInfo> {
+        let mut info = MarketInfo::new(market)?;
+        for order in orders {
+            info.book.load(order)?;
+        }
+        Ok(info)
+    }
+
     /// Reconfigures an existing market. This only works if its book has no open orders.
     ///
     /// The book can't be changed here. That will be implemented separately, with a
