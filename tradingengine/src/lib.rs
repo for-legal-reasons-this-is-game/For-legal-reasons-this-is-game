@@ -13,6 +13,7 @@ pub mod price;
 pub mod proto_bytes;
 pub mod quantity;
 pub mod quote;
+pub mod redis_store;
 pub mod resting_order;
 pub mod service;
 pub mod wire;

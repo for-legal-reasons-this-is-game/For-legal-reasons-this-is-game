@@ -11,7 +11,7 @@ use crate::{
 
 /// This will have to change accordingly with the period the backend takes for retries.
 /// And imo shouldn't be hardcoded at all
-const DEFAULT_CAPACITY: usize = 100_000;
+pub const DEFAULT_CACHE_CAPACITY: usize = 100_000;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
@@ -35,9 +35,9 @@ pub struct CommandCache {
 impl Default for CommandCache {
     fn default() -> Self {
         Self {
-            capacity: DEFAULT_CAPACITY,
-            by_id: HashMap::with_capacity(DEFAULT_CAPACITY),
-            oldest_first: VecDeque::with_capacity(DEFAULT_CAPACITY),
+            capacity: DEFAULT_CACHE_CAPACITY,
+            by_id: HashMap::with_capacity(DEFAULT_CACHE_CAPACITY),
+            oldest_first: VecDeque::with_capacity(DEFAULT_CACHE_CAPACITY),
         }
     }
 }
@@ -46,10 +46,10 @@ impl CommandCache {
     /// Returns a [`CommandCache`] with [`CommandCache::capacity`] set to `n`
     ///   and both [`CommandCache::by_id`] and [`CommandCache::oldest_first`]
     ///   called with `n` capacity
-    /// `n == 0` is treated as [`DEFAULT_CAPACITY`]
+    /// `n == 0` is treated as [`DEFAULT_CACHE_CAPACITY`]
     pub fn with_capacity(mut n: usize) -> Self {
         if n == 0 {
-            n = DEFAULT_CAPACITY;
+            n = DEFAULT_CACHE_CAPACITY;
         }
         CommandCache {
             capacity: n,
