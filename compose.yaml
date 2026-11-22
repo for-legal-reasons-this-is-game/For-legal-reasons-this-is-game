@@ -88,6 +88,30 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    # ENGINE_INSTANCE names this engine's key in redis.
+    environment:
+      REDIS_URL: redis://tradingengine-redis:6379
+      ENGINE_INSTANCE: tradingengine-0
+    depends_on:
+      tradingengine-redis:
+        condition: service_healthy
+
+  # the trading engine's own Redis, like k8s/redis_tradingengine_deployment.yaml:
+  # append-only, so the state survives a Redis restart too
+  tradingengine-redis:
+    image: redis:latest
+    container_name: tradingengine-redis
+    restart: unless-stopped
+    ports:
+      - "${TRADINGENGINE_REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - tradingengine_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   db:
     image: postgres:16-alpine
@@ -180,3 +204,4 @@ volumes:
   tigerbeetle_2_data:
   # shared with the Infisical stack (also declared in secret_managment/docker-compose.yaml)
   infisical_shared:
+  tradingengine_redis_data:
