@@ -1,85 +1,14 @@
+mod common;
+
+use common::{
+    HALF_BTC, PRICE_29_000, assert_accepted, assert_rejected, btc_usd, engine, filled_base,
+    filled_quote, limit,
+};
 use proto::place_order_request::Amount;
 use proto::{
-    ConfigRejectReason, Id, Market, OrderStatus, OrderType, PlaceOrderRequest, PlaceOrderResponse,
-    RejectReason, SetMarketRequest, Side, TimeInForce, Timestamp, TriggerDirection, Uint128,
+    ConfigRejectReason, Id, OrderStatus, OrderType, PlaceOrderRequest, RejectReason,
+    SetMarketRequest, Side, TimeInForce, Timestamp, TriggerDirection, Uint128,
 };
-use tradingengine::engine::Engine;
-
-// BTC-USD: base in satoshis (8), quote in cents (2), price in cents (2), so
-// k = 2 + 8 - 2 = 8 and 0.5 BTC at $29,000 is 1_450_000 cents
-const HALF_BTC: u128 = 50_000_000;
-const PRICE_29_000: u128 = 2_900_000;
-
-fn btc_usd(price_decimals: u32) -> Market {
-    Market {
-        symbol: "BTC-USD".to_string(),
-        base_decimals: 8,
-        quote_decimals: 2,
-        price_decimals,
-        fee_account: Some(Id::from(1u128)),
-    }
-}
-
-fn engine() -> Engine {
-    let mut engine = Engine::new();
-    engine.set_market(SetMarketRequest {
-        market: Some(btc_usd(2)),
-    });
-    engine
-}
-
-// a valid GTC limit order. every order gets its own order, command and holder
-// id from `n`, so no two orders collide and no order trades with its own holder
-fn limit(n: u128, side: Side, price: u128, base_quantity: u128) -> PlaceOrderRequest {
-    let mut request = PlaceOrderRequest {
-        command_id: Some(Id::from(1_000 + n)),
-        order_id: Some(Id::from(n)),
-        market_symbol: "BTC-USD".to_string(),
-        account_holder: Some(Id::from(2_000 + n)),
-        base_account: Some(Id::from(3_000 + n)),
-        quote_account: Some(Id::from(4_000 + n)),
-        amount: Some(Amount::BaseQuantity(Uint128::from(base_quantity))),
-        limit_price: Some(Uint128::from(price)),
-        maker_fee_bps: 5,
-        taker_fee_bps: 10,
-        ..PlaceOrderRequest::default()
-    };
-    request.set_side(side);
-    request.set_type(OrderType::Limit);
-    request.set_time_in_force(TimeInForce::Gtc);
-    request
-}
-
-fn filled_base(response: &PlaceOrderResponse) -> u128 {
-    response.filled_base_quantity.map(u128::from).unwrap_or(0)
-}
-
-fn filled_quote(response: &PlaceOrderResponse) -> u128 {
-    response.filled_quote_quantity.map(u128::from).unwrap_or(0)
-}
-
-fn assert_accepted(response: &PlaceOrderResponse) {
-    assert_eq!(
-        response.reject_reason(),
-        RejectReason::Unspecified,
-        "rejected: {}",
-        response.reject_detail
-    );
-}
-
-// a rejected place must not create an order or touch the book
-fn assert_rejected(engine: &mut Engine, request: PlaceOrderRequest, reason: RejectReason) {
-    let before = engine.clone();
-    let response = engine.place_order(request);
-    assert_eq!(
-        response.reject_reason(),
-        reason,
-        "{}",
-        response.reject_detail
-    );
-    assert!(!response.reject_detail.is_empty());
-    assert_eq!(*engine, before);
-}
 
 // ---- accepted ----
 
@@ -182,8 +111,13 @@ fn a_missing_id_is_bad_order_params() {
         |r| r.quote_account = None,
     ];
 
-    for clear in missing {
-        let mut request = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    for (n, clear) in missing.iter().enumerate() {
+        let mut request = limit(
+            n.try_into().expect("overfloooow"),
+            Side::Buy,
+            PRICE_29_000,
+            HALF_BTC,
+        );
         clear(&mut request);
         assert_rejected(&mut engine, request, RejectReason::BadOrderParams);
     }
@@ -198,11 +132,11 @@ fn an_unset_or_unknown_enum_is_bad_order_params() {
     assert_rejected(&mut engine, no_side, RejectReason::BadOrderParams);
 
     // a number the proto does not know reads as UNSPECIFIED
-    let mut unknown_type = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    let mut unknown_type = limit(2, Side::Buy, PRICE_29_000, HALF_BTC);
     unknown_type.r#type = 99;
     assert_rejected(&mut engine, unknown_type, RejectReason::BadOrderParams);
 
-    let mut no_time_in_force = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    let mut no_time_in_force = limit(3, Side::Buy, PRICE_29_000, HALF_BTC);
     no_time_in_force.time_in_force = 0;
     assert_rejected(&mut engine, no_time_in_force, RejectReason::BadOrderParams);
 }
@@ -216,7 +150,7 @@ fn a_missing_or_wrong_amount_arm_is_bad_order_params() {
     assert_rejected(&mut engine, no_amount, RejectReason::BadOrderParams);
 
     // only market buys say how much quote to spend
-    let mut quote_on_a_limit = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    let mut quote_on_a_limit = limit(2, Side::Buy, PRICE_29_000, HALF_BTC);
     quote_on_a_limit.amount = Some(Amount::QuoteQuantity(Uint128::from(1_000u128)));
     assert_rejected(&mut engine, quote_on_a_limit, RejectReason::BadOrderParams);
 }
@@ -260,7 +194,7 @@ fn stop_fields_on_a_limit_order_are_bad_order_params() {
     trigger.trigger_price = Some(Uint128::from(PRICE_29_000));
     assert_rejected(&mut engine, trigger, RejectReason::BadOrderParams);
 
-    let mut direction = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    let mut direction = limit(2, Side::Buy, PRICE_29_000, HALF_BTC);
     direction.set_trigger_direction(TriggerDirection::LastAtOrAbove);
     assert_rejected(&mut engine, direction, RejectReason::BadOrderParams);
 }
@@ -273,7 +207,7 @@ fn expire_time_must_go_with_gtd_and_only_gtd() {
     gtd_without_time.set_time_in_force(TimeInForce::Gtd);
     assert_rejected(&mut engine, gtd_without_time, RejectReason::BadOrderParams);
 
-    let mut gtc_with_time = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    let mut gtc_with_time = limit(2, Side::Buy, PRICE_29_000, HALF_BTC);
     gtc_with_time.expire_time = Some(Timestamp {
         seconds: 1_900_000_000,
         nanos: 0,
@@ -344,13 +278,18 @@ fn a_stop_limit_order_is_unsupported() {
 fn ioc_fok_and_gtd_are_unsupported() {
     let mut engine = engine();
 
-    for time_in_force in [TimeInForce::Ioc, TimeInForce::Fok] {
-        let mut request = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
-        request.set_time_in_force(time_in_force);
+    for (n, time_in_force) in [TimeInForce::Ioc, TimeInForce::Fok].iter().enumerate() {
+        let mut request = limit(
+            n.try_into().expect("overflow"),
+            Side::Buy,
+            PRICE_29_000,
+            HALF_BTC,
+        );
+        request.set_time_in_force(*time_in_force);
         assert_rejected(&mut engine, request, RejectReason::Unsupported);
     }
 
-    let mut gtd = limit(1, Side::Buy, PRICE_29_000, HALF_BTC);
+    let mut gtd = limit(2, Side::Buy, PRICE_29_000, HALF_BTC);
     gtd.set_time_in_force(TimeInForce::Gtd);
     gtd.expire_time = Some(Timestamp {
         seconds: 1_900_000_000,

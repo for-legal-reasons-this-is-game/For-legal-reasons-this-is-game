@@ -16,6 +16,7 @@ pub enum EngineError {
     HasOpenOrders,
     UnknownMarket,
     NotOrderOwner,
+    DuplicateCommand,
     BadOrderParams(&'static str),
     Unsupported(&'static str),
 }
@@ -63,6 +64,9 @@ impl std::fmt::Display for EngineError {
                     f,
                     "account_holder doesn't match the owner in the book's order"
                 )
+            }
+            Self::DuplicateCommand => {
+                write!(f, "found a command with the same id and different hash")
             }
             Self::BadOrderParams(detail) => write!(f, "bad order parameters: {detail}"),
             Self::Unsupported(detail) => write!(f, "not supported yet: {detail}"),

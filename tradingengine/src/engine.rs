@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, PlaceOrderRequest,
+    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, Id, PlaceOrderRequest,
     PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse, Uint128,
 };
 
 use crate::cancel::parse_cancel_order;
+use crate::command_cache::{Answer, Command, CommandCache};
+use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
+use crate::ids::CommandId;
 use crate::market::{MarketInfo, Placed};
 use crate::order::OrderStatus;
 use crate::place::parse_place_order;
@@ -20,12 +23,55 @@ use crate::wire::required;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Engine {
     markets: HashMap<String, MarketInfo>,
+    // The cache lives here, so an [`EngineService`] messege handler that will lock
+    // the [`Engine`] mutex will guarantee no two requests race on the cache
+    command_cache: CommandCache,
 }
 
 impl Engine {
     // Engine starts without any books this might change for recovery
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn load(engine_state: EngineState, cache_capacity: usize) -> Result<Engine> {
+        let markets = engine_state
+            .markets
+            .into_iter()
+            .map(|m| {
+                Ok((
+                    m.market.symbol.clone(),
+                    MarketInfo::load(m.market, m.orders)?,
+                ))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        let command_cache = CommandCache::load(cache_capacity, engine_state.command_cache);
+        Ok(Engine {
+            markets,
+            command_cache,
+        })
+    }
+
+    pub fn save(&self) -> EngineState {
+        EngineState {
+            markets: self
+                .markets
+                .values()
+                .map(|info| MarketState {
+                    market: info.market().clone(),
+                    orders: info.book().save(),
+                })
+                .collect(),
+            command_cache: self.command_cache.save(),
+        }
+    }
+
+    pub fn with_cache_capacity(n: usize) -> Self {
+        Engine {
+            command_cache: CommandCache::with_capacity(n),
+            ..Default::default()
+        }
     }
 
     /// Sets a market's values from the backend's [`SetMarketRequest`].
@@ -58,6 +104,10 @@ impl Engine {
         }
     }
 
+    pub fn markets(&self) -> &HashMap<String, MarketInfo> {
+        &self.markets
+    }
+
     pub fn market(&self, symbol: &str) -> Option<&MarketInfo> {
         self.markets.get(symbol)
     }
@@ -67,28 +117,36 @@ impl Engine {
     /// remainder as rests in the book
     /// this is only in case of limit
     pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
-        let command_id = request.command_id;
-        match self.try_place_order(request) {
+        let Some(id) = request.command_id else {
+            return self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
+        };
+        let command_id = CommandId::from(id);
+        let command = Command::Place(Box::new(request.clone()));
+
+        match self.command_cache.search(command_id, &command) {
+            Ok(None) => {}
+            Ok(Some(Answer::Place(response))) => return response.clone(),
+            Err(error) => return self.reject_place_order(Some(command_id), &error),
+            _ => {}
+        }
+
+        let response = match self.try_place_order(request) {
             Ok(placed) => {
-                let mut respone = PlaceOrderResponse {
-                    command_id,
+                let mut response = PlaceOrderResponse {
+                    command_id: Some(command_id.into()),
                     filled_base_quantity: Some(Uint128::from(placed.filled_base)),
                     filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
-                    ..PlaceOrderResponse::default()
+                    ..Default::default()
                 };
-                respone.set_status(order_status(placed.status));
-                respone
-            }
-            Err(error) => {
-                let mut response = PlaceOrderResponse {
-                    command_id,
-                    reject_detail: error.to_string(),
-                    ..PlaceOrderResponse::default()
-                };
-                response.set_reject_reason(reject_reason(&error));
+                response.set_status(order_status(placed.status));
                 response
             }
-        }
+            Err(error) => self.reject_place_order(Some(command_id), &error),
+        };
+
+        self.command_cache
+            .add_entry(command_id, command, Answer::Place(response.clone()));
+        response
     }
 
     fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<Placed> {
@@ -101,47 +159,81 @@ impl Engine {
         market.place(order)
     }
 
+    fn reject_place_order(
+        &self,
+        command_id: Option<CommandId>,
+        error: &EngineError,
+    ) -> PlaceOrderResponse {
+        let mut response = PlaceOrderResponse {
+            command_id: command_id.map(Id::from),
+            reject_detail: error.to_string(),
+            ..Default::default()
+        };
+        response.set_reject_reason(reject_reason(error));
+        response
+    }
     /// Cancels an order at its owner's request, and answers with the order's final state.
     ///
     /// A rejected cancel changes nothing.
     pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
-        let command_id = request.command_id;
-        match self.try_cancel_order(request) {
+        let Some(id) = request.command_id else {
+            return self.reject_cancel_order(None, &EngineError::RequiredFieldAbsent);
+        };
+        let command_id = CommandId::from(id);
+        let command = Command::Cancel(request.clone());
+
+        match self.command_cache.search(command_id, &command) {
+            Ok(None) => {}
+            Ok(Some(Answer::Cancel(response))) => return response.clone(),
+            Err(error) => return self.reject_cancel_order(Some(command_id), &error),
+            _ => {}
+        }
+
+        let response = match self.try_cancel_order(&request) {
             Ok((cancelled_order, filled_base)) => {
                 // TODO(mehras): RestingOrder doesn't keep the quote it has filled, so the answer
                 // has no filled_quote_quantity yet. The contract wants both filled amounts
                 // (how_to_use.md, "Handling command responses"). Settle how to track it, and
                 // until then tell Alvaro that a cancel answer only has the filled base
                 let mut response = CancelOrderResponse {
-                    command_id,
+                    command_id: Some(command_id.into()),
                     filled_base_quantity: Some(Uint128::from(filled_base)),
-                    ..CancelOrderResponse::default()
+                    ..Default::default()
                 };
                 response.set_status(order_status(cancelled_order.status()));
                 response.set_cancel_reason(proto::CancelReason::UserRequest);
                 response
             }
-            Err(error) => {
-                let mut response = CancelOrderResponse {
-                    command_id,
-                    reject_detail: error.to_string(),
-                    ..CancelOrderResponse::default()
-                };
-                response.set_reject_reason(reject_reason(&error));
-                response
-            }
-        }
+            Err(error) => self.reject_cancel_order(Some(command_id), &error),
+        };
+        self.command_cache
+            .add_entry(command_id, command, Answer::Cancel(response.clone()));
+        response
     }
 
     /// The cancelled order and how much of its base it filled before the cancel.
     fn try_cancel_order(
         &mut self,
-        request: CancelOrderRequest,
+        request: &CancelOrderRequest,
     ) -> Result<(RestingOrder, BaseQuantity)> {
         let (market, order_id) = parse_cancel_order(request, &mut self.markets)?;
         let order = market.cancel(order_id)?;
         let filled_base = order.qty_total().checked_sub(order.qty_remaining())?;
         Ok((order, filled_base))
+    }
+
+    fn reject_cancel_order(
+        &self,
+        command_id: Option<CommandId>,
+        error: &EngineError,
+    ) -> CancelOrderResponse {
+        let mut response = CancelOrderResponse {
+            command_id: command_id.map(Id::from),
+            reject_detail: error.to_string(),
+            ..Default::default()
+        };
+        response.set_reject_reason(reject_reason(error));
+        response
     }
 }
 
@@ -166,6 +258,7 @@ fn reject_reason(error: &EngineError) -> RejectReason {
         EngineError::OrderNotFound => RejectReason::UnknownOrder,
         EngineError::NotOrderOwner => RejectReason::NotOrderOwner,
         EngineError::OrderNotLive => RejectReason::OrderNotWorking,
+        EngineError::DuplicateCommand => RejectReason::DuplicateCommand,
         _ => RejectReason::Unsupported,
     }
 }

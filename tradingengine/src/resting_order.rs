@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::error::{EngineError, Result};
 use crate::ids::{CommandId, OrderId, UserId};
 use crate::order::{OrderStatus, Side};
@@ -5,7 +7,7 @@ use crate::price::Price;
 use crate::quantity::BaseQuantity;
 
 /// An order sitting in the [`Book`](crate::book::Book).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestingOrder {
     id: OrderId,
     user_id: UserId,

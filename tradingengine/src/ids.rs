@@ -1,7 +1,10 @@
+use proto::Id;
+use serde::{Deserialize, Serialize};
+
 /// The id of an incoming order, given by the backend.
 ///
 /// It is unique per resting order. The [`Book`](crate::book::Book) rejects a duplicate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrderId(u128);
 
 impl OrderId {
@@ -31,7 +34,7 @@ impl TradeId {
 /// The id of a user, sent by the backend. It is needed for self-trade prevention.
 ///
 /// It is a `u128` because the backend's UUIDs are 128 bits; a `u64` would truncate one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(u128);
 
 impl UserId {
@@ -48,8 +51,19 @@ impl UserId {
 /// same command isn't run twice.
 ///
 /// It used to be a string, but the contract makes it a `u128`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CommandId(u128);
+
+impl From<Id> for CommandId {
+    fn from(id: Id) -> Self {
+        Self(u128::from(id))
+    }
+}
+impl From<CommandId> for Id {
+    fn from(id: CommandId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl CommandId {
     pub const fn new(value: u128) -> Self {
         Self(value)

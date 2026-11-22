@@ -14,10 +14,10 @@ use crate::{
 /// Returns that market and the order's id once the order is in the market's book and
 /// `account_holder` owns it. The checks follow `proto/how_to_use.md`, "Validating a cancel or
 /// modify command".
-pub fn parse_cancel_order(
-    request: CancelOrderRequest,
-    markets: &mut HashMap<String, MarketInfo>,
-) -> Result<(&mut MarketInfo, OrderId)> {
+pub fn parse_cancel_order<'a>(
+    request: &CancelOrderRequest,
+    markets: &'a mut HashMap<String, MarketInfo>,
+) -> Result<(&'a mut MarketInfo, OrderId)> {
     if request.market_symbol.is_empty() {
         // ERR #1 from contract
         return Err(EngineError::UnknownMarket);
