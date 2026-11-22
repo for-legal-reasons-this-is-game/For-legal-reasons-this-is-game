@@ -41,22 +41,6 @@ jobs:
         # --lib runs the unit tests inside src/ (no database needed), --bins the binaries' tests.
         # The tests/ folder needs Postgres + TigerBeetle, so it stays out.
         run: nix develop --command cargo test --locked --lib --bins
-        # tests/redis_store.rs is #[ignore]d because it needs a real Redis
-      - name: start redis
-        run: |
-          set -euo pipefail
-          docker run -d --name redis -p 6380:6379 redis:7-alpine
-          for _ in $(seq 1 60); do
-            [ "$(docker exec redis redis-cli ping 2>/dev/null)" = PONG ] && exit 0
-            sleep 1
-          done
-          echo "redis never became ready" >&2
-          exit 1
-      - name: cargo test with redis
-        working-directory: tradingengine
-        env:
-          REDIS_URL: redis://127.0.0.1:6380
-        run: nix develop --command cargo test --locked --test redis_store -- --ignored
 
   # the tests/ folder tests that need real Postgres, Redis and TigerBeetle but no engine: the
   # engine is a fake inside the test process, and the backend binary is not started, so nothing
@@ -136,6 +120,22 @@ jobs:
       - name: cargo test
         working-directory: tradingengine
         run: nix develop --command cargo test --locked
+      # tests/redis_store.rs is #[ignore]d because it needs a real Redis
+      - name: start redis
+        run: |
+          set -euo pipefail
+          docker run -d --name redis -p 6380:6379 redis:7-alpine
+          for _ in $(seq 1 60); do
+            [ "$(docker exec redis redis-cli ping 2>/dev/null)" = PONG ] && exit 0
+            sleep 1
+          done
+          echo "redis never became ready" >&2
+          exit 1
+      - name: cargo test with redis
+        working-directory: tradingengine
+        env:
+          REDIS_URL: redis://127.0.0.1:6380
+        run: nix develop --command cargo test --locked --test redis_store -- --ignored
 
   # proto is a library with no flake of its own, so it borrows the engine's
   # devShell (which has protoc). Its tests never run from the backend/engine
