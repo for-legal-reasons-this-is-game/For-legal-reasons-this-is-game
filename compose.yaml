@@ -99,7 +99,7 @@ services:
   # the trading engine's own Redis, like k8s/redis_tradingengine_deployment.yaml:
   # append-only, so the state survives a Redis restart too
   tradingengine-redis:
-    image: redis:latest
+    image: redis:7-alpine
     container_name: tradingengine-redis
     restart: unless-stopped
     ports:
