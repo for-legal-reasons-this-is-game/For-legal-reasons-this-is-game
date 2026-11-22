@@ -1,115 +1,166 @@
-.market_list {
-  background-color: #000000;
-}
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* Archivo with both of its axes: weight (100-900) and width (62%-125%).
+   Widths are used through Tailwind's font-stretch-* utilities. */
+@import "@fontsource-variable/archivo/wdth.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/* "Ledger paper" palette (frontend/REDESIGN.md). Every text pair meets WCAG AA (4.5:1),
+   input borders and the focus ring meet 3:1. Check new pairs before using them. */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+    color-scheme: light;
+    --background: #f4f6f1; /* Ledger Paper */
+    --foreground: #16231d; /* Ledger Ink */
+    --card: #ffffff; /* Sheet */
+    --card-foreground: #16231d;
+    --popover: #ffffff;
+    --popover-foreground: #16231d;
+    --primary: #2348c8; /* Ink Blue: actions, links, focus */
+    --primary-foreground: #ffffff;
+    --secondary: #e8ede5;
+    --secondary-foreground: #16231d;
+    --muted: #ecf0e9;
+    --muted-foreground: #56655c;
+    --accent: #e3e9f7;
+    --accent-foreground: #16231d;
+    --destructive: #c42f3c;
+    --border: #d6ded4; /* Ruling */
+    --input: #76867c;
+    --ring: #2348c8;
+    --gain: #0d7c51; /* price up, buy */
+    --loss: #c42f3c; /* price down, sell */
+    --chart-1: #2348c8;
+    --chart-2: #0d7c51;
+    --chart-3: #c42f3c;
+    --chart-4: #76867c;
+    --chart-5: #16231d;
+    --radius: 0.375rem; /* 6 px: controls use rounded-lg (6 px), panels rounded-2xl (about 11 px) */
+    --sidebar: #edf1e9;
+    --sidebar-foreground: #16231d;
+    --sidebar-primary: #2348c8;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #e2e8de;
+    --sidebar-accent-foreground: #16231d;
+    --sidebar-border: #d6ded4;
+    --sidebar-ring: #2348c8;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+/* "Ledger at night": the same hues for the dark theme */
+.dark {
+    color-scheme: dark;
+    --background: #101814;
+    --foreground: #e6eee8;
+    --card: #16201b;
+    --card-foreground: #e6eee8;
+    --popover: #16201b;
+    --popover-foreground: #e6eee8;
+    --primary: #7c9bff;
+    --primary-foreground: #0c1633;
+    --secondary: #1d2923;
+    --secondary-foreground: #e6eee8;
+    --muted: #1c2722;
+    --muted-foreground: #9aaca2;
+    --accent: #233029;
+    --accent-foreground: #e6eee8;
+    --destructive: #f06a73;
+    --border: #2a3830;
+    --input: #5b6e63;
+    --ring: #7c9bff;
+    --gain: #3ccb8a;
+    --loss: #f06a73;
+    --chart-1: #7c9bff;
+    --chart-2: #3ccb8a;
+    --chart-3: #f06a73;
+    --chart-4: #5b6e63;
+    --chart-5: #e6eee8;
+    --sidebar: #131d18;
+    --sidebar-foreground: #e6eee8;
+    --sidebar-primary: #7c9bff;
+    --sidebar-primary-foreground: #0c1633;
+    --sidebar-accent: #1e2a24;
+    --sidebar-accent-foreground: #e6eee8;
+    --sidebar-border: #2a3830;
+    --sidebar-ring: #7c9bff;
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+@theme inline {
+    --font-sans: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+    --font-heading: var(--font-sans);
+    --color-gain: var(--gain);
+    --color-loss: var(--loss);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-body {
-  margin: 0;
+/* Type scale (Bringhurst): 12 / 14 / 16 / 18 / 21 / 24 / 36 / 48 px.
+   Tailwind's defaults match except xl, which is 21 px here, not 20.
+   Use text-xs, sm, base, lg, xl, 2xl, 4xl and 5xl (skip 3xl: 30 px isn't on the scale). */
+@theme {
+    --text-xl: 1.3125rem;
+    --text-xl--line-height: 1.4;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+    html {
+        @apply font-sans;
+    }
+    body {
+        @apply bg-background text-foreground antialiased;
+        /* numbers are this app's content: every figure takes the same width, so columns
+           of prices line up (Archivo's own tabular figures, no monospace font) */
+        font-variant-numeric: tabular-nums;
+    }
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+/* Respect "reduce motion": animations and transitions finish instantly */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }

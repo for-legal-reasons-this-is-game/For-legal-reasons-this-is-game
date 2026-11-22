@@ -50,7 +50,8 @@ Numbers are the content, so typography and alignment do most of the work.
 | Ledger Ink | `#16231D` | text (a dark green-ink, not a near-black stand-in for black) |
 | Ruling | `#D6DED4` | table rules and dividers that carry structure |
 | Ink Blue | `#2348C8` | actions, links, focus ring, selection |
-| Gain / Loss | `#11875A` / `#C42F3C` | price direction and buy/sell only |
+| Gain / Loss | `#0D7C51` / `#C42F3C` | price direction and buy/sell only |
+| Input border | `#76867C` | outline of inputs (needs 3:1 against white and paper) |
 
 Dark theme ("ledger at night"), derived from the same hues: Paper `#101814`, Sheet `#16201B`,
 Ink `#E6EEE8`, Ruling `#2A3830`, Ink Blue `#7C9BFF`, Gain `#3CCB8A`, Loss `#F06A73`.
@@ -206,16 +207,17 @@ answered yes).
 - [x] Branch `ai/frontend-redesign` from `ai/frontend-endpoints`
 - [x] This plan, design direction and review
 - [x] Memory note pointing here
-- [ ] User confirms: subject/audience/job, the "ledger paper" direction, open questions below
+- [x] User confirms: subject/audience/job, the "ledger paper" direction, open questions below
 
-### Phase 1: foundation
-- [ ] Tailwind 4 + `@/` alias + `shadcn init`; first components (button, input, select, label,
-      table, tabs, dialog, sheet, dropdown-menu, badge, skeleton, sonner, tooltip)
-- [ ] Theme: palette as shadcn CSS variables (light + dark), toggle, system default; AA check
-- [ ] Archivo self-hosted, type scale, tabular figures utility
-- [ ] React Router: shell (top bar, nav rail, mobile sheet), stub page for every route, 404
-- [ ] Acting-user context + switcher; old UI moved to `/dev`
-- [ ] Screenshots: shell in light, dark, and mobile
+### Phase 1: foundation (done 2026-11-22)
+- [x] Tailwind 4 + `@/` alias + `shadcn init`; first components (button, input, select, label,
+      table, tabs, dialog, sheet, dropdown-menu, badge, skeleton, sonner, tooltip, sidebar,
+      separator)
+- [x] Theme: palette as shadcn CSS variables (light + dark), toggle, system default; AA check
+- [x] Archivo self-hosted, type scale, tabular figures utility
+- [x] React Router: shell (top bar, nav rail, mobile sheet), stub page for every route, 404
+- [x] Acting-user context + switcher; old UI moved to `/dev`
+- [x] Screenshots: shell in light, dark, and mobile
 
 ### Phase 2: markets and trading
 - [ ] `api/queries.ts` (queryOptions), `lib/format.ts`
@@ -236,7 +238,9 @@ answered yes).
 ### Phase 5: polish and critique
 - [ ] Loading, empty and error states everywhere; toasts for every action
 - [ ] Responsive pass at 360 / 768 / 1280 px; keyboard and screen-reader pass; reduced motion
-- [ ] Delete `/dev` and the old components
+- [ ] Delete `/dev`, the old components, `src/dev/legacy.css` and `pages/PagePlaceholder.tsx`
+- [ ] Split the bundle per route (`React.lazy`): it's 513 kB after phase 1, over Vite's
+      500 kB warning, and the chart library will add more
 - [ ] Screenshot critique; "remove one accessory"
 
 ### Phase 6: Playwright
@@ -249,16 +253,46 @@ answered yes).
 
 ## Open questions (defaults apply if not answered)
 
-1. Subject, audience and primary job above: right? (default: yes)
-2. "Ledger paper" direction, light by default with a dark theme: OK? (default: yes)
-3. Name in the UI: "For legal reasons this is game" in full? (default: yes, shortened on mobile)
-4. Interim account list until the backend has `GET /users/{id}/accounts`: OK? (default: yes)
-5. Show unsupported order types as "not available yet" rather than hiding them? (default: show)
-6. Commit locally at the end of each phase (never push unless asked)? (no default: needs a yes)
+(None open.)
 
 ## Decisions
 
-(Move answered questions here, with the date.)
+All answered by the user on 2026-11-22 ("yes to all defaults including 6"):
+1. Subject, audience and primary job as written in the brief.
+2. "Ledger paper" direction; the theme follows the system setting, with a toggle.
+3. The UI shows the full name "For legal reasons this is game" (shortened on mobile).
+4. Until the backend has `GET /users/{id}/accounts`, the portfolio lists the accounts created
+   in this browser, those found in the user's orders, and accounts added by ID.
+5. Unsupported order types are shown as "not available yet", not hidden.
+6. Commit locally at the end of every phase. Never push unless asked.
+
+## Notes for later phases
+
+Things decided or learned while building, which the next phases rely on:
+- **shadcn setup:** preset Nova (style `radix-nova`, Lucide icons), its Geist font replaced by
+  Archivo. Add components with `npx shadcn@4.23.0 add <name> -y`. The files in
+  `src/components/ui/` keep shadcn's own formatting (2 spaces, no semicolons) so updates from
+  the CLI stay easy to compare; our files use the project's Prettier settings (4 spaces).
+- **`cn` package:** shadcn now ships `cn` (npm `cn`, by shadcn, MIT) instead of
+  `clsx` + `tailwind-merge`. `src/lib/utils.ts` re-exports it.
+- **Theme:** `next-themes` (came with the toast component) stores "light", "dark" or "system"
+  under the `theme` key; `index.html` applies the class early so dark visits don't flash.
+- **Radius:** `--radius` is 6 px. Controls use `rounded-lg` (6 px), panels `rounded-2xl`.
+- **Colours** were adjusted for WCAG AA in phase 1 (Gain `#0D7C51`, input border `#76867C`).
+  The checker script lives only in the session scratchpad; the rule is in `index.css`.
+- **Type scale:** Tailwind's sizes, except `text-xl` is 21 px. Skip `text-3xl` (30 px is off
+  the scale). Widths: `font-stretch-expanded` (titles, the price), `font-stretch-semi-condensed`
+  (dense tables). Tabular figures are on for the whole page.
+- **Changed shadcn files:** `hooks/use-mobile.ts` uses `useSyncExternalStore` (the original
+  set state inside an effect, which our lint rules reject). ESLint's fast-refresh rule is off
+  for `src/components/ui/` only.
+- **Acting user:** `useActingUser()` from `@/app/acting-user/context`; remembered in
+  `localStorage` under `acting-user-id`.
+- **Sidebar header:** the mark sits in a 32 px box and the name wraps with
+  `whitespace-normal!`, so both the icon rail and the full name look right.
+- **npm audit** reports 13 findings, all in build tools (ESLint, typescript-eslint, the shadcn
+  CLI and its `zod`), none in the code the browser runs. Don't run `npm audit fix` blindly:
+  it changes dependency versions.
 
 ## Licenses
 
@@ -274,3 +308,9 @@ answered yes).
 - 2026-11-22: plan written (phase 0). The `frontend-design` plugin is enabled on the account;
   until it shows up in a session, its SKILL.md (anthropics/claude-plugins-official,
   `plugins/frontend-design`) was followed directly.
+- 2026-11-22: phase 1 done. Tailwind 4, shadcn (Nova), Archivo, the "ledger paper" theme in
+  light and dark (all pairs AA), React Router with the app shell and a page for every route,
+  the acting-user switcher, the old UI at `/dev`. Checked in the browser at 1280 px (light,
+  dark, icon rail), tablet width and 375 px (sheet). Fixed on the way: the top bar's divider
+  sat at the top, the icon rail showed a clipped letter, and the full name was truncated.
+  Next: phase 2 (markets and the trade page).

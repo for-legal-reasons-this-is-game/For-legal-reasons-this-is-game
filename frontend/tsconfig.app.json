@@ -16,6 +16,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* "@/..." imports point at src/ (shadcn/ui needs this alias; TypeScript 6
+       deprecates baseUrl, so paths are resolved from this file instead) */
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

@@ -1,0 +1,29 @@
+/* Minimal styles for the old test UI at /dev. Tailwind removes the browser's default
+   styles, which left the old inputs without borders. Delete this file together with
+   /dev and the old components (phase 5 of frontend/REDESIGN.md). */
+.legacy-ui input,
+.legacy-ui select {
+    border: 1px solid var(--input);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin: 2px;
+    background: var(--card);
+}
+.legacy-ui button {
+    border: 1px solid var(--input);
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin: 2px;
+}
+.legacy-ui button:disabled {
+    opacity: 0.5;
+}
+.legacy-ui h3 {
+    margin-top: 1rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+.legacy-ui h4 {
+    margin-top: 0.5rem;
+    font-weight: 600;
+}

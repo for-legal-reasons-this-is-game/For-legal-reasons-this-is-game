@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>src</title>
+    <meta name="color-scheme" content="light dark" />
+    <title>For legal reasons this is game</title>
+    <script>
+      // Apply the dark theme before the app loads, so a dark-theme visit doesn't flash
+      // light first. Reads the same "theme" key next-themes stores (src/app/providers.tsx).
+      try {
+        const theme = localStorage.getItem("theme");
+        const dark =
+          theme === "dark" ||
+          (theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+      } catch {
+        // storage blocked: next-themes still sets the theme once the app loads
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
