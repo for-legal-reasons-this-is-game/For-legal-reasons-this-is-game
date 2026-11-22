@@ -3,89 +3,13 @@
 //! - a known `command_id` with a different request is rejected with `DUPLICATE_COMMAND`
 //! - a new `command_id` runs, and its response is stored, rejections included
 
-use proto::place_order_request::Amount;
-use proto::{
-    CancelOrderRequest, Id, Market, OrderStatus, OrderType, PlaceOrderRequest, RejectReason,
-    SetMarketRequest, Side, TimeInForce, Uint128,
+mod common;
+
+use common::{
+    HALF_BTC, PRICE_29_000, btc_usd, cancel, engine, engine_with_cache, in_book, limit, place,
 };
+use proto::{Id, OrderStatus, RejectReason, SetMarketRequest, Side};
 use tradingengine::engine::Engine;
-use tradingengine::ids::OrderId;
-
-// BTC-USD: base in satoshis (8), quote in cents (2), price in cents (2)
-const HALF_BTC: u128 = 50_000_000;
-const PRICE_29_000: u128 = 2_900_000;
-
-fn btc_usd() -> Market {
-    Market {
-        symbol: "BTC-USD".to_string(),
-        base_decimals: 8,
-        quote_decimals: 2,
-        price_decimals: 2,
-        fee_account: Some(Id::from(1u128)),
-    }
-}
-
-/// An engine with the BTC-USD market set.
-fn engine() -> Engine {
-    let mut engine = Engine::new();
-    engine.set_market(SetMarketRequest {
-        market: Some(btc_usd()),
-    });
-    engine
-}
-
-/// A valid GTC limit order. Every order gets its own order, command and holder id from `n`:
-/// order `n` has `command_id` `1_000 + n`.
-fn limit(n: u128, side: Side, price: u128, base_quantity: u128) -> PlaceOrderRequest {
-    let mut request = PlaceOrderRequest {
-        command_id: Some(Id::from(1_000 + n)),
-        order_id: Some(Id::from(n)),
-        market_symbol: "BTC-USD".to_string(),
-        account_holder: Some(Id::from(2_000 + n)),
-        base_account: Some(Id::from(3_000 + n)),
-        quote_account: Some(Id::from(4_000 + n)),
-        amount: Some(Amount::BaseQuantity(Uint128::from(base_quantity))),
-        limit_price: Some(Uint128::from(price)),
-        maker_fee_bps: 5,
-        taker_fee_bps: 10,
-        ..PlaceOrderRequest::default()
-    };
-    request.set_side(side);
-    request.set_type(OrderType::Limit);
-    request.set_time_in_force(TimeInForce::Gtc);
-    request
-}
-
-/// A cancel of order `n` by its owner, with `command_id` `5_000 + n`.
-fn cancel(n: u128) -> CancelOrderRequest {
-    CancelOrderRequest {
-        command_id: Some(Id::from(5_000 + n)),
-        order_id: Some(Id::from(n)),
-        account_holder: Some(Id::from(2_000 + n)),
-        market_symbol: "BTC-USD".to_string(),
-    }
-}
-
-/// Places an order and checks that it was accepted, so a broken place fails here.
-fn place(engine: &mut Engine, request: PlaceOrderRequest) {
-    let response = engine.place_order(request);
-    assert_eq!(
-        response.reject_reason(),
-        RejectReason::Unspecified,
-        "place rejected: {}",
-        response.reject_detail
-    );
-}
-
-/// Whether order `n` is in the BTC-USD book.
-fn in_book(engine: &Engine, n: u128) -> bool {
-    engine
-        .market("BTC-USD")
-        .expect("market exists")
-        .book()
-        .get_by_id(OrderId::new(n))
-        .is_some()
-}
 
 // ---- same command_id, same request: the stored response ----
 
@@ -137,7 +61,7 @@ fn a_rejection_is_stored_too_so_its_retry_cannot_succeed_later() {
     assert_eq!(first.reject_reason(), RejectReason::UnknownMarket);
 
     engine.set_market(SetMarketRequest {
-        market: Some(btc_usd()),
+        market: Some(btc_usd(2)),
     });
     let retry = engine.place_order(request);
 
@@ -227,17 +151,9 @@ fn a_cancel_without_a_command_id_is_bad_order_params() {
     assert!(in_book(&engine, 1));
 }
 
-fn engine_with_cache_capacity(n: usize) -> Engine {
-    let mut engine = Engine::with_cache_capacity(n);
-    engine.set_market(SetMarketRequest {
-        market: Some(btc_usd()),
-    });
-    engine
-}
-
 #[test]
 fn oldest_cache_entry_is_dropped_and_a_newer_one_returns_stored_response_for_place() {
-    let mut engine = engine_with_cache_capacity(5);
+    let mut engine = engine_with_cache(5);
     let oldest = engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC));
     for n in 2..=5 {
         let _ = engine.place_order(limit(n, Side::Buy, PRICE_29_000, HALF_BTC));
@@ -256,7 +172,7 @@ fn oldest_cache_entry_is_dropped_and_a_newer_one_returns_stored_response_for_pla
 
 #[test]
 fn cache_removal_does_not_fire_early_for_place() {
-    let mut engine = engine_with_cache_capacity(3);
+    let mut engine = engine_with_cache(3);
     let res_1 = engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC));
     let _ = engine.place_order(limit(2, Side::Buy, PRICE_29_000, HALF_BTC));
     let _ = engine.place_order(limit(3, Side::Buy, PRICE_29_000, HALF_BTC));
@@ -271,7 +187,7 @@ fn cache_removal_does_not_fire_early_for_place() {
 
 #[test]
 fn oldest_cache_entry_is_dropped_and_a_newer_one_returns_stored_response_for_cancel() {
-    let mut engine = engine_with_cache_capacity(3);
+    let mut engine = engine_with_cache(3);
     place(&mut engine, limit(1, Side::Buy, PRICE_29_000, HALF_BTC)); // entry 1
     let cancelled = engine.cancel_order(cancel(1)); // entry 2
     assert_eq!(cancelled.status(), OrderStatus::Cancelled);
@@ -293,7 +209,7 @@ fn oldest_cache_entry_is_dropped_and_a_newer_one_returns_stored_response_for_can
 
 #[test]
 fn cache_removal_does_not_fire_early_for_cancel() {
-    let mut engine = engine_with_cache_capacity(3);
+    let mut engine = engine_with_cache(3);
     place(&mut engine, limit(1, Side::Buy, PRICE_29_000, HALF_BTC)); // entry 1
     let cancelled = engine.cancel_order(cancel(1)); // entry 2
     place(&mut engine, limit(2, Side::Buy, PRICE_29_000, HALF_BTC)); // entry 3, the cache is full
@@ -309,7 +225,7 @@ fn cache_removal_does_not_fire_early_for_cancel() {
 /// drop the cancel.)
 #[test]
 fn a_retry_does_not_make_an_entry_newer() {
-    let mut engine = engine_with_cache_capacity(2);
+    let mut engine = engine_with_cache(2);
     let placed = engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)); // entry 1
     let cancelled = engine.cancel_order(cancel(1)); // entry 2, the cache is full
     assert_eq!(
@@ -326,7 +242,7 @@ fn a_retry_does_not_make_an_entry_newer() {
 /// and push nothing out.
 #[test]
 fn answers_that_are_not_stored_do_not_take_a_slot() {
-    let mut engine = engine_with_cache_capacity(2);
+    let mut engine = engine_with_cache(2);
     let placed = engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)); // entry 1
 
     let mut reused = cancel(1);
