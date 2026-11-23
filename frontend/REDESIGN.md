@@ -185,17 +185,31 @@ engine's market-data stream) would replace this later.
 
 ## Backend dependencies and limits (Nov 2026)
 
+**Scope until the evaluation** (from the user, 2026-11-23): of the engine's seven RPCs
+(`proto/service.proto`), the backend implements only `SetMarket`, `PlaceOrder` and
+`CancelOrder` before the evaluation. Everything else comes after it: `SubscribeEvents` (trades,
+fills, order statuses and settlement, through the consumer), `SubscribeMarketData`,
+`ModifyOrder`, `CancelOrders`, and order types other than GTC limit. For the UI that means:
+- Placing a GTC limit order works. The reply to `POST /users/{id}/orders` carries the engine's
+  immediate status and fills; that's the only place they appear (stored orders keep no status).
+- No trades are recorded, so the price header, chart, recent trades, 24h figures and the
+  markets table stay empty, and trades don't move balances (holds stay until a cancel).
+- Cancelling works once the backend has a cancel route. On 2026-11-23 there's none yet, and
+  `POST /markets` doesn't call `SetMarket` yet; `backend/src/service.rs` has both client calls.
+- How the UI shows the rest: decision 7.
+
 These shape the UI. Ask Alvaro/Mehras where needed:
 - **No `GET /users/{id}/accounts`.** The portfolio can't list a user's accounts. For now: the
   accounts created in this browser, plus those found in the user's orders, plus "add by ID".
 - **The engine only accepts GTC limit orders** (`tradingengine/src/place.rs`). Keep the other
   order types in the form behind one flag (`ENGINE_SUPPORTS`), shown as "not available yet",
   easy to switch on.
-- **The consumer can't run** until the engine implements `SubscribeEvents`. On the real stack
-  there are no trades, so the chart and ticker are empty, and stored orders have no status or
-  fills. Development and tests use seeded trades.
-- **No cancel or modify route** in the backend yet (the engine has cancel). Leave room for a
-  "Cancel order" action, but don't build it until the route exists.
+- **The consumer can't run** until the engine implements `SubscribeEvents`, which comes after
+  the evaluation. On the real stack there are no trades, so the chart and ticker are empty, and
+  stored orders have no status or fills. Development and tests use seeded trades.
+- **No cancel route** in the backend yet. Cancel is in scope for the evaluation, so the UI gets
+  a "Cancel order" action (follow-up below), wired when the route exists. Modify comes after
+  the evaluation.
 - **Errors are bare status codes.** A 400 can't say "unsupported order type". Messages stay
   per-status (see `errorMessage` overrides).
 
@@ -229,12 +243,27 @@ answered yes).
 - [x] Tabs: recent trades, all orders, my orders in this market
 - [x] Known accounts (decision 4): remembered per user, found in orders, add by ID
 
-### Phase 3: portfolio and accounts
+### Phase 2 follow-up: evaluation scope (first, when work resumes)
+- [ ] Support flags in one file: `lib/engine-support.ts` also says what the backend supports,
+      e.g. `tradeHistory: false` (needs `SubscribeEvents`) and `cancelOrder: false` (until the
+      route exists)
+- [ ] With trade history off, the price header, chart, recent trades and markets table say
+      "Trade history isn't available yet" instead of "No trades yet", and drop the promise
+      that trades appear when orders meet. The real queries stay wired, so data shows up as
+      soon as trades are recorded.
+- [ ] Order lists: explain "Accepted" (the engine has the order; what happened next isn't
+      tracked yet). The toast after placing shows the engine's immediate answer from the reply
+      ("Buy order filled", "partly filled"), the one place it exists.
+- [ ] "Cancel order" on open orders and the order page: "not available yet" until the route
+      exists, then wired (invalidate orders and positions)
+
+### Phase 3: portfolio and accounts (on hold until the user says go)
 - [ ] Portfolio: accounts with balances (interim account list), open account, deposit dialogs
 - [ ] Account page: ledger view, transfers with paging, close/reopen with confirmation
 
 ### Phase 4: orders, users, admin
-- [ ] Orders page (filters, paging) and order page with fills
+- [ ] Orders page (filters, paging) and order page (fills: not available yet, decision 7;
+      cancel once the route exists)
 - [ ] Users page (create, act as) and user lookup
 - [ ] Admin: ledgers (create, enable) and markets (create, list)
 
@@ -258,7 +287,12 @@ answered yes).
 
 ## Open questions (defaults apply if not answered)
 
-(None open.)
+1. **Cancel route** (Alvaro): method, path and answer of the backend's cancel endpoint.
+   Default: the button shows "not available yet" until the route is merged.
+2. **Trade history during the evaluation:** only `SubscribeEvents` records trades, so without
+   it the trade page's price, chart and recent trades are empty while evaluators try it.
+   Default: say "not available yet" (follow-up above). If the team adds the event stream
+   before the evaluation, flip the flag.
 
 ## Decisions
 
@@ -270,6 +304,13 @@ All answered by the user on 2026-11-22 ("yes to all defaults including 6"):
    in this browser, those found in the user's orders, and accounts added by ID.
 5. Unsupported order types are shown as "not available yet", not hidden.
 6. Commit locally at the end of every phase. Never push unless asked.
+
+Chosen by Claude on 2026-11-23, after the user left the choice open:
+
+7. Anything that needs what comes after the evaluation is shown as "not available yet"
+   (decision 5's wording), never with made-up data. Each such feature sits behind a flag in
+   `lib/engine-support.ts`, so switching it on later is a one-line change, and the real
+   requests stay wired wherever the endpoint already exists.
 
 ## Notes for later phases
 
@@ -368,3 +409,6 @@ Things decided or learned while building, which the next phases rely on:
   bubble), the empty-chart message hidden under the canvas, a stray volume label on the price
   axis, UTC times on the chart, volume colours not following a theme switch, and the time in
   force select overflowing the ticket. Next: phase 3 (portfolio and accounts).
+- 2026-11-23: the user set the scope until the evaluation (only `SetMarket`, `PlaceOrder`,
+  `CancelOrder`) and left the presentation of the rest to me: decision 7, a phase 2 follow-up
+  list, two open questions. Phase 3 is on hold until the user says go; no app code changed.
