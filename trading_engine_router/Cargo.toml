@@ -1,0 +1,14 @@
+[package]
+name = "trading_engine_router"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+redis = { version = "1.8.1", features = ["tokio-comp", "connection-manager"] }
+tonic = { version = "0.14.6", features = ["transport"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio-stream = "0.1"
+proto = { path = "../proto" }
+prost = "0.14"
+tonic-health = "0.14.9"
+tonic-reflection = "0.14.9"
