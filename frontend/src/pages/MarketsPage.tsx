@@ -1,14 +1,17 @@
 import { PageHeader } from "@/components/PageHeader";
-import { PagePlaceholder } from "./PagePlaceholder";
+import { MarketsTable } from "@/features/market/MarketsTable";
 
 export function MarketsPage() {
     return (
         <>
-            <PageHeader title="Markets" />
-            <PagePlaceholder phase={2}>
-                Every market with its last price, 24-hour change, high, low and volume.
-                Choose one to trade it.
-            </PagePlaceholder>
+            {/* New React 19: a <title> anywhere in a component is moved into <head>, so
+                each page can name the browser tab */}
+            <title>Markets - For legal reasons this is game</title>
+            <PageHeader
+                title="Markets"
+                description="Prices update every few seconds. Choose a market to see its chart and trade it."
+            />
+            <MarketsTable />
         </>
     );
 }

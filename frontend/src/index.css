@@ -31,6 +31,8 @@
     --ring: #2348c8;
     --gain: #0d7c51; /* price up, buy */
     --loss: #c42f3c; /* price down, sell */
+    --gain-foreground: #ffffff; /* text on a Gain background: 5.2:1 */
+    --loss-foreground: #ffffff; /* text on a Loss background: 5.5:1 */
     --chart-1: #2348c8;
     --chart-2: #0d7c51;
     --chart-3: #c42f3c;
@@ -70,6 +72,8 @@
     --ring: #7c9bff;
     --gain: #3ccb8a;
     --loss: #f06a73;
+    --gain-foreground: #101814; /* white would be under 3:1 on these lighter colours */
+    --loss-foreground: #101814;
     --chart-1: #7c9bff;
     --chart-2: #3ccb8a;
     --chart-3: #f06a73;
@@ -90,6 +94,8 @@
     --font-heading: var(--font-sans);
     --color-gain: var(--gain);
     --color-loss: var(--loss);
+    --color-gain-foreground: var(--gain-foreground);
+    --color-loss-foreground: var(--loss-foreground);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -136,6 +142,28 @@
 @theme {
     --text-xl: 1.3125rem;
     --text-xl--line-height: 1.4;
+
+    /* The price flash on the trade page (the plan's one memorable element): a digit that
+       changed starts in Gain or Loss and fades back to the text colour. Used as the
+       animate-flash-up / animate-flash-down utilities; reduced motion turns it off. */
+    --animate-flash-up: flash-up 600ms ease-out;
+    --animate-flash-down: flash-down 600ms ease-out;
+    @keyframes flash-up {
+        from {
+            color: var(--gain);
+        }
+        to {
+            color: var(--foreground);
+        }
+    }
+    @keyframes flash-down {
+        from {
+            color: var(--loss);
+        }
+        to {
+            color: var(--foreground);
+        }
+    }
 }
 
 @layer base {

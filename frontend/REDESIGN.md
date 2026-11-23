@@ -94,7 +94,7 @@ Trade page, desktop (≥ 1280 px):
 | Users |          [1m 5m 15m 1h 1d]                       |  cancelled          |
 | Admin |                                                  |  Price   65,000.00  |
 |       +--------------------------------------------------+  Amount  0.2000 BTC |
-|       | Recent trades | Market orders | My orders        |  Total   13,000 USD |
+|       | Recent trades | All orders | My orders           |  Total   13,000 USD |
 |       | time       price        amount       side        |  [ Place buy order ]|
 |       | 14:02:11   65,450.00    0.0500       buy         |  Rules: min 0.0001  |
 +-------+--------------------------------------------------+---------------------+
@@ -165,6 +165,8 @@ src/
   app/          router, providers (Query, theme, acting user), layout (shell, nav)
   pages/        one file per route
   features/     per domain: market/, order/, account/, user/, admin/ (components + hooks)
+                (phase 2: market/ = table, price header, chart, activity tabs; order/ = ticket,
+                orders table, labels; account/ = known accounts, add-by-ID dialog)
   components/ui shadcn components
   lib/          cn(), format.ts (decimal strings), candles.ts (trades -> candles)
   api/          unchanged: client.ts, index.ts, plus queries.ts (queryOptions factories)
@@ -219,12 +221,13 @@ answered yes).
 - [x] Acting-user context + switcher; old UI moved to `/dev`
 - [x] Screenshots: shell in light, dark, and mobile
 
-### Phase 2: markets and trading
-- [ ] `api/queries.ts` (queryOptions), `lib/format.ts`
-- [ ] Markets table with tickers
-- [ ] Trade page: price header (the memorable element), chart with intervals and polling
-- [ ] Order form on shadcn (port `CreateOrder`, keep its key handling), `ENGINE_SUPPORTS` flag
-- [ ] Tabs: recent trades, market orders, my orders in this market
+### Phase 2: markets and trading (done 2026-11-23)
+- [x] `api/queries.ts` (queryOptions), `lib/format.ts`, `lib/decimal.ts`, `lib/candles.ts`
+- [x] Markets table with tickers
+- [x] Trade page: price header (the memorable element), chart with intervals and polling
+- [x] Order form on shadcn (port `CreateOrder`, keep its key handling), `ENGINE_SUPPORTS` flag
+- [x] Tabs: recent trades, all orders, my orders in this market
+- [x] Known accounts (decision 4): remembered per user, found in orders, add by ID
 
 ### Phase 3: portfolio and accounts
 - [ ] Portfolio: accounts with balances (interim account list), open account, deposit dialogs
@@ -241,6 +244,8 @@ answered yes).
 - [ ] Delete `/dev`, the old components, `src/dev/legacy.css` and `pages/PagePlaceholder.tsx`
 - [ ] Split the bundle per route (`React.lazy`): it's 513 kB after phase 1, over Vite's
       500 kB warning, and the chart library will add more
+- [ ] Toasts: the action button ("View order") is ink, make it Ink Blue; on phones the toast
+      covers the sticky Buy/Sell bar for its 4 seconds (sonner's `mobileOffset`)
 - [ ] Screenshot critique; "remove one accessory"
 
 ### Phase 6: Playwright
@@ -290,6 +295,43 @@ Things decided or learned while building, which the next phases rely on:
   `localStorage` under `acting-user-id`.
 - **Sidebar header:** the mark sits in a 32 px box and the name wraps with
   `whitespace-normal!`, so both the icon rail and the full name look right.
+- **Query keys** live in `api/queries.ts` (`marketQueries`, `userQueries`,
+  `accountQueries`). Market data polls every 5 s (`LIVE_MS`). The old components share the
+  `["account", id]` and `["position", id]` keys, so invalidations reach both UIs.
+- **Money maths:** `lib/decimal.ts` works in whole units with BigInt, like the backend:
+  `toUnits`/`fromUnits`, `quoteFor` (rounds down, null where the backend can't compute it),
+  `feeCap` (rounds up). The ticket's "Held for this order" is the backend's
+  `reservation_amount()`: a buy holds value + fee at the higher of the two rates, a sell holds
+  the base amount. Never format money through `Number`.
+- **Formatting:** `lib/format.ts`: `formatDecimal` (the asset's own decimals),
+  `formatTrimmed` (rules and hints), `formatWhen` (time today, date and time otherwise).
+- **Available balance** = `net_posted - debits_pending`: an order's hold is a posted transfer
+  to its hold account, so the posted balance is already what's free.
+- **Known accounts** (`features/account/`): `rememberAccount(userID, id)` stores IDs in
+  localStorage per user (`known-accounts:<user id>`); `useUserAccounts(userID)` adds the
+  accounts named in the user's newest 100 orders and fetches each one. Phase 3 should call
+  `rememberAccount` when it opens an account.
+- **Order state:** `OrderStateBadge` combines `submission` and `status`. While the consumer
+  can't run, accepted orders have no status and show as "Accepted".
+- **Order form:** `features/order/OrderTicket.tsx`. Validation mirrors the backend's 400 checks
+  (decimals, minimums, steps, min value) and shows after the first submit. The idempotency key
+  rules are CreateOrder's. Over-balance is a warning, not a block (balances can be stale).
+  Its summary ends like a ledger page: value, fee, a double rule, then the held total. Step
+  hints only appear when a market's step is coarser than its decimals.
+- **Chart:** candles are built in the browser (`lib/candles.ts`) from the newest 500 trades,
+  with times shifted to the viewer's time zone (Lightweight Charts shows UTC otherwise). Colours
+  come from the CSS variables and follow the theme through a MutationObserver on `<html>`. The
+  chart's container is `isolate` so the library's z-indexes stay under our overlays.
+- **Trade page layout** uses a container query (`@container`, `@4xl:`): the ticket sits
+  beside the chart when the page area is at least 896 px wide (so collapsing the sidebar can
+  bring it back), otherwise it opens from a sticky Buy/Sell bar as a bottom sheet. The side
+  ticket is sticky and scrolls inside itself on short screens.
+- **Portals and forms:** a dialog inside a form still sends its events up the React tree
+  (portals bubble through React parents). `AddAccountDialog` stops its submit from reaching
+  the order form; do the same for any dialog placed inside a form.
+- **Buttons on Gain/Loss:** `text-gain-foreground` / `text-loss-foreground` (white in light
+  mode, dark ink in dark mode: white on the dark theme's Gain is only 2.1:1).
+- **Bundle:** 758 kB after phase 2 (the chart library is most of the growth); phase 5 splits it.
 - **npm audit** reports 13 findings, all in build tools (ESLint, typescript-eslint, the shadcn
   CLI and its `zod`), none in the code the browser runs. Don't run `npm audit fix` blindly:
   it changes dependency versions.
@@ -299,8 +341,8 @@ Things decided or learned while building, which the next phases rely on:
 - Lightweight Charts (Apache-2.0). Its README says the license requires two things on a page
   users can see: the attribution notice from its NOTICE file ("TradingView Lightweight Charts™,
   Copyright (c) 2025 TradingView, Inc.") and a link to https://www.tradingview.com/. The
-  `attributionLogo` chart option (on by default) covers the link; the notice goes in the app
-  footer or an About page.
+  `attributionLogo` chart option (on by default) covers the link; the notice is printed under
+  the chart (`features/market/PriceChart.tsx`), with a text link to TradingView too.
 - Archivo: SIL Open Font License 1.1.
 
 ## Log
@@ -314,3 +356,15 @@ Things decided or learned while building, which the next phases rely on:
   dark, icon rail), tablet width and 375 px (sheet). Fixed on the way: the top bar's divider
   sat at the top, the icon rail showed a clipped letter, and the full name was truncated.
   Next: phase 2 (markets and the trade page).
+- 2026-11-23: phase 2 done. Markets table with live tickers; trade page with the flashing
+  price header, Lightweight Charts candles and volume (5 intervals, local time, theme colours),
+  tabs for recent trades, all orders and my orders (filters, paging), and the order ticket
+  (exact totals, validation, "not available yet" order types, known accounts and add by ID,
+  toasts). Tested on a throwaway stack (Postgres, TigerBeetle, Redis in containers, backend and
+  engine native, 509 seeded trades): placed a real buy and a real sell (201, held amounts and
+  balances matched the backend to the cent), a 409 for too little money, the flash on a new
+  trade, light and dark, 1280 / 1024 / 375 px, halted and empty markets, no user, unknown
+  market. Fixed on the way: the dialog's Enter also submitted the order form (portal events
+  bubble), the empty-chart message hidden under the canvas, a stray volume label on the price
+  axis, UTC times on the chart, volume colours not following a theme switch, and the time in
+  force select overflowing the ticket. Next: phase 3 (portfolio and accounts).
