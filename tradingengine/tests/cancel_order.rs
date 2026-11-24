@@ -108,7 +108,6 @@ fn a_partly_filled_order_can_be_cancelled() {
 /// The contract (`proto/how_to_use.md`, "Handling command responses") says a cancel answers
 /// with both filled amounts, like a place does.
 #[test]
-#[ignore = "TODO(mehras): RestingOrder doesn't keep its filled quote yet"]
 fn a_cancel_reports_the_filled_quote_too() {
     let mut engine = engine();
     place(&mut engine, limit(1, Side::Sell, PRICE_29_000, HALF_BTC));

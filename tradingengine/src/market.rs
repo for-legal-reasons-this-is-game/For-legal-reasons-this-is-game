@@ -79,14 +79,13 @@ impl MarketInfo {
     pub fn place(&mut self, order: RestingOrder) -> Result<Placed> {
         self.check_quote_fits(&order)?;
 
-        let execution = self.book.insert(order)?;
+        let execution = self.book.insert(order, self.scale)?;
 
         // round down per fill same as each TradeSettlement. the sum can come
         // out lower then one quote_for on the total
         let mut filled_quote = QuoteQuantity::ZERO;
         for fill in execution.fills() {
-            let quote = self.scale.quote_for(fill.price, fill.quantity)?;
-            filled_quote = filled_quote.checked_add(quote)?;
+            filled_quote = filled_quote.checked_add(fill.quote)?;
         }
         let filled_base = execution.total_filled_quantity()?;
 

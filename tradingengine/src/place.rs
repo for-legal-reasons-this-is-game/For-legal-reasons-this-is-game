@@ -2,9 +2,9 @@ use proto::place_order_request::Amount;
 use proto::{OrderType, PlaceOrderRequest, TimeInForce, TriggerDirection, Uint128};
 
 use crate::error::{EngineError, Result};
-use crate::ids::{CommandId, OrderId, UserId};
+use crate::ids::{AccountId, CommandId, OrderId, UserId};
 use crate::price::Price;
-use crate::resting_order::RestingOrder;
+use crate::resting_order::{RestingOrder, SettlementInfo};
 use crate::wire::{base_quantity_from_proto, required, required_id, side_from_proto};
 
 /// limit and stop limit orders these are the ones with a `limit_price`
@@ -66,8 +66,6 @@ fn is_zero(price: Option<Uint128>) -> bool {
 ///
 /// [`MarketInfo::place`]: crate::market::MarketInfo::place
 fn check_place_order(request: &PlaceOrderRequest) -> Result<()> {
-    // ids. the two accounts arent stored yet they are for the TradeSettlement
-    // but an order without them can never be setteled
     if request.command_id.is_none() {
         return Err(EngineError::BadOrderParams("command_id is missing"));
     }
@@ -200,8 +198,20 @@ fn to_resting_order(request: PlaceOrderRequest) -> Result<RestingOrder> {
     let side = side_from_proto(request.side())?;
     let price = Price::try_from(required(request.limit_price)?)?;
     let quantity = base_quantity_from_proto(request.amount)?;
+    let settlement = SettlementInfo {
+        base_account: AccountId::new(required_id(request.base_account)?),
+        quote_account: AccountId::new(required_id(request.quote_account)?),
+    };
 
-    RestingOrder::new(order_id, account_holder, side, price, quantity, command_id)
+    RestingOrder::new(
+        order_id,
+        account_holder,
+        side,
+        price,
+        quantity,
+        command_id,
+        settlement,
+    )
 }
 
 /// turns a [`PlaceOrderRequest`] into a [`RestingOrder`] for the book

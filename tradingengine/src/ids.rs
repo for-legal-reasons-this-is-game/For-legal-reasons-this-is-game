@@ -47,6 +47,21 @@ impl UserId {
     }
 }
 
+/// The id of a TigerBeetle account, sent by the backend. The engine only stores it and
+/// sends it back in the `TradeSettlement`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AccountId(u128);
+
+impl AccountId {
+    pub const fn new(value: u128) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u128 {
+        self.0
+    }
+}
+
 /// The unique id of a command. The backend sends it with every request, so that the
 /// same command isn't run twice.
 ///

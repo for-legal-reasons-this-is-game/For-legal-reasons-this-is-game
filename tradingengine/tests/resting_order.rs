@@ -1,14 +1,25 @@
 /// One whole unit at 8 decimals. Only a test fixture: the scale is set per market now.
 const ONE: u128 = 100_000_000;
 use tradingengine::error::EngineError;
-use tradingengine::ids::{CommandId, OrderId, UserId};
+use tradingengine::ids::{AccountId, CommandId, OrderId, UserId};
 use tradingengine::order::{OrderStatus, Side};
 use tradingengine::price::Price;
-use tradingengine::quantity::BaseQuantity;
-use tradingengine::resting_order::RestingOrder;
+use tradingengine::quantity::{BaseQuantity, QuoteQuantity};
+use tradingengine::resting_order::{RestingOrder, SettlementInfo};
 
 fn qty(minor_units: u128) -> BaseQuantity {
     BaseQuantity::from_minor_units(minor_units)
+}
+
+fn quote(minor_units: u128) -> QuoteQuantity {
+    QuoteQuantity::from_minor_units(minor_units)
+}
+
+fn settlement() -> SettlementInfo {
+    SettlementInfo {
+        base_account: AccountId::new(44),
+        quote_account: AccountId::new(55),
+    }
 }
 
 fn order(quantity: BaseQuantity) -> RestingOrder {
@@ -19,6 +30,7 @@ fn order(quantity: BaseQuantity) -> RestingOrder {
         Price::from_minor_units(29_000 * ONE).expect("valid price"),
         quantity,
         CommandId::new(33),
+        settlement(),
     )
     .expect("valid resting order")
 }
@@ -36,6 +48,8 @@ fn new_order_is_open_with_its_whole_quantity_remaining() {
     assert_eq!(order.qty_remaining(), original);
     assert_eq!(order.status(), OrderStatus::Open);
     assert_eq!(order.command_id(), CommandId::new(33));
+    assert_eq!(order.filled_quote(), QuoteQuantity::ZERO);
+    assert_eq!(order.settlement(), settlement());
 }
 
 #[test]
@@ -48,6 +62,7 @@ fn rejects_an_order_with_zero_original_quantity() {
             Price::from_minor_units(ONE).expect("valid price"),
             BaseQuantity::ZERO,
             CommandId::new(33),
+            settlement(),
         ),
         Err(EngineError::QuantityNotPositive)
     );
@@ -57,7 +72,7 @@ fn rejects_an_order_with_zero_original_quantity() {
 fn partial_fill_moves_quantity_and_status_together() {
     let mut order = order(qty(10));
 
-    assert_eq!(order.fill(qty(4)), Ok(()));
+    assert_eq!(order.fill(qty(4), quote(400)), Ok(()));
     assert_eq!(order.qty_remaining(), qty(6));
     assert_eq!(order.status(), OrderStatus::PartiallyFilled);
 }
@@ -66,7 +81,7 @@ fn partial_fill_moves_quantity_and_status_together() {
 fn exact_fill_moves_quantity_to_zero_and_status_to_filled() {
     let mut order = order(qty(10));
 
-    assert_eq!(order.fill(qty(10)), Ok(()));
+    assert_eq!(order.fill(qty(10), quote(1000)), Ok(()));
     assert_eq!(order.qty_remaining(), BaseQuantity::ZERO);
     assert_eq!(order.status(), OrderStatus::Filled);
 }
@@ -75,12 +90,30 @@ fn exact_fill_moves_quantity_to_zero_and_status_to_filled() {
 fn consecutive_fills_preserve_the_original_quantity() {
     let mut order = order(qty(10));
 
-    order.fill(qty(4)).expect("valid partial fill");
-    order.fill(qty(6)).expect("valid final fill");
+    order.fill(qty(4), quote(400)).expect("valid partial fill");
+    order.fill(qty(6), quote(600)).expect("valid final fill");
 
     assert_eq!(order.qty_total(), qty(10));
     assert_eq!(order.qty_remaining(), BaseQuantity::ZERO);
     assert_eq!(order.status(), OrderStatus::Filled);
+}
+
+#[test]
+fn fills_add_up_the_quote_they_traded_for() {
+    let mut order = order(qty(10));
+    order.fill(qty(4), quote(400)).expect("valid partial fill");
+    order.fill(qty(6), quote(650)).expect("valid final fill");
+
+    assert_eq!(order.filled_quote(), quote(1050));
+}
+
+#[test]
+fn a_rejected_fill_leaves_the_filled_quote_alone() {
+    let mut order = order(qty(10));
+    order.fill(qty(4), quote(400)).expect("valid partial fill");
+
+    assert!(order.fill(qty(7), quote(700)).is_err());
+    assert_eq!(order.filled_quote(), quote(400));
 }
 
 #[test]
@@ -89,7 +122,7 @@ fn rejects_zero_fill_without_changing_the_order() {
     let before = order.clone();
 
     assert_eq!(
-        order.fill(BaseQuantity::ZERO),
+        order.fill(BaseQuantity::ZERO, quote(0)),
         Err(EngineError::QuantityNotPositive)
     );
     assert_eq!(order, before);
@@ -106,7 +139,7 @@ fn cancel_moves_an_open_order_to_cancelled() {
 #[test]
 fn cancel_keeps_the_quantity_a_partially_filled_order_had_left() {
     let mut order = order(qty(10));
-    order.fill(qty(4)).expect("valid partial fill");
+    order.fill(qty(4), quote(400)).expect("valid partial fill");
 
     assert_eq!(order.cancel(), Ok(()));
     assert_eq!(order.status(), OrderStatus::Cancelled);
@@ -117,7 +150,7 @@ fn cancel_keeps_the_quantity_a_partially_filled_order_had_left() {
 #[test]
 fn cancel_rejects_a_filled_order_without_changing_it() {
     let mut order = order(qty(10));
-    order.fill(qty(10)).expect("valid final fill");
+    order.fill(qty(10), quote(1000)).expect("valid final fill");
     let before = order.clone();
 
     assert_eq!(order.cancel(), Err(EngineError::OrderNotLive));
@@ -138,14 +171,17 @@ fn rejects_overfill_without_changing_the_order() {
     let mut order = order(qty(10));
     let before = order.clone();
 
-    assert_eq!(order.fill(qty(11)), Err(EngineError::FillExceedsRemaining));
+    assert_eq!(
+        order.fill(qty(11), quote(1100)),
+        Err(EngineError::FillExceedsRemaining)
+    );
     assert_eq!(order, before);
 }
 
 #[test]
 fn modify_sets_the_new_total_and_keeps_what_was_filled() {
     let mut order = order(qty(10));
-    order.fill(qty(3)).expect("valid fill");
+    order.fill(qty(3), quote(300)).expect("valid fill");
 
     order
         .modify(
@@ -166,7 +202,7 @@ fn modify_sets_the_new_total_and_keeps_what_was_filled() {
 #[test]
 fn modify_rejects_a_total_not_above_filled_without_changing_the_order() {
     let mut order = order(qty(10));
-    order.fill(qty(3)).expect("valid fill");
+    order.fill(qty(3), quote(300)).expect("valid fill");
     let before = order.clone();
 
     assert_eq!(

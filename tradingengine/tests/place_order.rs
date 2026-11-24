@@ -9,6 +9,8 @@ use proto::{
     ConfigRejectReason, Id, OrderStatus, OrderType, PlaceOrderRequest, RejectReason,
     SetMarketRequest, Side, TimeInForce, Timestamp, TriggerDirection, Uint128,
 };
+use tradingengine::ids::{AccountId, OrderId};
+use tradingengine::resting_order::SettlementInfo;
 
 // ---- accepted ----
 
@@ -24,6 +26,23 @@ fn an_order_that_does_not_cross_rests_as_new() {
     assert_eq!(filled_quote(&response), 0);
     let book = engine.market("BTC-USD").expect("market exists").book();
     assert_eq!(book.len(), 1);
+}
+
+/// The `TradeSettlement` needs them later, so the order keeps them from its request.
+#[test]
+fn a_resting_order_keeps_its_accounts() {
+    let mut engine = engine();
+
+    assert_accepted(&engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)));
+
+    let book = engine.market("BTC-USD").expect("market exists").book();
+    let order = book.get_by_id(OrderId::new(1)).expect("order rests");
+    // `limit(1, ..)` sends accounts 3_001 and 4_001
+    let expected = SettlementInfo {
+        base_account: AccountId::new(3_001),
+        quote_account: AccountId::new(4_001),
+    };
+    assert_eq!(order.settlement(), expected);
 }
 
 #[test]
