@@ -1,5 +1,6 @@
 use proto::Id;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// The id of an incoming order, given by the backend.
 ///
@@ -25,6 +26,14 @@ pub struct TradeId(u128);
 impl TradeId {
     pub const fn new(value: u128) -> Self {
         Self(value)
+    }
+
+    /// A new UUIDv7, as the contract asks for `trade_id`.
+    ///
+    /// Each one is bigger than the one before it in this process, even within the same
+    /// millisecond, and its random bits keep two engine instances from colliding.
+    pub fn generate() -> Self {
+        Self(Uuid::now_v7().as_u128())
     }
     pub const fn value(self) -> u128 {
         self.0

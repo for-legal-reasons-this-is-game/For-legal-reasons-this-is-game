@@ -11,10 +11,14 @@ use crate::resting_order::RestingOrder;
 type Level = VecDeque<RestingOrder>; // all the orders at the same price 
 type BookSide = BTreeMap<Price, Level>; // a map of one side of the book (sell/by) price is needed for faster access
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One match between a resting order (maker) and the incoming order (taker).
+///
+/// `maker` and `taker` are copies of the two orders right after this match, so the
+/// events for it can be built later, even if the maker has left the book.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fill {
-    pub maker: OrderId,
-    pub taker: OrderId,
+    pub maker: RestingOrder,
+    pub taker: RestingOrder,
     pub price: Price,
     pub quantity: BaseQuantity,
     pub quote: QuoteQuantity,
@@ -163,8 +167,8 @@ impl Book {
                 incoming.fill(quantity, quote)?;
 
                 fills.push(Fill {
-                    maker: maker_id,
-                    taker: incoming.id(),
+                    maker: maker.clone(),
+                    taker: incoming.clone(),
                     price,
                     quantity,
                     quote,

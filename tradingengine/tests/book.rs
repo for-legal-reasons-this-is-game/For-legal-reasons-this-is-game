@@ -456,8 +456,8 @@ fn a_fill_happens_at_the_makers_price() {
         .expect("valid insert");
 
     assert_eq!(execution.fills()[0].price, price(29_000));
-    assert_eq!(execution.fills()[0].maker, OrderId::new(1));
-    assert_eq!(execution.fills()[0].taker, OrderId::new(2));
+    assert_eq!(execution.fills()[0].maker.id(), OrderId::new(1));
+    assert_eq!(execution.fills()[0].taker.id(), OrderId::new(2));
 }
 
 #[test]
@@ -575,7 +575,7 @@ fn fills_take_the_oldest_order_at_a_price_first() {
     let makers: Vec<u128> = execution
         .fills()
         .iter()
-        .map(|fill| fill.maker.value())
+        .map(|fill| fill.maker.id().value())
         .collect();
     assert_eq!(makers, vec![1, 2]);
     assert_eq!(ids(book.asks()), vec![3]);
@@ -618,4 +618,27 @@ fn a_repriced_order_matches_like_a_new_arrival() {
     assert_eq!(execution.total_filled_quantity(), Ok(qty(10)));
     assert_eq!(execution.resting_order_id(), None);
     assert!(book.is_empty());
+}
+
+#[test]
+fn a_fill_keeps_copies_of_both_orders_right_after_the_match() {
+    let mut book = Book::new();
+    book.insert(sized(1, Side::Sell, 29_000, 4), scale())
+        .expect("valid insert");
+
+    let execution = book
+        .insert(sized(2, Side::Buy, 29_000, 10), scale())
+        .expect("valid insert");
+    let fill = &execution.fills()[0];
+
+    // the maker traded out and left the book, but its copy still has everything
+    assert!(book.get_by_id(OrderId::new(1)).is_none());
+    assert_eq!(fill.maker.status(), OrderStatus::Filled);
+    assert_eq!(fill.maker.settlement(), settlement(1));
+    assert_eq!(fill.maker.filled_quote(), fill.quote);
+
+    // the taker as it was after this match: 4 of its 10 filled
+    assert_eq!(fill.taker.status(), OrderStatus::PartiallyFilled);
+    assert_eq!(fill.taker.qty_remaining(), qty(6));
+    assert_eq!(fill.taker.settlement(), settlement(2));
 }
