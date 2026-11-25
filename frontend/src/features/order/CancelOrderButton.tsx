@@ -7,7 +7,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 // call to api/index.ts, use a mutation here, and on success invalidate
 // ["users", userID, "orders"], ["markets", order.market] and ["position"] (a cancel gives
 // the held amount back).
-export function CancelOrderButton() {
+// `size`: "xs" in tables, the normal size on the order page.
+export function CancelOrderButton({ size = "xs" }: { size?: "xs" | "default" }) {
     return (
         <Tooltip>
             <TooltipTrigger asChild>
@@ -21,8 +22,8 @@ export function CancelOrderButton() {
                     className="inline-flex rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                     aria-label="Cancel order: not available yet"
                     onClick={(event) => event.stopPropagation()}>
-                    <Button variant="outline" size="xs" disabled tabIndex={-1}>
-                        Cancel
+                    <Button variant="outline" size={size} disabled tabIndex={-1}>
+                        {size === "xs" ? "Cancel" : "Cancel order"}
                     </Button>
                 </span>
             </TooltipTrigger>

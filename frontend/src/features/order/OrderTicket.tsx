@@ -6,6 +6,7 @@ import { uuidv7 } from "uuidv7";
 import { api, errorMessage } from "@/api";
 import { accountQueries, marketQueries } from "@/api/queries";
 import { useActingUser } from "@/app/acting-user/context";
+import { DecimalField } from "@/components/DecimalField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +43,7 @@ import {
     TIME_IN_FORCE_LABELS,
     TRIGGER_DIRECTION_LABELS,
 } from "./labels";
+import { describe } from "./describe";
 
 // The order form of the trade page, ported from order/CreateOrder (same payload rules
 // and idempotency key handling), for one market and the acting user.
@@ -86,18 +88,6 @@ const ORDER_ERRORS = {
     503: "The trading engine rejected the order.",
 };
 
-// "0.2 BTC at 65,000.00 USD", for the toast
-function describe(order: Order, market: Market): string {
-    const base = market.base_asset.symbol;
-    const quote = market.quote_asset.symbol;
-    const amount = order.base_quantity
-        ? `${formatTrimmed(order.base_quantity)} ${base}`
-        : `${formatTrimmed(order.quote_quantity ?? "0")} ${quote} of ${base}`;
-    return order.limit_price
-        ? `${amount} at ${formatDecimal(order.limit_price)} ${quote}`
-        : `${amount} at the market price`;
-}
-
 // The toast after placing an order. The reply carries the engine's immediate answer
 // (status and fills after its first matching attempt), so the toast can say right away
 // whether the order traded. Later changes arrive through the engine's events.
@@ -136,70 +126,6 @@ function placedToast(
                         : `${describe(order, market)}. Waiting for the trading engine to confirm it.`,
             };
     }
-}
-
-// A text input for an amount or a price, with its unit inside the box on the right, a
-// hint underneath, and the error in place of the hint when there is one.
-function DecimalField({
-    id,
-    label,
-    unit,
-    value,
-    onChange,
-    hint,
-    error,
-    action,
-}: {
-    id: string;
-    label: string;
-    unit: string;
-    value: string;
-    onChange: (value: string) => void;
-    hint?: ReactNode;
-    error?: string;
-    action?: ReactNode;
-}) {
-    const note = error ?? hint;
-    return (
-        <div className="grid gap-1.5">
-            <div className="flex items-baseline justify-between gap-2">
-                <Label htmlFor={id}>
-                    {label}
-                    <span className="sr-only"> in {unit}</span>
-                </Label>
-                {action}
-            </div>
-            <div className="relative">
-                {/* text, not type="number": number inputs round long decimals and
-                    accept "1e3"; inputMode="decimal" still opens the number keyboard */}
-                <Input
-                    id={id}
-                    inputMode="decimal"
-                    autoComplete="off"
-                    value={value}
-                    onChange={(event) => onChange(event.target.value)}
-                    className="pr-12 text-right"
-                    aria-invalid={!!error}
-                    aria-describedby={note ? `${id}-note` : undefined}
-                />
-                <span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-muted-foreground">
-                    {unit}
-                </span>
-            </div>
-            {note && (
-                <p
-                    id={`${id}-note`}
-                    className={cn(
-                        "text-xs",
-                        error ? "text-destructive" : "text-muted-foreground",
-                    )}>
-                    {note}
-                </p>
-            )}
-        </div>
-    );
 }
 
 // The accounts of one asset to trade with, or a way to get one when there's none.

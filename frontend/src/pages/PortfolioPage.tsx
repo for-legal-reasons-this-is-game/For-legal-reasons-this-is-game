@@ -1,4 +1,5 @@
 import { useActingUser } from "@/app/acting-user/context";
+import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { AccountsTable } from "@/features/account/AccountsTable";
@@ -35,8 +36,7 @@ export function PortfolioPage() {
                 <AccountsTable
                     userID={userID}
                     empty={
-                        // an empty page is an invitation to act
-                        <div className="max-w-[70ch] rounded-2xl border border-dashed p-6">
+                        <EmptyState>
                             <p>
                                 No accounts yet. Open one for each asset you want to
                                 trade, for example one in BTC and one in USD for BTC-USD.
@@ -45,13 +45,13 @@ export function PortfolioPage() {
                                 userID={userID}
                                 trigger={<Button className="mt-4">Open account</Button>}
                             />
-                        </div>
+                        </EmptyState>
                     }
                 />
             ) : (
-                <p className="max-w-[70ch] rounded-2xl border border-dashed p-6">
+                <EmptyState>
                     Choose who you're acting as in the top bar to see their accounts.
-                </p>
+                </EmptyState>
             )}
         </>
     );

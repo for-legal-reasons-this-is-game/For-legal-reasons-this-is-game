@@ -148,9 +148,9 @@ What changed from the first draft, and why:
 | `/markets/:symbol` | Trade page | ticker, trades (for candles), market orders, `POST /users/{id}/orders`, user orders |
 | `/portfolio` | Your accounts and balances | positions, `POST /users/{id}/accounts`, deposit |
 | `/accounts/:id` | Account: balance, transfers, deposit, close/reopen | account, position, transfers, deposit, close, reopen |
-| `/orders` | Your orders (market and status filters, paging) | `GET /users/{id}/orders` |
-| `/orders/:id` | Order and its fills | `GET /orders/{id}`, `GET /orders/{id}/trades` |
-| `/users` | Users: create, switch the acting user | `GET/POST /users`, `GET /users/{id}` |
+| `/orders` | Your orders (market and status filters in the address, paging) | `GET /users/{id}/orders` |
+| `/orders/:id` | Order: details, fills with totals | `GET /orders/{id}`, `GET /orders/{id}/trades` |
+| `/users` | Users: create, search, switch the acting user | `GET/POST /users` |
 | `/admin/ledgers` | Ledgers: create, enable/disable | ledgers endpoints |
 | `/admin/markets` | Markets: create, list with status | `GET/POST /markets` |
 | `*` | Not found | |
@@ -197,8 +197,11 @@ engine's seven RPCs (`proto/service.proto`), the backend implements `SetMarket`,
 - `SubscribeMarketData` is an order book feed (`BookSnapshot`, `BookDelta` in
   `proto/events.proto`). An order book panel can come once the backend exposes it (open
   question 3).
-- Cancelling works once the backend has a cancel route. On 2026-11-25 there's none yet, and
-  `POST /markets` doesn't call `SetMarket` yet; `backend/src/service.rs` has the client calls.
+- Cancelling works once the backend has a cancel route. On 2026-11-25 there's none yet
+  (`backend/src/service.rs` has the client call). `POST /markets` does call `SetMarket`
+  (`advance_market`): 201 with "trading" when the engine confirms in time, otherwise 202 with
+  "halted" while the relay keeps asking (checked on 2026-11-25; an earlier note here said it
+  didn't).
 - **Closing an account with open orders calls `CancelOrders`** (`close_account` in
   `backend/src/v1.rs`), which comes after the evaluation: until then, such a close fails
   (502). Accounts without open orders close fine.
@@ -273,20 +276,35 @@ answered yes).
 - [x] Order form: "Open one" when an account is missing, "Deposit" under the available
       balance, so a new user can go from nothing to an order on the trade page
 
-### Phase 4: orders, users, admin
-- [ ] Orders page (filters, paging) and order page (fills: not available yet, decision 7;
-      cancel once the route exists)
-- [ ] Users page (create, act as) and user lookup
-- [ ] Admin: ledgers (create, enable) and markets (create, list)
+### Phase 4: orders, users, admin (done 2026-11-25)
+- [x] Orders page: every market, market and status filters kept in the address
+      (`?market=BTC-USD&status=open`), paging; filtered to one market it looks like the trade
+      page's list. Order page: a title in words ("Buy 0.1 BTC at 63,500.00 USD"), why it
+      ended (rejected, cancelled, expired), details ruled like a ledger page (filled amount
+      and value, average price, what it held, fee rates, both accounts), fills with maker or
+      taker, fee and totals under a double rule, the disabled "Cancel order". Fills aren't
+      "not available yet" any more: `SubscribeEvents` is in scope, so they show for real
+- [x] Users page: everyone by name, search by name or ID (it replaces the old ID lookup:
+      `GET /users` already returns everyone), "Act as", create user (with nobody chosen yet,
+      the app acts as the new user; otherwise the toast offers to switch)
+- [x] Admin: ledgers (create, a switch per ledger to turn it on or off) and market setup
+      (create with checks that mirror the backend's, list with order rules and fees; a market
+      waiting for the engine says so and turns to "Trading" by itself)
 
 ### Phase 5: polish and critique
 - [ ] Loading, empty and error states everywhere; toasts for every action
 - [ ] Responsive pass at 360 / 768 / 1280 px; keyboard and screen-reader pass; reduced motion
-- [ ] Delete `/dev`, the old components, `src/dev/legacy.css` and `pages/PagePlaceholder.tsx`
+- [ ] Delete `/dev`, the old components and `src/dev/legacy.css` (`pages/PagePlaceholder.tsx`
+      went in phase 4, once no page used it)
 - [ ] Split the bundle per route (`React.lazy`): it's 513 kB after phase 1, over Vite's
       500 kB warning, and the chart library will add more
 - [ ] Toasts: the action button ("View order") is ink, make it Ink Blue; on phones the toast
       covers the sticky Buy/Sell bar for its 4 seconds (sonner's `mobileOffset`)
+- [ ] Phones: the order lists (Your orders, the trade page's tabs), the fills table and the
+      market setup table scroll sideways inside their panels at 375 px. Usable, but a
+      two-line row per order (side, market and amount over price and status) would fit
+- [ ] "Users" sits in the Admin group of the sidebar, but everyone uses "Act as" until there's
+      a login; consider moving it, or a link from the empty states
 - [ ] Screenshot critique; "remove one accessory"
 
 ### Phase 6: Playwright
@@ -308,6 +326,10 @@ answered yes).
 4. **Closed accounts** (Alvaro): could `GET /accounts/{id}` or the position say whether an
    account is closed (e.g. `account_status: "closed"`)? Default: the account page offers both
    close and reopen, and says nothing about the state.
+5. **The system user** (Alvaro): `GET /users` also returns the backend's own "system" user
+   (it owns the fee and source accounts), and the API doesn't say which user that is
+   (`is_system` isn't in `User`). Could `list_users` leave it out? Default: it's listed like
+   everyone, in the users page and the top bar's menu.
 
 ## Decisions
 
@@ -405,7 +427,35 @@ Things decided or learned while building, which the next phases rely on:
   hangs on a focusable wrapper with `role="button"` and `aria-disabled` (`CancelOrderButton`).
 - **Phones:** wide tables drop secondary columns below `sm`/`md` and move the essentials into
   the first cell (`AccountsTable`); a footer row uses one cell per column, not `colSpan`.
-- **Bundle:** 784 kB after phase 3 (758 kB after phase 2) (the chart library is most of the growth); phase 5 splits it.
+- **Bundle:** 825 kB after phase 4 (784 kB after phase 3, 758 kB after phase 2; the chart
+  library is most of the growth); phase 5 splits it.
+- **Shared pieces (phase 4):** `components/CopyButton` (copy an ID, with a toast),
+  `components/EmptyState` (the dashed "nothing here yet, do this" box),
+  `components/DecimalField` (a number input with its unit inside, moved out of the order
+  form; `inputMode="numeric"` for whole numbers). `features/order/describe.ts` words an order
+  the same way in the toast and the order page's title.
+- **Orders:** `OrdersTable` takes `market` (one market: units in the headings) or `markets`
+  (any market: a Market column and units in the cells). `orderQueries.detail` and the fills
+  poll only while `isOpen(order)`. The fills table shows the latest 20 with "Show all" (the
+  endpoint isn't paged); its totals always cover every fill. `rejectionText(order)` in
+  `labels.ts` turns the backend's two own rejection details ("insufficient funds", "the
+  account is closed...") into sentences: if `advance_order` changes those strings, the
+  generic sentence shows instead.
+- **Filters in the address:** the orders page keeps market and status in the query string
+  (`useSearchParams`, with `replace` so Back still leaves the page). With a market in the
+  address, it waits for the markets list before asking for orders, so an unknown market says
+  "There's no market called ..." instead of the backend's ambiguous 404.
+- **Rules only the frontend has:** user names are unique (the user menu shows only names),
+  ledger symbols are capitals and digits (up to 12), market symbols are capitals, digits and
+  dashes. The backend accepts any text for all three.
+- **Ledger switch:** shows its new position while the request runs (TanStack's mutation
+  `variables`), then updates the cached list and refetches the markets (they carry their
+  ledgers).
+- **Page grids:** a grid that turns into two columns on wide screens needs `grid-cols-1`
+  below that, or a wide table inside widens the whole page on phones (its implicit column
+  grows to the table's width).
+- **Admin market list** polls every 5 s while a market is "halted" (waiting for the engine),
+  with its own `refetchInterval` on the shared `["markets"]` key.
 - **npm audit** reports 13 findings, all in build tools (ESLint, typescript-eslint, the shadcn
   CLI and its `zod`), none in the code the browser runs. Don't run `npm audit fix` blindly:
   it changes dependency versions.
@@ -457,3 +507,19 @@ Things decided or learned while building, which the next phases rely on:
   account. Fixed on the way: the open-account dialog focused the asset instead of the name, the
   My orders table overflowed its card, the portfolio table hid "Available" on phones, and the
   balance label squeezed the total. Next: phase 4 (orders, users, admin).
+- 2026-11-25: phase 4 done: orders page, order page with fills, users page, ledgers and market
+  setup. Tested on a throwaway stack (fills, a cancel reason and statuses set in Postgres,
+  since the consumer can't run there): filters and the address, an unknown market, an order
+  with three fills (totals and the average price checked by hand), one with 509 fills, a
+  cancelled, a rejected and another user's order, an unknown order ID; created users (a
+  duplicate name refused, "Act as" from the toast and the table), a ledger (a duplicate
+  refused) and switched EUR off and on; created SOL-USD (confirmed at once) and, with the
+  engine stopped, EUR-USD, which showed "Waiting for the trading engine" and turned to
+  "Trading" by itself after the engine came back; a real order from the trade page (toast
+  "0.002 BTC at 60,000.00 USD"); light, dark, 1280 and 375 px. Fixed on the way: the order
+  title showed 8 decimals, "No fills yet" and "Nothing yet" on finished orders, "Held when
+  placed" on rejected orders, the generic rejection text where the backend said why, a long
+  fills list, the order page wider than a phone, a server error that outlived the field it
+  was about, and an unknown market in the address briefly asking for its orders. The
+  plan's note that `POST /markets` doesn't call `SetMarket` was wrong and is corrected. Next:
+  phase 5 (polish), when the user says go.

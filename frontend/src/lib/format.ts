@@ -3,6 +3,7 @@
 //
 // Amounts stay strings: Intl.NumberFormat formats a numeric string exactly, without
 // turning it into a floating-point number first.
+import { fromUnits } from "./decimal";
 
 // "." as the decimal separator everywhere, the same one the order form expects
 const LOCALE = "en-US";
@@ -43,6 +44,12 @@ export function formatSignedDecimal(value: string): string {
         maximumFractionDigits: decimals,
         signDisplay: "exceptZero",
     });
+}
+
+// A fee rate in basis points as a percentage: 10 -> "0.10%", 250 -> "2.50%"
+// (1 bps = 0.01%, so it's the number with two decimals)
+export function formatBps(bps: number): string {
+    return `${fromUnits(BigInt(bps), 2)}%`;
 }
 
 // "1.3942680092951200619674670800" -> "+1.39%"

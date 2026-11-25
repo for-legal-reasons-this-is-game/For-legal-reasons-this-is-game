@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeftIcon, CopyIcon } from "lucide-react";
+import { ChevronLeftIcon } from "lucide-react";
 import { Link, useParams } from "react-router";
-import { toast } from "sonner";
 import { errorMessage } from "@/api";
 import { accountQueries, ledgerQueries, userQueries } from "@/api/queries";
 import { useActingUser } from "@/app/acting-user/context";
+import { CopyButton } from "@/components/CopyButton";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,15 +42,6 @@ function AccountView({ account }: { account: Account }) {
             rememberAccount(userID, account.account_id);
     }, [mine, userID, account.account_id, account.account_code_type]);
 
-    async function copyID() {
-        try {
-            await navigator.clipboard.writeText(account.account_id);
-            toast.success("Account ID copied");
-        } catch {
-            toast.error("Couldn't copy the ID. Select it on the page instead.");
-        }
-    }
-
     return (
         <>
             <title>{`${account.account_name} - ${APP_NAME}`}</title>
@@ -69,13 +60,7 @@ function AccountView({ account }: { account: Account }) {
                         {!mine && userID && " (not the user you're acting as)"}
                         <span className="mt-1 flex items-center gap-1 text-sm">
                             ID {account.account_id}
-                            <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                onClick={copyID}
-                                aria-label="Copy account ID">
-                                <CopyIcon />
-                            </Button>
+                            <CopyButton value={account.account_id} what="account ID" />
                         </span>
                     </>
                 }
@@ -86,7 +71,8 @@ function AccountView({ account }: { account: Account }) {
                     </>
                 }
             />
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
+            {/* grid-cols-1 keeps a wide table from widening the page on phones */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
                 {position.isError ? (
                     <p role="alert" className="text-destructive">
                         Couldn't load the balance: {errorMessage(position.error)}

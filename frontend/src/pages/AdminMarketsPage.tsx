@@ -1,14 +1,22 @@
 import { PageHeader } from "@/components/PageHeader";
-import { PagePlaceholder } from "./PagePlaceholder";
+import { Button } from "@/components/ui/button";
+import { CreateMarketDialog } from "@/features/admin/CreateMarketDialog";
+import { MarketSetupTable } from "@/features/admin/MarketSetupTable";
+
+const APP_NAME = "For legal reasons this is game";
 
 export function AdminMarketsPage() {
     return (
         <>
-            <PageHeader title="Market setup" />
-            <PagePlaceholder phase={4}>
-                Create markets from two ledgers and see which ones the trading engine has
-                accepted.
-            </PagePlaceholder>
+            <title>{`Market setup - ${APP_NAME}`}</title>
+            <PageHeader
+                title="Market setup"
+                description="Each market trades one ledger's asset for another's, with its own order rules and fees. A new market opens once the trading engine confirms it."
+                actions={<CreateMarketDialog trigger={<Button>Create market</Button>} />}
+            />
+            <div className="rounded-2xl border bg-card px-2">
+                <MarketSetupTable />
+            </div>
         </>
     );
 }

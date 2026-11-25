@@ -13,7 +13,9 @@
 //   ["users"], ["users", id, "orders", query]
 //   ["account", id], ["position", id]        (the old components use these keys too)
 //   ["transfers", "account", id, query], ["ledgers"]
+//   ["orders", id], ["orders", id, "trades"]
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { isOpen } from "@/features/order/order-state";
 import { api } from "./index";
 import type { MarketOrderQuery } from "@/types/MarketOrderQuery";
 import type { MarketTradeQuery } from "@/types/MarketTradeQuery";
@@ -125,6 +127,29 @@ export const accountQueries = {
             enabled: !!accountID,
             placeholderData: keepPreviousData,
             refetchInterval: LIVE_MS,
+        }),
+};
+
+export const orderQueries = {
+    // One order (the old OrderLookup uses the same key). While it can still trade it's
+    // polled, so its status and filled amounts follow the engine; a finished order doesn't
+    // change any more, so polling stops (see accountQueries.detail for the function form).
+    detail: (orderID: string) =>
+        queryOptions({
+            queryKey: ["orders", orderID],
+            queryFn: () => api.orders.get(orderID),
+            enabled: !!orderID,
+            refetchInterval: (query) =>
+                query.state.data && isOpen(query.state.data) ? LIVE_MS : false,
+        }),
+    // Every trade the order took part in, oldest first (not paged). `live`: poll while the
+    // order can still trade.
+    trades: (orderID: string, live: boolean) =>
+        queryOptions({
+            queryKey: ["orders", orderID, "trades"],
+            queryFn: () => api.orders.trades(orderID),
+            enabled: !!orderID,
+            refetchInterval: live ? LIVE_MS : false,
         }),
 };
 

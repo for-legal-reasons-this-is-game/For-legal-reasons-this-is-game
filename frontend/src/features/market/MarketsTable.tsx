@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router";
 import { errorMessage } from "@/api";
 import { marketQueries } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -93,14 +94,13 @@ export function MarketsTable() {
     }
 
     if (markets.isSuccess && markets.data.length === 0) {
-        // an empty page is an invitation to act
         return (
-            <div className="max-w-[70ch] rounded-2xl border border-dashed p-6">
+            <EmptyState>
                 <p>There are no markets yet. Admins create them from two ledgers.</p>
                 <Button asChild className="mt-4">
                     <Link to="/admin/markets">Open market setup</Link>
                 </Button>
-            </div>
+            </EmptyState>
         );
     }
 

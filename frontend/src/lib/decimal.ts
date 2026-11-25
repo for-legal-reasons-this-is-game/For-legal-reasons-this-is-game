@@ -43,6 +43,23 @@ export function quoteFor(
     return (priceUnits * baseUnits) / 10n ** BigInt(exponent);
 }
 
+// The average price of fills that traded `baseUnits` for `quoteUnits` in total, in price
+// units: quoteFor() worked backwards, rounded to the nearest unit (the fills' values were
+// each rounded down, so an exact division can land just under the real price). null when
+// nothing has filled, or when the decimals don't allow it (see quoteFor).
+export function averagePrice(
+    quoteUnits: bigint,
+    baseUnits: bigint,
+    priceDecimals: number,
+    baseDecimals: number,
+    quoteDecimals: number,
+): bigint | null {
+    const exponent = priceDecimals + baseDecimals - quoteDecimals;
+    if (baseUnits <= 0n || exponent < 0) return null;
+    // adding half the divisor first makes the rounding-down division round to nearest
+    return (quoteUnits * 10n ** BigInt(exponent) + baseUnits / 2n) / baseUnits;
+}
+
 // The most a trade of `quoteUnits` can cost in fees at `bps` basis points (1 bps =
 // 0.01%), rounded up, like the backend's fee_cap(). Buy orders reserve this on top.
 export function feeCap(quoteUnits: bigint, bps: number): bigint {
