@@ -25,6 +25,15 @@ spec:
           image: tradingengine:latest
           # image is built in CI and loaded into kind, never pulled
           imagePullPolicy: IfNotPresent
+          # the router isn't deployed in CI yet, so its queue is the engine's own Redis
+          env:
+            # these two vars need be changed in router
+            - name: ROUTER_REDIS_URL
+              value: redis://tradingengine-redis:6379
+            - name: REDIS_URL
+              value: redis://tradingengine-redis:6379
+            - name: ENGINE_INSTANCE
+              value: tradingengine-0
           ports:
             - name: grpc
               containerPort: 50051

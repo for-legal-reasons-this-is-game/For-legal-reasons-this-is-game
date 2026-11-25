@@ -81,11 +81,16 @@ jobs:
                         -f k8s/postgress_backend_service.yaml \
                         -f k8s/redis_backend_pvc.yaml \
                         -f k8s/redis_backend_deployment.yaml \
-                        -f k8s/redis_backend_service.yaml
+                        -f k8s/redis_backend_service.yaml \
+                        -f k8s/redis_backend_service.yaml \
+                        -f k8s/redis_tradingengine_pvc.yaml \
+                        -f k8s/redis_tradingengine_deployment.yaml \
+                        -f k8s/redis_tradingengine_service.yaml
           kubectl apply -f .github/k8s-ci/tigerbeetle.yaml
           kubectl -n transcendence rollout status deploy/backend-postgress --timeout=180s
           kubectl -n transcendence rollout status deploy/backend-redis --timeout=180s
           kubectl -n tigerbeetle rollout status statefulset/tigerbeetle --timeout=180s
+          kubectl -n transcendence rollout status deploy/tradingengine-redis --timeout=180s
 
       # The backend resolves TigerBeetle's DNS name on start and connects to
       # Postgres for migrations, so it goes up after the dependencies are ready.
