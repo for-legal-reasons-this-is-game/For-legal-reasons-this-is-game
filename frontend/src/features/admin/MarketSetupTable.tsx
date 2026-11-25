@@ -17,9 +17,17 @@ import { cn } from "@/lib/utils";
 import type { Market } from "@/types/Market";
 
 const NUMBER = "text-right";
-// narrower screens keep the market, its status and the fees
-const MINIMUMS = "hidden md:table-cell";
-const STEPS = "hidden xl:table-cell";
+// The columns a narrow table leaves out, by its own width (container queries, see
+// OrdersTable): below 32rem (512 px) the fees move under the market's name, the minimums
+// show from 42rem (672 px) and the steps from 56rem (896 px).
+const FEES = "hidden @lg:table-cell";
+const MINIMUMS = "hidden @2xl:table-cell";
+const STEPS = "hidden @4xl:table-cell";
+
+// "0.10% / 0.30%": maker, then taker
+function fees(market: Market): string {
+    return `${formatBps(market.maker_fee_bps)} / ${formatBps(market.taker_fee_bps)}`;
+}
 
 // "0.0001" and a muted "BTC"
 function Rule({ value, asset }: { value: string; asset: string }) {
@@ -51,6 +59,7 @@ function MarketSetupRow({ market }: { market: Market }) {
                 <div className="min-w-36 text-xs whitespace-normal text-muted-foreground">
                     {market.base_asset.name} in {market.quote_asset.name}, prices with{" "}
                     {market.price_decimals} decimals
+                    <span className="@lg:hidden">. Fees {fees(market)}</span>
                 </div>
             </TableCell>
             <TableCell>
@@ -74,11 +83,7 @@ function MarketSetupRow({ market }: { market: Market }) {
             <TableCell className={cn(NUMBER, STEPS)}>
                 <Rule value={market.price_step} asset={quote} />
             </TableCell>
-            <TableCell className={NUMBER}>
-                {formatBps(market.maker_fee_bps)}{" "}
-                <span className="text-muted-foreground">/</span>{" "}
-                {formatBps(market.taker_fee_bps)}
-            </TableCell>
+            <TableCell className={cn(NUMBER, FEES)}>{fees(market)}</TableCell>
         </TableRow>
     );
 }
@@ -93,7 +98,7 @@ export function MarketSetupTable() {
                 ? 5_000
                 : false,
     });
-    const columns = ["", "", MINIMUMS, MINIMUMS, STEPS, STEPS, NUMBER];
+    const columns = ["", "", MINIMUMS, MINIMUMS, STEPS, STEPS, FEES];
 
     if (markets.isError) {
         return (
@@ -111,35 +116,41 @@ export function MarketSetupTable() {
     }
 
     return (
-        <Table className="font-stretch-semi-condensed">
-            <TableHeader>
-                <TableRow>
-                    <TableHead>Market</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className={cn(NUMBER, MINIMUMS)}>
-                        Smallest amount
-                    </TableHead>
-                    <TableHead className={cn(NUMBER, MINIMUMS)}>Smallest value</TableHead>
-                    <TableHead className={cn(NUMBER, STEPS)}>Amount step</TableHead>
-                    <TableHead className={cn(NUMBER, STEPS)}>Price step</TableHead>
-                    <TableHead className={NUMBER}>Fees (maker / taker)</TableHead>
-                </TableRow>
-            </TableHeader>
-            <TableBody>
-                {markets.isPending
-                    ? [0, 1].map((row) => (
-                          <TableRow key={row}>
-                              {columns.map((className, cell) => (
-                                  <TableCell key={cell} className={className}>
-                                      <Skeleton className="h-4 w-full" />
-                                  </TableCell>
-                              ))}
-                          </TableRow>
-                      ))
-                    : markets.data.map((market) => (
-                          <MarketSetupRow key={market.market_id} market={market} />
-                      ))}
-            </TableBody>
-        </Table>
+        <div className="@container">
+            <Table className="font-stretch-semi-condensed">
+                <TableHeader>
+                    <TableRow>
+                        <TableHead>Market</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className={cn(NUMBER, MINIMUMS)}>
+                            Smallest amount
+                        </TableHead>
+                        <TableHead className={cn(NUMBER, MINIMUMS)}>
+                            Smallest value
+                        </TableHead>
+                        <TableHead className={cn(NUMBER, STEPS)}>Amount step</TableHead>
+                        <TableHead className={cn(NUMBER, STEPS)}>Price step</TableHead>
+                        <TableHead className={cn(NUMBER, FEES)}>
+                            Fees (maker / taker)
+                        </TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {markets.isPending
+                        ? [0, 1].map((row) => (
+                              <TableRow key={row}>
+                                  {columns.map((className, cell) => (
+                                      <TableCell key={cell} className={className}>
+                                          <Skeleton className="h-4 w-full" />
+                                      </TableCell>
+                                  ))}
+                              </TableRow>
+                          ))
+                        : markets.data.map((market) => (
+                              <MarketSetupRow key={market.market_id} market={market} />
+                          ))}
+                </TableBody>
+            </Table>
+        </div>
     );
 }

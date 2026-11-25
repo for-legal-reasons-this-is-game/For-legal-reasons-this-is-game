@@ -14,7 +14,9 @@ function readStoredUserID(): string {
 }
 
 export function ActingUserProvider({ children }: { children: ReactNode }) {
-    // useState(() => ...) reads storage only on the first render (see CreateOrder)
+    // New React: useState(readStoredUserID) passes the function itself, which React calls
+    // only on the first render. useState(readStoredUserID()) would read storage on every
+    // render and throw the result away.
     const [userID, setUserIDState] = useState(readStoredUserID);
 
     function setUserID(id: string) {

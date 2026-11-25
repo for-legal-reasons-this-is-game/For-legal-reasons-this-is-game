@@ -22,9 +22,12 @@ import type { Trade } from "@/types/Trade";
 import { isOpen } from "./order-state";
 
 const NUMBER = "text-right";
-// phones show when, at what price, how much and its value; fee and role are extra
-const FEE_COLUMN = "hidden sm:table-cell";
-const ROLE_COLUMN = "hidden sm:table-cell";
+// The columns a narrow panel leaves out, by the panel's width (container queries, see
+// OrdersTable): the value from 24rem (384 px) on, the fee and the role from 28rem (448 px).
+// The order's details above already say the filled value.
+const VALUE_COLUMN = "hidden @sm:table-cell";
+const FEE_COLUMN = "hidden @md:table-cell";
+const ROLE_COLUMN = "hidden @md:table-cell";
 
 // What a trade was for this order: which fee it paid, and whether it was the maker (it was
 // waiting in the book) or the taker (it traded as it arrived). Fees are in the quote asset.
@@ -97,7 +100,7 @@ export function FillsTable({ order, market }: { order: Order; market: Market }) 
     };
 
     return (
-        <>
+        <div className="@container">
             {/* the hidden fills are the older ones, above the shown rows */}
             {fills && hidden > 0 && (
                 <p className="py-1 text-sm text-muted-foreground">
@@ -116,7 +119,9 @@ export function FillsTable({ order, market }: { order: Order; market: Market }) 
                         <TableHead>Time</TableHead>
                         <TableHead className={NUMBER}>Price ({quote.symbol})</TableHead>
                         <TableHead className={NUMBER}>Amount ({base.symbol})</TableHead>
-                        <TableHead className={NUMBER}>Value ({quote.symbol})</TableHead>
+                        <TableHead className={cn(NUMBER, VALUE_COLUMN)}>
+                            Value ({quote.symbol})
+                        </TableHead>
                         <TableHead className={cn(NUMBER, FEE_COLUMN)}>
                             Fee ({quote.symbol})
                         </TableHead>
@@ -134,7 +139,7 @@ export function FillsTable({ order, market }: { order: Order; market: Market }) 
                                   <TableCell className={NUMBER}>
                                       {formatDecimal(trade.base_quantity)}
                                   </TableCell>
-                                  <TableCell className={NUMBER}>
+                                  <TableCell className={cn(NUMBER, VALUE_COLUMN)}>
                                       {formatDecimal(trade.quote_quantity)}
                                   </TableCell>
                                   <TableCell className={cn(NUMBER, FEE_COLUMN)}>
@@ -149,7 +154,7 @@ export function FillsTable({ order, market }: { order: Order; market: Market }) 
                                       "",
                                       NUMBER,
                                       NUMBER,
-                                      NUMBER,
+                                      VALUE_COLUMN,
                                       FEE_COLUMN,
                                       ROLE_COLUMN,
                                   ].map((className, cell) => (
@@ -169,7 +174,7 @@ export function FillsTable({ order, market }: { order: Order; market: Market }) 
                             <TableCell className={NUMBER}>
                                 {totals.amount && formatDecimal(totals.amount)}
                             </TableCell>
-                            <TableCell className={NUMBER}>
+                            <TableCell className={cn(NUMBER, VALUE_COLUMN)}>
                                 {totals.value && formatDecimal(totals.value)}
                             </TableCell>
                             <TableCell className={cn(NUMBER, FEE_COLUMN)}>
@@ -186,6 +191,6 @@ export function FillsTable({ order, market }: { order: Order; market: Market }) 
                     traded as it arrived. Fees are paid in {quote.symbol}.
                 </p>
             )}
-        </>
+        </div>
     );
 }

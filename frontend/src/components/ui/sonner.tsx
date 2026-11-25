@@ -36,11 +36,19 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
+      // Changed from shadcn's: an action ("View order") is Ink Blue like every other
+      // action, not ink. "!" beats sonner's own, more specific styles.
       toastOptions={{
         classNames: {
           toast: "cn-toast",
+          actionButton: "bg-primary! text-primary-foreground!",
         },
       }}
+      // Changed from shadcn's: toasts rise above the trade page's Buy/Sell bar while it
+      // shows (its height is in --toast-lift, see MobileTradeBar). 24px and 16px are
+      // sonner's own distances from the bottom; 16px applies below 600px.
+      offset={{ bottom: "calc(var(--toast-lift, 0px) + 24px)" }}
+      mobileOffset={{ bottom: "calc(var(--toast-lift, 0px) + 16px)" }}
       {...props}
     />
   )

@@ -179,6 +179,12 @@
            of prices line up (Archivo's own tabular figures, no monospace font) */
         font-variant-numeric: tabular-nums;
     }
+    /* Links (in tables, the sidebar's name, hints) have no ring of their own: give them a
+       solid Ink Blue outline. The half-transparent default above is under the 3:1
+       contrast a focus indicator needs. */
+    a:focus-visible {
+        @apply rounded-sm outline-2 outline-offset-2 outline-ring;
+    }
 }
 
 /* Respect "reduce motion": animations and transitions finish instantly */

@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { ChevronsUpDownIcon, UserRoundIcon } from "lucide-react";
-import { api, errorMessage } from "@/api";
+import { errorMessage } from "@/api";
+import { userQueries } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -18,11 +19,7 @@ import { useActingUser } from "./context";
 // Top-bar menu to choose which user the app acts as (until there's a login).
 export function ActingUserSwitcher() {
     const { userID, setUserID } = useActingUser();
-    // same key as the users list, so both share one cached list
-    const users = useQuery({
-        queryKey: ["users"],
-        queryFn: () => api.users.list(),
-    });
+    const users = useQuery(userQueries.list());
 
     const current = users.data?.find((user) => user.user_id === userID);
     // a remembered user can be gone after the database is reset
@@ -63,7 +60,10 @@ export function ActingUserSwitcher() {
                 )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                    <Link to="/users">Manage users</Link>
+                    {/* the users page creates users too: the way in on a first visit */}
+                    <Link to="/users">
+                        {users.data?.length === 0 ? "Create a user" : "Manage users"}
+                    </Link>
                 </DropdownMenuItem>
             </DropdownMenuContent>
         </DropdownMenu>

@@ -19,7 +19,7 @@ import { rememberAccount } from "./known-accounts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Remembers an account opened somewhere else (another browser, the old /dev UI), after
+// Remembers an account opened somewhere else (another browser, or straight through the API), after
 // checking that it exists and belongs to the user. `trigger` is the button that opens it.
 export function AddAccountDialog({
     userID,

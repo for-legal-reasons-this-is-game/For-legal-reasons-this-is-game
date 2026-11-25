@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AccountsTable } from "@/features/account/AccountsTable";
 import { AddAccountDialog } from "@/features/account/AddAccountDialog";
 import { OpenAccountDialog } from "@/features/account/OpenAccountDialog";
+import { ChooseUserHint } from "@/features/user/ChooseUserHint";
 
 const APP_NAME = "For legal reasons this is game";
 
@@ -50,7 +51,7 @@ export function PortfolioPage() {
                 />
             ) : (
                 <EmptyState>
-                    Choose who you're acting as in the top bar to see their accounts.
+                    <ChooseUserHint goal="to see their accounts" />
                 </EmptyState>
             )}
         </>

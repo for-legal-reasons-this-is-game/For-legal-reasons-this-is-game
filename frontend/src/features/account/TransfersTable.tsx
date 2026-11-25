@@ -17,6 +17,9 @@ import type { Transfer } from "@/types/Transfer";
 import type { TransferQuery } from "@/types/TransferQuery";
 
 const NUMBER = "text-right";
+// A narrow panel (under 28rem = 448 px, see the container queries in OrdersTable) moves the
+// time under what the transfer was, so the two amount columns keep their room
+const TIME_COLUMN = "hidden @md:table-cell";
 
 // The backend names each transfer by its ledger code (transfer_kind() in backend/src/v1.rs)
 const KIND_LABELS: Record<string, string> = {
@@ -53,11 +56,11 @@ export function TransfersTable({ accountID }: { accountID: string }) {
                     No transfers yet. A deposit is the first one.
                 </p>
             ) : (
-                <div className="mt-2 flex flex-col gap-3">
+                <div className="@container mt-2 flex flex-col gap-3">
                     <Table className="font-stretch-semi-condensed">
                         <TableHeader>
                             <TableRow>
-                                <TableHead>Time</TableHead>
+                                <TableHead className={TIME_COLUMN}>Time</TableHead>
                                 <TableHead>What</TableHead>
                                 <TableHead className={NUMBER}>Out</TableHead>
                                 <TableHead className={NUMBER}>In</TableHead>
@@ -67,10 +70,16 @@ export function TransfersTable({ accountID }: { accountID: string }) {
                             {transfers.data
                                 ? transfers.data.items.map((transfer) => (
                                       <TableRow key={transfer.transfer_id}>
-                                          <TableCell>
+                                          <TableCell className={TIME_COLUMN}>
                                               {formatLedgerWhen(transfer.timestamp)}
                                           </TableCell>
-                                          <TableCell>{kindOf(transfer)}</TableCell>
+                                          {/* may wrap: "Returned from an order" */}
+                                          <TableCell className="whitespace-normal">
+                                              {kindOf(transfer)}
+                                              <div className="text-xs text-muted-foreground @md:hidden">
+                                                  {formatLedgerWhen(transfer.timestamp)}
+                                              </div>
+                                          </TableCell>
                                           <TableCell className={NUMBER}>
                                               {transfer.direction === "out" &&
                                                   formatDecimal(transfer.amount)}
@@ -83,11 +92,15 @@ export function TransfersTable({ accountID }: { accountID: string }) {
                                   ))
                                 : [0, 1, 2].map((row) => (
                                       <TableRow key={row}>
-                                          {[0, 1, 2, 3].map((cell) => (
-                                              <TableCell key={cell}>
-                                                  <Skeleton className="h-4 w-full" />
-                                              </TableCell>
-                                          ))}
+                                          {[TIME_COLUMN, "", "", ""].map(
+                                              (className, cell) => (
+                                                  <TableCell
+                                                      key={cell}
+                                                      className={className}>
+                                                      <Skeleton className="h-4 w-full" />
+                                                  </TableCell>
+                                              ),
+                                          )}
                                       </TableRow>
                                   ))}
                         </TableBody>

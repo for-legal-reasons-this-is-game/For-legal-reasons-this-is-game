@@ -93,6 +93,14 @@ export function LedgersTable() {
     const sorted = [...(ledgers.data ?? [])].sort((a, b) =>
         a.symbol.localeCompare(b.symbol),
     );
+    // the backend starts with USD, EUR and BTC, so only a hand-made database gets here
+    if (ledgers.isSuccess && sorted.length === 0) {
+        return (
+            <p className="p-2 text-muted-foreground">
+                No ledgers yet. Create one for each asset users can hold, like USD.
+            </p>
+        );
+    }
 
     return (
         <Table className="font-stretch-semi-condensed">

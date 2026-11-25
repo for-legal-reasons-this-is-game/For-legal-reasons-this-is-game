@@ -7,15 +7,19 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 
-// Paging for the list endpoints that return { items, next_cursor }: each page comes with
-// next_cursor, and sending it back as `cursor` returns the page after it (null on the
-// last page). The shadcn version of common/PageControls, which the old UI still uses.
+// Paging for the list endpoints that return { items, next_cursor } (transfers, orders,
+// trades): each page comes with next_cursor, and sending it back as `cursor` returns the
+// page after it (null on the last page).
 
+// page sizes to choose from (the backend's default is 50, its maximum 100)
 const PAGE_SIZES = ["10", "20", "50", "100"];
 
 type PageQuery = { limit: number | null; cursor: string | null };
 
-// <Q extends PageQuery>: any query with at least limit and cursor (see PageControls)
+// New TypeScript: a generic with a constraint. <Q extends PageQuery> means "Q can be any
+// type, as long as it has at least limit and cursor". So the same component works for
+// TransferQuery, OrderQuery, MarketOrderQuery..., and setQuery gets back the full query,
+// with its other fields (status, market) still in it.
 export function TablePager<Q extends PageQuery>({
     query,
     setQuery,

@@ -24,6 +24,7 @@ import { availableUnits } from "@/features/account/balance";
 import { DepositDialog } from "@/features/account/DepositDialog";
 import { OpenAccountDialog } from "@/features/account/OpenAccountDialog";
 import { useUserAccounts } from "@/features/account/use-user-accounts";
+import { ChooseUserHint } from "@/features/user/ChooseUserHint";
 import { feeCap, fromUnits, quoteFor, toUnits } from "@/lib/decimal";
 import { ENGINE_SUPPORTS } from "@/lib/engine-support";
 import { formatDecimal, formatTrimmed } from "@/lib/format";
@@ -45,8 +46,7 @@ import {
 } from "./labels";
 import { describe } from "./describe";
 
-// The order form of the trade page, ported from order/CreateOrder (same payload rules
-// and idempotency key handling), for one market and the acting user.
+// The order form of the trade page, for one market and the acting user.
 
 type TicketForm = {
     side: Side;
@@ -77,7 +77,7 @@ const ORDER_TYPES = Object.keys(ORDER_TYPE_LABELS) as OrderType[];
 const TIMES_IN_FORCE = Object.keys(TIME_IN_FORCE_LABELS) as TimeInForce[];
 const TRIGGER_DIRECTIONS = Object.keys(TRIGGER_DIRECTION_LABELS) as TriggerDirection[];
 
-// Per-status messages for a rejected order, from CreateOrder. The backend answers 400 both
+// Per-status messages for a rejected order. The backend answers 400 both
 // for an invalid order and for an order type the engine doesn't support yet, with no body
 // to tell them apart.
 const ORDER_ERRORS = {
@@ -251,9 +251,13 @@ export function OrderTicket({
     // When "Place order" was last clicked (null: not yet, or the order went through).
     // Errors show from then on and update as the user types.
     const [submittedAt, setSubmittedAt] = useState<number | null>(null);
-    // The idempotency key, exactly as in CreateOrder: a new one when the form changes and
-    // when the backend answers; kept only when a request got no answer, so that clicking
-    // again can't place the order twice.
+    // The backend uses the idempotency key to recognise a repeated request: the same key
+    // with the same order returns the order already placed instead of a second one. So the
+    // key changes when the form changes (a different order) and when the backend answers
+    // (that order is done, even if rejected: a rejected order is saved under its key). It's
+    // kept only when a request got no answer, so that clicking again can't place the order
+    // twice. useState(() => uuidv7()): React calls the function only on the first render
+    // (see ActingUserProvider).
     const [idempotencyKey, setIdempotencyKey] = useState(() => uuidv7());
     // New React: useId gives an ID that's unique on the page and stable between renders.
     // The ticket can be on the page twice (the side column, and the sheet on small
@@ -500,7 +504,7 @@ export function OrderTicket({
             <h2 className="sr-only">Place an order</h2>
             {!userID && (
                 <p className="rounded-lg bg-muted px-3 py-2">
-                    Choose who you're trading as in the top bar to place orders.
+                    <ChooseUserHint goal="to place orders" />
                 </p>
             )}
             {userID && !trading && (

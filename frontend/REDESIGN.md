@@ -173,8 +173,8 @@ src/
   types/        unchanged: copies of backend/bindings
 ```
 
-The current test UI stays reachable at `/dev` until each part has a replacement, then it's
-deleted (phase 5).
+The first test UI (one form per backend route) stayed at `/dev` until every part had a
+replacement, and was deleted in phase 5.
 
 ### Chart data
 
@@ -291,21 +291,33 @@ answered yes).
       (create with checks that mirror the backend's, list with order rules and fees; a market
       waiting for the engine says so and turns to "Trading" by itself)
 
-### Phase 5: polish and critique
-- [ ] Loading, empty and error states everywhere; toasts for every action
-- [ ] Responsive pass at 360 / 768 / 1280 px; keyboard and screen-reader pass; reduced motion
-- [ ] Delete `/dev`, the old components and `src/dev/legacy.css` (`pages/PagePlaceholder.tsx`
-      went in phase 4, once no page used it)
-- [ ] Split the bundle per route (`React.lazy`): it's 513 kB after phase 1, over Vite's
-      500 kB warning, and the chart library will add more
-- [ ] Toasts: the action button ("View order") is ink, make it Ink Blue; on phones the toast
-      covers the sticky Buy/Sell bar for its 4 seconds (sonner's `mobileOffset`)
-- [ ] Phones: the order lists (Your orders, the trade page's tabs), the fills table and the
-      market setup table scroll sideways inside their panels at 375 px. Usable, but a
-      two-line row per order (side, market and amount over price and status) would fit
-- [ ] "Users" sits in the Admin group of the sidebar, but everyone uses "Act as" until there's
-      a login; consider moving it, or a link from the empty states
-- [ ] Screenshot critique; "remove one accessory"
+### Phase 5: polish and critique (done 2026-11-25)
+- [x] Loading, empty and error states everywhere; toasts for every action. Added: an error
+      screen for a page that crashes or fails to download (`components/ErrorBoundary`), a
+      placeholder while a page's code loads, the trade page's price says when it couldn't
+      load (it said "No trades yet"), an empty ledgers list
+- [x] Responsive pass at 375 / 768 / 1280 px; keyboard and screen-reader pass; reduced motion
+      (already global since phase 1). Added: a "Skip to content" link, a navigation landmark
+      for the sidebar, a solid focus ring on links (the theme's half-transparent one was under
+      3:1); every control on every page has a name, one h1 per page
+- [x] Deleted `/dev`, the old components, `src/dev/legacy.css`, the unused template images
+      (`src/assets`) and `pages/PagePlaceholder.tsx` (phase 4). Their explanations for
+      newcomers (`as`, generics, `useState(() => ...)`) moved into the files that use them
+- [x] Split the bundle per page (`React.lazy`): the app's main file is 372 kB (825 kB
+      before), the trade page with the chart library 202 kB, the other pages 3 to 13 kB.
+      Vite's 500 kB warning is gone
+- [x] Toasts: the action button is Ink Blue; on the trade page they rise above the Buy/Sell
+      bar while it shows (it measures itself, see "Toasts" below)
+- [x] Phones: the order lists become two-line rows ("Buy 0.25 BTC at 66,000.00 USD" over the
+      time, status and Cancel on the right) when their box is narrow; the fills, recent
+      trades, transfers, markets and market setup tables drop or move columns by their own
+      width. Nothing scrolls sideways at 375 px any more
+- [x] "Users" stays under Admin; instead, every "choose who you're acting as" message links
+      to creating a user, and the top bar's menu says "Create a user" while there are none
+- [x] Screenshot critique; removed the green "Trading" badge beside the price, the trade
+      page's one bold element: a trading market is the normal case, so only "Halted" or
+      "Cancel only" show there now (the markets list on phones does the same). Also added the
+      favicon `index.html` pointed to but never had (`public/favicon.svg`)
 
 ### Phase 6: Playwright
 - [ ] `@playwright/test` + Chromium (ask before downloading)
@@ -425,10 +437,26 @@ Things decided or learned while building, which the next phases rely on:
   (`stopPropagation`), see "Portals and forms".
 - **Disabled buttons with a reason:** a disabled button gets no hover or focus, so its tooltip
   hangs on a focusable wrapper with `role="button"` and `aria-disabled` (`CancelOrderButton`).
-- **Phones:** wide tables drop secondary columns below `sm`/`md` and move the essentials into
-  the first cell (`AccountsTable`); a footer row uses one cell per column, not `colSpan`.
-- **Bundle:** 825 kB after phase 4 (784 kB after phase 3, 758 kB after phase 2; the chart
-  library is most of the growth); phase 5 splits it.
+- **Phones:** wide tables drop secondary columns and move the essentials into the first cell;
+  a footer row uses one cell per column, not `colSpan`. Since phase 5 they do it by their
+  own width, not the screen's (Tailwind container queries: `@container` on the box, then
+  `@md:`, `@xl:`...), because the same table sits in a narrow column on the trade page and
+  across a whole page elsewhere. `AccountsTable` still uses screen widths (`sm`/`md`); it's
+  only ever page-wide. The order lists switch to two-line rows (`OrdersTable`'s `LAYOUTS`).
+- **Bundle:** each page is its own file (`React.lazy` in `app/App.tsx`; the markets page,
+  where the app opens, and the not-found page load with the app). 372 kB for the app after
+  phase 5, 202 kB for the trade page (the chart library); 825 kB in one file after phase 4.
+- **Errors:** `components/ErrorBoundary` (a class component: React has no hook for it) sits
+  around the page in `AppShell`, keyed by the address so opening another page clears it.
+  Failed requests are still shown by each page; this catches crashes and a page's code
+  failing to download (after a deploy, for example).
+- **Toasts:** the Buy/Sell bar on the trade page writes its height into `--toast-lift` on
+  `<html>` (a ResizeObserver; 0 while it's hidden beside a wide page), and the Toaster's
+  `offset`/`mobileOffset` add it to sonner's own distances.
+- **Keyboard:** the first Tab stop is "Skip to content" (`AppShell`), which focuses the page
+  without changing the address. Links get a solid Ink Blue focus outline (`index.css`).
+- **No user chosen:** `features/user/ChooseUserHint` is the sentence every page uses, with a
+  link to creating a user.
 - **Shared pieces (phase 4):** `components/CopyButton` (copy an ID, with a toast),
   `components/EmptyState` (the dashed "nothing here yet, do this" box),
   `components/DecimalField` (a number input with its unit inside, moved out of the order
@@ -468,6 +496,8 @@ Things decided or learned while building, which the next phases rely on:
   `attributionLogo` chart option (on by default) covers the link; the notice is printed under
   the chart (`features/market/PriceChart.tsx`), with a text link to TradingView too.
 - Archivo: SIL Open Font License 1.1.
+- Lucide icons (ISC). The favicon (`public/favicon.svg`) is Lucide's "notebook-text" icon,
+  with its notice in a comment.
 
 ## Log
 
@@ -523,3 +553,15 @@ Things decided or learned while building, which the next phases rely on:
   was about, and an unknown market in the address briefly asking for its orders. The
   plan's note that `POST /markets` doesn't call `SetMarket` was wrong and is corrected. Next:
   phase 5 (polish), when the user says go.
+- 2026-11-25: phase 5 done. Deleted the old test UI; each page loads lazily (main file 825 kB
+  to 372 kB); an error screen, a loading placeholder, a skip link, a navigation landmark and
+  solid focus rings on links; order lists as two-line rows and every wide table fitting by
+  its own width (container queries); toasts above the Buy/Sell bar with an Ink Blue action;
+  links to creating a user wherever nobody is chosen; the favicon. Tested on a throwaway
+  stack at 375, 768 and 1280 px, light and dark: no page scrolls sideways or has a table
+  wider than its box, the skip link and focus order, no unnamed control on any page, a
+  halted market, a placed order's toast on a phone, and the error screen by stopping the
+  dev server before opening a page. Docker Desktop hung on start again (VM "no route to
+  host") and needed a quit and reopen. Critique: removed the "Trading" badge beside the
+  price. Next: phase 6 (Playwright), when the user says go; it needs their OK to download
+  Chromium.

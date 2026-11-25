@@ -45,32 +45,35 @@ export function AppSidebar() {
                 </SidebarMenu>
             </SidebarHeader>
             <SidebarContent>
-                {NAV_GROUPS.map((group) => (
-                    <SidebarGroup key={group.title}>
-                        <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
-                        <SidebarGroupContent>
-                            <SidebarMenu>
-                                {group.items.map((item) => (
-                                    <SidebarMenuItem key={item.to}>
-                                        <SidebarMenuButton
-                                            asChild
-                                            isActive={isNavItemActive(pathname, item)}
-                                            tooltip={item.title}>
-                                            {/* on mobile the sidebar is a sheet: close it
-                                                after choosing a page */}
-                                            <NavLink
-                                                to={item.to}
-                                                onClick={() => setOpenMobile(false)}>
-                                                <item.icon />
-                                                <span>{item.title}</span>
-                                            </NavLink>
-                                        </SidebarMenuButton>
-                                    </SidebarMenuItem>
-                                ))}
-                            </SidebarMenu>
-                        </SidebarGroupContent>
-                    </SidebarGroup>
-                ))}
+                {/* a navigation landmark, so screen readers can jump to the page list */}
+                <nav aria-label="Pages" className="flex flex-col gap-2">
+                    {NAV_GROUPS.map((group) => (
+                        <SidebarGroup key={group.title}>
+                            <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+                            <SidebarGroupContent>
+                                <SidebarMenu>
+                                    {group.items.map((item) => (
+                                        <SidebarMenuItem key={item.to}>
+                                            <SidebarMenuButton
+                                                asChild
+                                                isActive={isNavItemActive(pathname, item)}
+                                                tooltip={item.title}>
+                                                {/* on mobile the sidebar is a sheet: close
+                                                    it after choosing a page */}
+                                                <NavLink
+                                                    to={item.to}
+                                                    onClick={() => setOpenMobile(false)}>
+                                                    <item.icon />
+                                                    <span>{item.title}</span>
+                                                </NavLink>
+                                            </SidebarMenuButton>
+                                        </SidebarMenuItem>
+                                    ))}
+                                </SidebarMenu>
+                            </SidebarGroupContent>
+                        </SidebarGroup>
+                    ))}
+                </nav>
             </SidebarContent>
             <SidebarRail />
         </Sidebar>

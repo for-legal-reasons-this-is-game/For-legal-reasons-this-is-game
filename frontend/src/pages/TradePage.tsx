@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { errorMessage } from "@/api";
@@ -37,6 +37,25 @@ function TabTitle({ symbol }: { symbol: string }) {
 function MobileTradeBar({ market }: { market: Market }) {
     const [open, setOpen] = useState(false);
     const [side, setSide] = useState<Side>("buy");
+    const bar = useRef<HTMLDivElement>(null);
+
+    // Tells the toasts how tall this bar is, so they show above it instead of covering
+    // Buy and Sell (see components/ui/sonner.tsx); 0 while it's hidden beside a wide page.
+    // New Web API: a ResizeObserver calls back whenever an element's size changes,
+    // including when it's hidden (its height becomes 0) or shown again.
+    useEffect(() => {
+        const element = bar.current;
+        if (!element) return;
+        const root = document.documentElement;
+        const observer = new ResizeObserver(() =>
+            root.style.setProperty("--toast-lift", `${element.offsetHeight}px`),
+        );
+        observer.observe(element);
+        return () => {
+            observer.disconnect();
+            root.style.removeProperty("--toast-lift");
+        };
+    }, []);
 
     function openTicket(next: Side) {
         setSide(next);
@@ -47,7 +66,9 @@ function MobileTradeBar({ market }: { market: Market }) {
         <>
             {/* sticky inside the page: it stays at the bottom of the screen while the
                 page scrolls. The negative margins reach the page's padding edges. */}
-            <div className="sticky bottom-0 z-10 -mx-4 -mb-4 mt-4 grid grid-cols-2 gap-3 border-t bg-background p-3 md:-mx-6 md:-mb-6 @4xl:hidden">
+            <div
+                ref={bar}
+                className="sticky bottom-0 z-10 -mx-4 -mb-4 mt-4 grid grid-cols-2 gap-3 border-t bg-background p-3 md:-mx-6 md:-mb-6 @4xl:hidden">
                 <Button
                     size="lg"
                     className="bg-gain text-gain-foreground hover:bg-gain/85"

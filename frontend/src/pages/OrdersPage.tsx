@@ -13,6 +13,7 @@ import { STATUS_FILTER_LABELS } from "@/features/order/labels";
 import { MarketFilterSelect } from "@/features/order/MarketFilterSelect";
 import { OrdersTable } from "@/features/order/OrdersTable";
 import { StatusFilterSelect } from "@/features/order/StatusFilterSelect";
+import { ChooseUserHint } from "@/features/user/ChooseUserHint";
 import type { OrderStatusFilter } from "@/types/OrderStatusFilter";
 
 const APP_NAME = "For legal reasons this is game";
@@ -150,7 +151,7 @@ export function OrdersPage() {
             />
             {!userID ? (
                 <EmptyState>
-                    Choose who you're acting as in the top bar to see their orders.
+                    <ChooseUserHint goal="to see their orders" />
                 </EmptyState>
             ) : (
                 <>

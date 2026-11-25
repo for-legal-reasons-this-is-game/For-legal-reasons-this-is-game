@@ -11,21 +11,36 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { formatDecimal, formatWhen } from "@/lib/format";
+import { formatDecimal, formatTrimmed, formatWhen } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Market } from "@/types/Market";
 import type { Order } from "@/types/Order";
 import { CancelOrderButton } from "./CancelOrderButton";
+import { describe } from "./describe";
 import { ORDER_TYPE_LABELS, SIDE_LABELS } from "./labels";
 import { isOpen } from "./order-state";
 import { OrderStateBadge } from "./OrderStateBadge";
 
 const NUMBER = "text-right";
-// Columns phones leave out: the market moves under the time, the order type and the
-// filled amount are on the order's page
-const MARKET_COLUMN = "hidden sm:table-cell";
-const TYPE_COLUMN = "hidden md:table-cell";
-const FILLED_COLUMN = "hidden sm:table-cell";
+
+// How the list fits its space. It follows the width of the box it sits in, not the
+// screen's: Tailwind's container queries (`@container` on the box, then `@xl:...` applies
+// from 36rem = 576 px of that box; @2xl = 672 px, @4xl = 896 px). Narrower than `table`,
+// each order is a two-line row; from `table` on, a table, which adds the order type and the
+// filled amount from `extra` on. Orders from every market need more room, because each
+// number names its asset and there's a Market column.
+const LAYOUTS = {
+    oneMarket: {
+        rows: "@xl:hidden",
+        table: "hidden @xl:block",
+        extra: "hidden @2xl:table-cell",
+    },
+    anyMarket: {
+        rows: "@2xl:hidden",
+        table: "hidden @2xl:block",
+        extra: "hidden @4xl:table-cell",
+    },
+};
 
 // What a list query gives this table (a useQuery result fits)
 type OrdersResult = {
@@ -45,17 +60,91 @@ function Amount({ value, asset }: { value: string; asset: string | undefined }) 
     );
 }
 
-function OrderRow({
+function SideText({ order }: { order: Order }) {
+    return (
+        <span className={order.side === "buy" ? "text-gain" : "text-loss"}>
+            {SIDE_LABELS[order.side]}
+        </span>
+    );
+}
+
+// The order in words, like the toast after placing it: "Buy 0.25 BTC at 66,000.00 USD".
+// Without the assets while the markets load.
+function Summary({ order, market }: { order: Order; market: Market | undefined }) {
+    if (market)
+        return (
+            <>
+                <SideText order={order} /> {describe(order, market)}
+            </>
+        );
+    const amount = formatTrimmed(order.base_quantity ?? order.quote_quantity ?? "0");
+    return (
+        <>
+            <SideText order={order} /> {amount}
+            {order.limit_price && ` at ${formatDecimal(order.limit_price)}`}
+        </>
+    );
+}
+
+// One order as two lines, for narrow boxes: what it is, then when, and how much of it
+// has filled while it can still trade (a finished order's status says the rest).
+function OrderListRow({
+    order,
+    market,
+    cancellable,
+}: {
+    order: Order;
+    market: Market | undefined;
+    cancellable: boolean;
+}) {
+    const navigate = useNavigate();
+    const to = `/orders/${order.order_id}`;
+    const filling = isOpen(order) && /[1-9]/.test(order.filled_base_quantity);
+
+    return (
+        // the whole row opens the order; its summary is the link for keyboard users
+        <li
+            className="flex cursor-pointer items-start gap-3 py-3"
+            onClick={() => navigate(to)}>
+            <div className="min-w-0 flex-1">
+                <Link
+                    to={to}
+                    className="font-medium hover:underline"
+                    onClick={(event) => event.stopPropagation()}>
+                    <Summary order={order} market={market} />
+                </Link>
+                <div className="mt-0.5 flex flex-wrap gap-x-3 text-sm text-muted-foreground">
+                    <span>{formatWhen(order.created_at)}</span>
+                    {filling && (
+                        <span>
+                            {formatTrimmed(order.filled_base_quantity)}{" "}
+                            {market?.base_asset.symbol} filled
+                        </span>
+                    )}
+                </div>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+                <OrderStateBadge order={order} />
+                {cancellable && isOpen(order) && <CancelOrderButton />}
+            </div>
+        </li>
+    );
+}
+
+function OrderTableRow({
     order,
     market,
     showMarket,
     cancellable,
+    extra,
 }: {
     order: Order;
     // undefined while the markets are loading
     market: Market | undefined;
     showMarket: boolean;
     cancellable: boolean;
+    // the classes of the columns that need more room (see LAYOUTS)
+    extra: string;
 }) {
     const navigate = useNavigate();
     // in a one-market table the assets are in the headings instead
@@ -74,23 +163,14 @@ function OrderRow({
                     onClick={(event) => event.stopPropagation()}>
                     {formatWhen(order.created_at)}
                 </Link>
-                {showMarket && (
-                    <div className="text-xs text-muted-foreground sm:hidden">
-                        {order.market}
-                    </div>
-                )}
             </TableCell>
             {showMarket && (
-                <TableCell className={cn(MARKET_COLUMN, "font-semibold")}>
-                    {order.market}
-                </TableCell>
+                <TableCell className="font-semibold">{order.market}</TableCell>
             )}
-            <TableCell className={order.side === "buy" ? "text-gain" : "text-loss"}>
-                {SIDE_LABELS[order.side]}
+            <TableCell>
+                <SideText order={order} />
             </TableCell>
-            <TableCell className={TYPE_COLUMN}>
-                {ORDER_TYPE_LABELS[order.order_type]}
-            </TableCell>
+            <TableCell className={extra}>{ORDER_TYPE_LABELS[order.order_type]}</TableCell>
             <TableCell className={NUMBER}>
                 {order.limit_price ? (
                     <Amount value={order.limit_price} asset={quote} />
@@ -110,7 +190,7 @@ function OrderRow({
                     />
                 ) : null}
             </TableCell>
-            <TableCell className={cn(NUMBER, FILLED_COLUMN)}>
+            <TableCell className={cn(NUMBER, extra)}>
                 <Amount value={order.filled_base_quantity} asset={base} />
             </TableCell>
             <TableCell>
@@ -148,17 +228,19 @@ export function OrdersTable({
     errorOverrides?: ErrorOverrides;
 }) {
     const showMarket = !market;
+    const layout = showMarket ? LAYOUTS.anyMarket : LAYOUTS.oneMarket;
     const marketBySymbol = new Map(markets?.map((m) => [m.symbol, m]));
+    const marketOf = (order: Order) => market ?? marketBySymbol.get(order.market);
 
     // each column's classes, shared by the headings and the loading rows
     const columns = [
         "",
-        ...(showMarket ? [MARKET_COLUMN] : []),
+        ...(showMarket ? [""] : []),
         "",
-        TYPE_COLUMN,
+        layout.extra,
         NUMBER,
         NUMBER,
-        cn(NUMBER, FILLED_COLUMN),
+        cn(NUMBER, layout.extra),
         "",
         ...(cancellable ? [""] : []),
     ];
@@ -175,51 +257,76 @@ export function OrdersTable({
     }
 
     return (
-        <Table className="font-stretch-semi-condensed">
-            <TableHeader>
-                <TableRow>
-                    <TableHead>Time</TableHead>
-                    {showMarket && (
-                        <TableHead className={MARKET_COLUMN}>Market</TableHead>
-                    )}
-                    <TableHead>Side</TableHead>
-                    <TableHead className={TYPE_COLUMN}>Type</TableHead>
-                    <TableHead className={NUMBER}>
-                        Price{market && ` (${market.quote_asset.symbol})`}
-                    </TableHead>
-                    <TableHead className={NUMBER}>
-                        Amount{market && ` (${market.base_asset.symbol})`}
-                    </TableHead>
-                    <TableHead className={cn(NUMBER, FILLED_COLUMN)}>Filled</TableHead>
-                    <TableHead>Status</TableHead>
-                    {cancellable && (
-                        <TableHead>
-                            <span className="sr-only">Actions</span>
-                        </TableHead>
-                    )}
-                </TableRow>
-            </TableHeader>
-            <TableBody>
+        <div className="@container">
+            <ul className={cn("divide-y", layout.rows)}>
                 {result.data
                     ? result.data.items.map((order) => (
-                          <OrderRow
+                          <OrderListRow
                               key={order.order_id}
                               order={order}
-                              market={market ?? marketBySymbol.get(order.market)}
-                              showMarket={showMarket}
+                              market={marketOf(order)}
                               cancellable={cancellable}
                           />
                       ))
                     : [0, 1, 2].map((row) => (
-                          <TableRow key={row}>
-                              {columns.map((className, cell) => (
-                                  <TableCell key={cell} className={className}>
-                                      <Skeleton className="h-4 w-full" />
-                                  </TableCell>
-                              ))}
-                          </TableRow>
+                          <li key={row} className="flex items-start gap-3 py-3">
+                              <div className="grid flex-1 gap-1.5">
+                                  <Skeleton className="h-4 w-48" />
+                                  <Skeleton className="h-3.5 w-20" />
+                              </div>
+                              <Skeleton className="h-5 w-16" />
+                          </li>
                       ))}
-            </TableBody>
-        </Table>
+            </ul>
+            <div className={layout.table}>
+                <Table className="font-stretch-semi-condensed">
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Time</TableHead>
+                            {showMarket && <TableHead>Market</TableHead>}
+                            <TableHead>Side</TableHead>
+                            <TableHead className={layout.extra}>Type</TableHead>
+                            <TableHead className={NUMBER}>
+                                Price{market && ` (${market.quote_asset.symbol})`}
+                            </TableHead>
+                            <TableHead className={NUMBER}>
+                                Amount{market && ` (${market.base_asset.symbol})`}
+                            </TableHead>
+                            <TableHead className={cn(NUMBER, layout.extra)}>
+                                Filled
+                            </TableHead>
+                            <TableHead>Status</TableHead>
+                            {cancellable && (
+                                <TableHead>
+                                    <span className="sr-only">Actions</span>
+                                </TableHead>
+                            )}
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {result.data
+                            ? result.data.items.map((order) => (
+                                  <OrderTableRow
+                                      key={order.order_id}
+                                      order={order}
+                                      market={marketOf(order)}
+                                      showMarket={showMarket}
+                                      cancellable={cancellable}
+                                      extra={layout.extra}
+                                  />
+                              ))
+                            : [0, 1, 2].map((row) => (
+                                  <TableRow key={row}>
+                                      {columns.map((className, cell) => (
+                                          <TableCell key={cell} className={className}>
+                                              <Skeleton className="h-4 w-full" />
+                                          </TableCell>
+                                      ))}
+                                  </TableRow>
+                              ))}
+                    </TableBody>
+                </Table>
+            </div>
+        </div>
     );
 }

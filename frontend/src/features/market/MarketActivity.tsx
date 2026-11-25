@@ -16,6 +16,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OrdersTable } from "@/features/order/OrdersTable";
 import { StatusFilterSelect } from "@/features/order/StatusFilterSelect";
+import { ChooseUserHint } from "@/features/user/ChooseUserHint";
 import { formatDecimal, formatWhen } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Market } from "@/types/Market";
@@ -24,6 +25,9 @@ import type { MarketTradeQuery } from "@/types/MarketTradeQuery";
 import type { OrderQuery } from "@/types/OrderQuery";
 
 const NUMBER = "text-right";
+// a narrow panel (under 24rem = 384 px, see the container queries in OrdersTable) leaves
+// out a trade's value: price times amount
+const VALUE_COLUMN = "hidden @sm:table-cell";
 
 function RecentTrades({ market }: { market: Market }) {
     const [query, setQuery] = useState<MarketTradeQuery>({ limit: 20, cursor: null });
@@ -47,14 +51,16 @@ function RecentTrades({ market }: { market: Market }) {
     }
 
     return (
-        <div className="flex flex-col gap-3">
+        <div className="@container flex flex-col gap-3">
             <Table className="font-stretch-semi-condensed">
                 <TableHeader>
                     <TableRow>
                         <TableHead>Time</TableHead>
                         <TableHead className={NUMBER}>Price ({quote})</TableHead>
                         <TableHead className={NUMBER}>Amount ({base})</TableHead>
-                        <TableHead className={NUMBER}>Value ({quote})</TableHead>
+                        <TableHead className={cn(NUMBER, VALUE_COLUMN)}>
+                            Value ({quote})
+                        </TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -76,15 +82,15 @@ function RecentTrades({ market }: { market: Market }) {
                                   <TableCell className={NUMBER}>
                                       {formatDecimal(trade.base_quantity)}
                                   </TableCell>
-                                  <TableCell className={NUMBER}>
+                                  <TableCell className={cn(NUMBER, VALUE_COLUMN)}>
                                       {formatDecimal(trade.quote_quantity)}
                                   </TableCell>
                               </TableRow>
                           ))
                         : [0, 1, 2].map((row) => (
                               <TableRow key={row}>
-                                  {[0, 1, 2, 3].map((cell) => (
-                                      <TableCell key={cell}>
+                                  {["", "", "", VALUE_COLUMN].map((className, cell) => (
+                                      <TableCell key={cell} className={className}>
                                           <Skeleton className="h-4 w-full" />
                                       </TableCell>
                                   ))}
@@ -151,7 +157,7 @@ function MyOrders({ market }: { market: Market }) {
     if (!userID) {
         return (
             <p className="py-4 text-muted-foreground">
-                Choose who you're trading as in the top bar to see your orders.
+                <ChooseUserHint goal="to see their orders here" />
             </p>
         );
     }

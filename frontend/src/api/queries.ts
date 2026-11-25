@@ -11,7 +11,7 @@
 //   ["markets", symbol]                      one market, and below it:
 //   ["markets", symbol, "ticker" | "trades" | "orders", ...]
 //   ["users"], ["users", id, "orders", query]
-//   ["account", id], ["position", id]        (the old components use these keys too)
+//   ["account", id], ["position", id]
 //   ["transfers", "account", id, query], ["ledgers"]
 //   ["orders", id], ["orders", id, "trades"]
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
@@ -119,7 +119,7 @@ export const accountQueries = {
             enabled: !!accountID,
             refetchInterval: LIVE_MS,
         }),
-    // one page of transfers (the old ListAccountTransfers uses the same key)
+    // one page of transfers
     transfers: (accountID: string, query: TransferQuery) =>
         queryOptions({
             queryKey: ["transfers", "account", accountID, query],
@@ -131,7 +131,7 @@ export const accountQueries = {
 };
 
 export const orderQueries = {
-    // One order (the old OrderLookup uses the same key). While it can still trade it's
+    // One order. While it can still trade it's
     // polled, so its status and filled amounts follow the engine; a finished order doesn't
     // change any more, so polling stops (see accountQueries.detail for the function form).
     detail: (orderID: string) =>
@@ -154,7 +154,6 @@ export const orderQueries = {
 };
 
 export const ledgerQueries = {
-    // the old CreateMarket uses the same key
     list: () =>
         queryOptions({
             queryKey: ["ledgers"],

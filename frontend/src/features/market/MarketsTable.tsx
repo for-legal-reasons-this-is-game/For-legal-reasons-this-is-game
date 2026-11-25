@@ -14,12 +14,20 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { formatDecimal } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { Market } from "@/types/Market";
 import { ChangeText } from "./ChangeText";
 import { MarketStatusBadge } from "./MarketStatusBadge";
 
 // Numbers are right-aligned so their digits line up (tabular figures are on everywhere)
 const NUMBER = "text-right";
+// The columns a narrow table leaves out, by its own width (container queries, see
+// OrdersTable): below 32rem (512 px) the status moves under the market's name (only when
+// it isn't trading) and the change shows as a percentage; the volume goes below 36rem, the
+// day's high and low below 42rem.
+const STATUS_COLUMN = "hidden @lg:table-cell";
+const VOLUME_COLUMN = "hidden @xl:table-cell";
+const RANGE_COLUMN = "hidden @2xl:table-cell";
 
 function MarketRow({ market }: { market: Market }) {
     const navigate = useNavigate();
@@ -41,9 +49,14 @@ function MarketRow({ market }: { market: Market }) {
                     onClick={(event) => event.stopPropagation()}>
                     {market.symbol}
                 </Link>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs whitespace-normal text-muted-foreground">
                     {market.base_asset.name} in {market.quote_asset.name}
                 </div>
+                {market.status !== "trading" && (
+                    <div className="mt-1 @lg:hidden">
+                        <MarketStatusBadge status={market.status} />
+                    </div>
+                )}
             </TableCell>
             <TableCell className={NUMBER}>
                 {ticker.isPending ? (
@@ -55,15 +68,31 @@ function MarketRow({ market }: { market: Market }) {
                 )}
             </TableCell>
             <TableCell className={NUMBER}>
-                {t ? <ChangeText change={t.change} percent={t.change_percent} /> : dash}
+                {t ? (
+                    <>
+                        <ChangeText
+                            change={t.change}
+                            percent={t.change_percent}
+                            className="hidden @lg:inline"
+                        />
+                        <ChangeText
+                            change={t.change}
+                            percent={t.change_percent}
+                            short
+                            className="@lg:hidden"
+                        />
+                    </>
+                ) : (
+                    dash
+                )}
             </TableCell>
-            <TableCell className={NUMBER}>
+            <TableCell className={cn(NUMBER, RANGE_COLUMN)}>
                 {t?.high ? formatDecimal(t.high) : dash}
             </TableCell>
-            <TableCell className={NUMBER}>
+            <TableCell className={cn(NUMBER, RANGE_COLUMN)}>
                 {t?.low ? formatDecimal(t.low) : dash}
             </TableCell>
-            <TableCell className={NUMBER}>
+            <TableCell className={cn(NUMBER, VOLUME_COLUMN)}>
                 {t ? (
                     <>
                         {formatDecimal(t.base_volume)}{" "}
@@ -75,7 +104,7 @@ function MarketRow({ market }: { market: Market }) {
                     dash
                 )}
             </TableCell>
-            <TableCell>
+            <TableCell className={STATUS_COLUMN}>
                 <MarketStatusBadge status={market.status} />
             </TableCell>
         </TableRow>
@@ -105,17 +134,23 @@ export function MarketsTable() {
     }
 
     return (
-        <div className="rounded-2xl border bg-card">
+        <div className="@container rounded-2xl border bg-card">
             <Table className="font-stretch-semi-condensed">
                 <TableHeader>
                     <TableRow>
                         <TableHead>Market</TableHead>
                         <TableHead className={NUMBER}>Last price</TableHead>
                         <TableHead className={NUMBER}>24h change</TableHead>
-                        <TableHead className={NUMBER}>24h high</TableHead>
-                        <TableHead className={NUMBER}>24h low</TableHead>
-                        <TableHead className={NUMBER}>24h volume</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead className={cn(NUMBER, RANGE_COLUMN)}>
+                            24h high
+                        </TableHead>
+                        <TableHead className={cn(NUMBER, RANGE_COLUMN)}>
+                            24h low
+                        </TableHead>
+                        <TableHead className={cn(NUMBER, VOLUME_COLUMN)}>
+                            24h volume
+                        </TableHead>
+                        <TableHead className={STATUS_COLUMN}>Status</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -123,8 +158,16 @@ export function MarketsTable() {
                         ? // skeleton rows while the list loads
                           [0, 1, 2].map((row) => (
                               <TableRow key={row}>
-                                  {[0, 1, 2, 3, 4, 5, 6].map((cell) => (
-                                      <TableCell key={cell}>
+                                  {[
+                                      "",
+                                      "",
+                                      "",
+                                      RANGE_COLUMN,
+                                      RANGE_COLUMN,
+                                      VOLUME_COLUMN,
+                                      STATUS_COLUMN,
+                                  ].map((className, cell) => (
+                                      <TableCell key={cell} className={className}>
                                           <Skeleton className="h-4 w-full" />
                                       </TableCell>
                                   ))}

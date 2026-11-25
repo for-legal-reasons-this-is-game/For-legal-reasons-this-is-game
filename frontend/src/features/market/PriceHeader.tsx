@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { ChevronDownIcon } from "lucide-react";
+import { errorMessage } from "@/api";
 import { marketQueries } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,6 +82,11 @@ export function PriceHeader({ market }: { market: Market }) {
                         text={formatDecimal(t.last_price)}
                         className="text-5xl leading-none font-extrabold font-stretch-expanded"
                     />
+                ) : ticker.isError ? (
+                    // no price at all (a failed refresh keeps showing the last one)
+                    <span role="alert" className="text-destructive">
+                        Couldn't load the price: {errorMessage(ticker.error)}
+                    </span>
                 ) : (
                     <span className="text-muted-foreground">No trades yet</span>
                 )}
@@ -92,7 +98,11 @@ export function PriceHeader({ market }: { market: Market }) {
                         className="text-lg"
                     />
                 )}
-                <MarketStatusBadge status={market.status} />
+                {/* only an unusual state is worth a badge next to the price: a trading
+                    market is the normal case (the markets list does the same) */}
+                {market.status !== "trading" && (
+                    <MarketStatusBadge status={market.status} />
+                )}
             </div>
             {t && (
                 <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">

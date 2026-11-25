@@ -1,7 +1,6 @@
 import {
     BookOpenIcon,
     ChartCandlestickIcon,
-    FlaskConicalIcon,
     ListOrderedIcon,
     StoreIcon,
     UsersIcon,
@@ -41,11 +40,6 @@ export const NAV_GROUPS: NavGroup[] = [
             { title: "Ledgers", to: "/admin/ledgers", icon: BookOpenIcon },
             { title: "Market setup", to: "/admin/markets", icon: StoreIcon },
         ],
-    },
-    {
-        // the old test UI, until every part of it has a replacement (phase 5)
-        title: "Developer",
-        items: [{ title: "Old test UI", to: "/dev", icon: FlaskConicalIcon }],
     },
 ];
 
