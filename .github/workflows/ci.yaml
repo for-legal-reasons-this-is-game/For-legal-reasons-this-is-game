@@ -120,7 +120,7 @@ jobs:
       - name: cargo test
         working-directory: tradingengine
         run: nix develop --command cargo test --locked
-      # tests/redis_store.rs is #[ignore]d because it needs a real Redis
+      # tests/redis_store.rs and tests/router_consumer.rs are #[ignore]d because they need a real Redis
       - name: start redis
         run: |
           set -euo pipefail
@@ -135,7 +135,7 @@ jobs:
         working-directory: tradingengine
         env:
           REDIS_URL: redis://127.0.0.1:6380
-        run: nix develop --command cargo test --locked --test redis_store -- --ignored
+        run: nix develop --command cargo test --locked --test redis_store --test router_consumer -- --ignored
 
   # proto is a library with no flake of its own, so it borrows the engine's
   # devShell (which has protoc). Its tests never run from the backend/engine

@@ -40,10 +40,10 @@ impl MarketInfo {
         })
     }
 
-    pub fn load(market: Market, orders: Vec<RestingOrder>) -> Result<MarketInfo> {
+    pub fn load_orders(market: Market, orders: Vec<RestingOrder>) -> Result<MarketInfo> {
         let mut info = MarketInfo::new(market)?;
         for order in orders {
-            info.book.load(order)?;
+            info.book.load_order(order)?;
         }
         Ok(info)
     }

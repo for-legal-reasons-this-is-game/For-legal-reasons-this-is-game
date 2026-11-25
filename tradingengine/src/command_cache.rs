@@ -58,7 +58,7 @@ impl CommandCache {
         }
     }
 
-    pub fn load(n: usize, oldest_first: Vec<(CommandId, Command, Answer)>) -> Self {
+    pub fn load_cache(n: usize, oldest_first: Vec<(CommandId, Command, Answer)>) -> Self {
         let mut command_cache = CommandCache::with_capacity(n);
         for (command_id, command, answer) in oldest_first {
             command_cache.add_entry(command_id, command, answer);
@@ -66,7 +66,7 @@ impl CommandCache {
         command_cache
     }
 
-    pub fn save(&self) -> Vec<(CommandId, Command, Answer)> {
+    pub fn get_cache(&self) -> Vec<(CommandId, Command, Answer)> {
         let mut res = Vec::new();
         for id in &self.oldest_first {
             let (command, answer) = self

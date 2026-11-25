@@ -154,3 +154,11 @@ message ModifyOrderResponse {
   Uint128 filled_quote_quantity = 7;
 }
 
+message EngineCommand {
+   oneof body {
+    SetMarketRequest set_market = 1;
+    PlaceOrderRequest place_order = 2;
+    CancelOrderRequest cancel_order = 3;
+   }
+   string reply_to = 4;
+}

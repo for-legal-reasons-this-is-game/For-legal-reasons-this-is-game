@@ -14,8 +14,33 @@ use crate::market::{MarketInfo, Placed};
 use crate::order::OrderStatus;
 use crate::place::parse_place_order;
 use crate::quantity::BaseQuantity;
+use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
 use crate::wire::required;
+
+#[derive(Default)]
+pub struct State {
+    pub engine: Engine,
+    pub store: Option<RedisStore>,
+}
+
+impl State {
+    /// Saves `engine`'s state to redis' `store`
+    pub async fn save(&mut self) {
+        let Some(store) = &mut self.store else {
+            return;
+        };
+        let state_bytes = self
+            .engine
+            .get_engine_state()
+            .to_bytes()
+            .expect("error converting `EngineState` to bytes");
+        match store.save_state(&state_bytes).await {
+            Ok(_) => {}
+            Err(error) => panic!("error saving in `RedisStore`: {error}"),
+        };
+    }
+}
 
 /// Holds every market, keyed by the market's name (for example `btc-usd`).
 ///
@@ -34,36 +59,36 @@ impl Engine {
         Self::default()
     }
 
-    pub fn load(engine_state: EngineState, cache_capacity: usize) -> Result<Engine> {
+    pub fn new_from_state(engine_state: EngineState, cache_capacity: usize) -> Result<Engine> {
         let markets = engine_state
             .markets
             .into_iter()
             .map(|m| {
                 Ok((
                     m.market.symbol.clone(),
-                    MarketInfo::load(m.market, m.orders)?,
+                    MarketInfo::load_orders(m.market, m.orders)?,
                 ))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        let command_cache = CommandCache::load(cache_capacity, engine_state.command_cache);
+        let command_cache = CommandCache::load_cache(cache_capacity, engine_state.command_cache);
         Ok(Engine {
             markets,
             command_cache,
         })
     }
 
-    pub fn save(&self) -> EngineState {
+    pub fn get_engine_state(&self) -> EngineState {
         EngineState {
             markets: self
                 .markets
                 .values()
                 .map(|info| MarketState {
                     market: info.market().clone(),
-                    orders: info.book().save(),
+                    orders: info.book().get_orders(),
                 })
                 .collect(),
-            command_cache: self.command_cache.save(),
+            command_cache: self.command_cache.get_cache(),
         }
     }
 

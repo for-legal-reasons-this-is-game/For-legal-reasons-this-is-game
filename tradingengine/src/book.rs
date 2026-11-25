@@ -84,7 +84,7 @@ impl Book {
     }
 
     /// Orders must come in their queue order within each price level, front first. [Book::save] returns them that way.
-    pub fn load(&mut self, order: RestingOrder) -> Result<()> {
+    pub fn load_order(&mut self, order: RestingOrder) -> Result<()> {
         let id = order.id();
         if self.all_orders.contains_key(&id) {
             return Err(EngineError::DuplicateOrderId);
@@ -101,7 +101,7 @@ impl Book {
         Ok(())
     }
 
-    pub fn save(&self) -> Vec<RestingOrder> {
+    pub fn get_orders(&self) -> Vec<RestingOrder> {
         self.bids().chain(self.asks()).cloned().collect()
     }
 
