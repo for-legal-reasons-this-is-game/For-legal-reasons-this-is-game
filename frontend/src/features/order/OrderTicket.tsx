@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { uuidv7 } from "uuidv7";
 import { api, errorMessage } from "@/api";
@@ -19,6 +19,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AddAccountDialog } from "@/features/account/AddAccountDialog";
+import { availableUnits } from "@/features/account/balance";
+import { DepositDialog } from "@/features/account/DepositDialog";
+import { OpenAccountDialog } from "@/features/account/OpenAccountDialog";
 import { useUserAccounts } from "@/features/account/use-user-accounts";
 import { feeCap, fromUnits, quoteFor, toUnits } from "@/lib/decimal";
 import { ENGINE_SUPPORTS } from "@/lib/engine-support";
@@ -33,6 +36,7 @@ import type { Side } from "@/types/Side";
 import type { TimeInForce } from "@/types/TimeInForce";
 import type { TriggerDirection } from "@/types/TriggerDirection";
 import {
+    CANCEL_REASON_LABELS,
     ORDER_TYPE_LABELS,
     SIDE_LABELS,
     TIME_IN_FORCE_LABELS,
@@ -92,6 +96,46 @@ function describe(order: Order, market: Market): string {
     return order.limit_price
         ? `${amount} at ${formatDecimal(order.limit_price)} ${quote}`
         : `${amount} at the market price`;
+}
+
+// The toast after placing an order. The reply carries the engine's immediate answer
+// (status and fills after its first matching attempt), so the toast can say right away
+// whether the order traded. Later changes arrive through the engine's events.
+function placedToast(
+    order: Order,
+    market: Market,
+): { title: string; description: string } {
+    const what = `${SIDE_LABELS[order.side]} order`;
+    const base = market.base_asset.symbol;
+    const quote = market.quote_asset.symbol;
+    // "0.05 BTC for 3,200.00 USD"
+    const filled = `${formatTrimmed(order.filled_base_quantity)} ${base} for ${formatDecimal(order.filled_quote_quantity)} ${quote}`;
+    switch (order.status) {
+        case "filled":
+            return { title: `${what} filled`, description: filled };
+        case "partially_filled":
+            return {
+                title: `${what} partly filled`,
+                description: `${filled} so far. The rest stays open.`,
+            };
+        case "cancelled":
+            return {
+                title: `${what} cancelled`,
+                description: order.cancel_reason
+                    ? CANCEL_REASON_LABELS[order.cancel_reason]
+                    : describe(order, market),
+            };
+        default:
+            // 201/200 with status "new": resting in the book. 202 (not accepted yet): the
+            // backend saved it and keeps sending it to the engine.
+            return {
+                title: `${what} placed`,
+                description:
+                    order.submission === "accepted"
+                        ? describe(order, market)
+                        : `${describe(order, market)}. Waiting for the trading engine to confirm it.`,
+            };
+    }
 }
 
 // A text input for an amount or a price, with its unit inside the box on the right, a
@@ -161,6 +205,7 @@ function DecimalField({
 // The accounts of one asset to trade with, or a way to get one when there's none.
 function AccountField({
     id,
+    userID,
     asset,
     accounts,
     isPending,
@@ -170,6 +215,7 @@ function AccountField({
     error,
 }: {
     id: string;
+    userID: string;
     asset: string;
     accounts: Account[];
     isPending: boolean;
@@ -187,12 +233,17 @@ function AccountField({
             ) : accounts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                     No {asset} account yet.{" "}
-                    <Link
-                        to="/portfolio"
-                        className="text-primary underline underline-offset-2">
-                        Open one in your portfolio
-                    </Link>
-                    .
+                    <OpenAccountDialog
+                        userID={userID}
+                        asset={asset}
+                        trigger={
+                            <button
+                                type="button"
+                                className="text-primary underline underline-offset-2">
+                                Open one
+                            </button>
+                        }
+                    />
                 </p>
             ) : (
                 <Select value={value} onValueChange={onChange}>
@@ -335,16 +386,12 @@ export function OrderTicket({
     // right away (a posted transfer), so the posted balance is what's free to use;
     // pending debits only appear while an account is being closed.
     const payingAccountID = form.side === "sell" ? baseAccounts.id : quoteAccounts.id;
+    const payingAccount = (
+        form.side === "sell" ? baseAccounts : quoteAccounts
+    ).options.find((account) => account.account_id === payingAccountID);
     const position = useQuery(accountQueries.position(payingAccountID));
-    const posted = position.data
-        ? toUnits(position.data.net_posted, position.data.decimals)
-        : null;
-    const pending = position.data
-        ? toUnits(position.data.debits_pending, position.data.decimals)
-        : null;
-    const availableUnits = posted !== null && pending !== null ? posted - pending : null;
-    const tooMuch =
-        heldUnits !== null && availableUnits !== null && heldUnits > availableUnits;
+    const available = position.data ? availableUnits(position.data) : null;
+    const tooMuch = heldUnits !== null && available !== null && heldUnits > available;
 
     // Checks the backend would fail with a 400, worded for the person typing. `now` is
     // the time of the click: the clock can't be read while rendering, because a render
@@ -409,13 +456,9 @@ export function OrderTicket({
             setSubmittedAt(null);
             // a fresh amount for the next order, so a second click can't repeat this one
             setForm((prev) => ({ ...prev, quantity: "" }));
-            // 201/200: the engine has the order; 202: saved, and the backend keeps
-            // sending it to the engine
-            const confirmed = order.submission === "accepted";
-            toast.success(`${SIDE_LABELS[order.side]} order placed`, {
-                description: confirmed
-                    ? describe(order, market)
-                    : `${describe(order, market)}. Waiting for the trading engine to confirm it.`,
+            const { title, description } = placedToast(order, market);
+            toast.success(title, {
+                description,
                 action: {
                     label: "View order",
                     onClick: () => navigate(`/orders/${order.order_id}`),
@@ -504,11 +547,27 @@ export function OrderTicket({
             `${formatDecimal(fromUnits(units, asset.decimals))} ${asset.symbol}`
         );
     // "1,000.00 USD", shown under the paying account
-    const available =
-        availableUnits !== null
-            ? `${formatDecimal(fromUnits(availableUnits, heldAsset.decimals))} ${heldAsset.symbol}`
+    // "1,000.00 USD", shown under the paying account, with a way to add more
+    const availableText =
+        available !== null
+            ? `${formatDecimal(fromUnits(available, heldAsset.decimals))} ${heldAsset.symbol}`
             : undefined;
-    const availableNote = available && `${available} available`;
+    const availableNote = availableText && payingAccount && (
+        <>
+            {availableText} available.{" "}
+            <DepositDialog
+                account={payingAccount}
+                asset={heldAsset}
+                trigger={
+                    <button
+                        type="button"
+                        className="text-primary underline-offset-2 hover:underline">
+                        Deposit
+                    </button>
+                }
+            />
+        </>
+    );
 
     return (
         <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
@@ -726,6 +785,7 @@ export function OrderTicket({
                     <div className="grid gap-3">
                         <AccountField
                             id={`${id}-base-account`}
+                            userID={userID}
                             asset={base.symbol}
                             accounts={baseAccounts.options}
                             isPending={accountsPending}
@@ -736,6 +796,7 @@ export function OrderTicket({
                         />
                         <AccountField
                             id={`${id}-quote-account`}
+                            userID={userID}
                             asset={quote.symbol}
                             accounts={quoteAccounts.options}
                             isPending={accountsPending}
@@ -788,7 +849,7 @@ export function OrderTicket({
                 )}
                 {tooMuch && !errors.value && (
                     <p className="text-xs text-destructive">
-                        That's more than the {available} available.
+                        That's more than the {availableText} available.
                     </p>
                 )}
 

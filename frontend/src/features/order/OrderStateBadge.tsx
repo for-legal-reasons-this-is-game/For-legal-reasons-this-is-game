@@ -1,15 +1,45 @@
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Order } from "@/types/Order";
+import type { RejectReason } from "@/types/RejectReason";
 
-type State = { label: string; dot: "live" | "done" | "failed" | "waiting" };
+// `hint`: shown in a tooltip, for the states that need a word of explanation
+type State = {
+    label: string;
+    dot: "live" | "done" | "failed" | "waiting";
+    hint?: string;
+};
+
+// Why the engine or the backend rejected an order. null: the backend refused it itself
+// (not enough funds, or an account that isn't active).
+const REJECT_HINTS: Record<RejectReason, string> = {
+    unknown_market: "The trading engine doesn't know this market.",
+    bad_quantity: "The amount isn't valid for this market.",
+    bad_price: "The price isn't valid for this market.",
+    bad_order_params: "The order's fields don't fit its type.",
+    unknown_order: "The trading engine doesn't know this order.",
+    order_not_working: "The order wasn't open any more.",
+    not_order_owner: "The order belongs to someone else.",
+    duplicate_command: "The trading engine had already received this order.",
+    unsupported: "The trading engine doesn't support this order type yet.",
+    internal_error:
+        "The trading engine failed while placing it. The held amount was returned.",
+};
 
 // An order has two states: `submission` (the backend placing it with the engine) and
-// `status` (the engine's view, written by the event consumer). The consumer can't run
-// yet (REDESIGN.md, "Backend dependencies"), so accepted orders still have no status;
-// they show as "Accepted" rather than guessing whether they filled.
+// `status` (the engine's view, written by the event consumer). Between the engine accepting
+// an order and the consumer recording what happened to it, there's no status yet: those
+// orders show as "Accepted" rather than guessing whether they filled.
 function stateOf(order: Order): State {
-    if (order.submission === "rejected") return { label: "Rejected", dot: "failed" };
+    if (order.submission === "rejected")
+        return {
+            label: "Rejected",
+            dot: "failed",
+            hint: order.reject_reason
+                ? REJECT_HINTS[order.reject_reason]
+                : "Not enough funds, or an account isn't active.",
+        };
     switch (order.status) {
         case "new":
             return { label: "Open", dot: "live" };
@@ -25,17 +55,29 @@ function stateOf(order: Order): State {
             return { label: "Expired", dot: "done" };
         case null:
             return order.submission === "accepted"
-                ? { label: "Accepted", dot: "live" }
-                : { label: "Placing", dot: "waiting" };
+                ? {
+                      label: "Accepted",
+                      dot: "live",
+                      hint: "The trading engine has the order. Its status shows here once the engine reports it.",
+                  }
+                : {
+                      label: "Placing",
+                      dot: "waiting",
+                      hint: "The exchange is still handing the order to the trading engine.",
+                  };
     }
 }
 
 // Muted like the market status badge; the dot tells working orders (green) from finished
 // (grey), waiting (hollow) and rejected (red) ones.
 export function OrderStateBadge({ order }: { order: Order }) {
-    const { label, dot } = stateOf(order);
-    return (
-        <Badge variant="outline" className="gap-1.5 font-normal">
+    const { label, dot, hint } = stateOf(order);
+    const badge = (
+        <Badge
+            variant="outline"
+            className="gap-1.5 font-normal"
+            // focusable when it has a hint, so keyboard users can read it too
+            tabIndex={hint ? 0 : undefined}>
             <span
                 aria-hidden
                 className={cn(
@@ -48,5 +90,12 @@ export function OrderStateBadge({ order }: { order: Order }) {
             />
             {label}
         </Badge>
+    );
+    if (!hint) return badge;
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>{badge}</TooltipTrigger>
+            <TooltipContent className="max-w-64">{hint}</TooltipContent>
+        </Tooltip>
     );
 }

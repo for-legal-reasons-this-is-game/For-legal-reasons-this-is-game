@@ -185,17 +185,23 @@ engine's market-data stream) would replace this later.
 
 ## Backend dependencies and limits (Nov 2026)
 
-**Scope until the evaluation** (from the user, 2026-11-23): of the engine's seven RPCs
-(`proto/service.proto`), the backend implements only `SetMarket`, `PlaceOrder` and
-`CancelOrder` before the evaluation. Everything else comes after it: `SubscribeEvents` (trades,
-fills, order statuses and settlement, through the consumer), `SubscribeMarketData`,
-`ModifyOrder`, `CancelOrders`, and order types other than GTC limit. For the UI that means:
-- Placing a GTC limit order works. The reply to `POST /users/{id}/orders` carries the engine's
-  immediate status and fills; that's the only place they appear (stored orders keep no status).
-- No trades are recorded, so the price header, chart, recent trades, 24h figures and the
-  markets table stay empty, and trades don't move balances (holds stay until a cancel).
-- Cancelling works once the backend has a cancel route. On 2026-11-23 there's none yet, and
-  `POST /markets` doesn't call `SetMarket` yet; `backend/src/service.rs` has both client calls.
+**Scope until the evaluation** (from the user, 2026-11-23, corrected 2026-11-25): of the
+engine's seven RPCs (`proto/service.proto`), the backend implements `SetMarket`, `PlaceOrder`,
+`CancelOrder`, `SubscribeEvents` and `SubscribeMarketData` before the evaluation. `ModifyOrder`,
+`CancelOrders` and order types other than GTC limit come after it. For the UI that means:
+- Trades, fills, order statuses and settlement work at the evaluation (the consumer runs on
+  `SubscribeEvents`), so the trade page fills up as people trade. Until then, development
+  stacks use seeded trades.
+- The reply to `POST /users/{id}/orders` carries the engine's immediate status and fills; the
+  toast shows them ("Buy order filled"). Stored orders get theirs from the consumer.
+- `SubscribeMarketData` is an order book feed (`BookSnapshot`, `BookDelta` in
+  `proto/events.proto`). An order book panel can come once the backend exposes it (open
+  question 3).
+- Cancelling works once the backend has a cancel route. On 2026-11-25 there's none yet, and
+  `POST /markets` doesn't call `SetMarket` yet; `backend/src/service.rs` has the client calls.
+- **Closing an account with open orders calls `CancelOrders`** (`close_account` in
+  `backend/src/v1.rs`), which comes after the evaluation: until then, such a close fails
+  (502). Accounts without open orders close fine.
 - How the UI shows the rest: decision 7.
 
 These shape the UI. Ask Alvaro/Mehras where needed:
@@ -204,9 +210,13 @@ These shape the UI. Ask Alvaro/Mehras where needed:
 - **The engine only accepts GTC limit orders** (`tradingengine/src/place.rs`). Keep the other
   order types in the form behind one flag (`ENGINE_SUPPORTS`), shown as "not available yet",
   easy to switch on.
-- **The consumer can't run** until the engine implements `SubscribeEvents`, which comes after
-  the evaluation. On the real stack there are no trades, so the chart and ticker are empty, and
-  stored orders have no status or fills. Development and tests use seeded trades.
+- **The consumer can't run** until the engine implements `SubscribeEvents` (planned before the
+  evaluation). Until then, there are no trades on a real stack, so the chart and ticker are
+  empty and stored orders have no status or fills. Development and tests use seeded trades.
+- **The API doesn't say whether an account is closed.** Closing sets a flag in TigerBeetle
+  only; accounts and positions report "active" or "processing". The account page offers both
+  close and reopen (both are safe to repeat), and the badge can't show "Closed" (open
+  question 4).
 - **No cancel route** in the backend yet. Cancel is in scope for the evaluation, so the UI gets
   a "Cancel order" action (follow-up below), wired when the route exists. Modify comes after
   the evaluation.
@@ -243,23 +253,25 @@ answered yes).
 - [x] Tabs: recent trades, all orders, my orders in this market
 - [x] Known accounts (decision 4): remembered per user, found in orders, add by ID
 
-### Phase 2 follow-up: evaluation scope (first, when work resumes)
-- [ ] Support flags in one file: `lib/engine-support.ts` also says what the backend supports,
-      e.g. `tradeHistory: false` (needs `SubscribeEvents`) and `cancelOrder: false` (until the
-      route exists)
-- [ ] With trade history off, the price header, chart, recent trades and markets table say
-      "Trade history isn't available yet" instead of "No trades yet", and drop the promise
-      that trades appear when orders meet. The real queries stay wired, so data shows up as
-      soon as trades are recorded.
-- [ ] Order lists: explain "Accepted" (the engine has the order; what happened next isn't
-      tracked yet). The toast after placing shows the engine's immediate answer from the reply
-      ("Buy order filled", "partly filled"), the one place it exists.
-- [ ] "Cancel order" on open orders and the order page: "not available yet" until the route
-      exists, then wired (invalidate orders and positions)
+### Phase 2 follow-up: evaluation scope (done 2026-11-25)
+- [x] `lib/engine-support.ts` lists what isn't available yet in one place (order types, and a
+      pointer to the cancel button)
+- [x] ~~Trade history "not available yet"~~: dropped, `SubscribeEvents` is in scope for the
+      evaluation, so "No trades yet ... appear when orders meet" is true there
+- [x] Order lists: "Accepted", "Placing" and "Rejected" explain themselves in a tooltip
+      (rejections say why). The toast after placing shows the engine's immediate answer
+      ("Buy order filled: 0.05 BTC for 3,200.00 USD", "partly filled", "cancelled" + reason)
+- [x] "Cancel" on your own open orders (My orders): disabled with "Cancelling orders isn't
+      available yet" until the route exists (`features/order/CancelOrderButton.tsx`). The order
+      page gets it in phase 4.
 
-### Phase 3: portfolio and accounts (on hold until the user says go)
-- [ ] Portfolio: accounts with balances (interim account list), open account, deposit dialogs
-- [ ] Account page: ledger view, transfers with paging, close/reopen with confirmation
+### Phase 3: portfolio and accounts (done 2026-11-25)
+- [x] Portfolio: accounts with what each can spend (interim account list), totals per asset,
+      open account and deposit dialogs, add by ID
+- [x] Account page: ledger view (out | in, posted and pending, double rule, balance), transfers
+      as ledger lines with paging, close/reopen with confirmation, copy ID
+- [x] Order form: "Open one" when an account is missing, "Deposit" under the available
+      balance, so a new user can go from nothing to an order on the trade page
 
 ### Phase 4: orders, users, admin
 - [ ] Orders page (filters, paging) and order page (fills: not available yet, decision 7;
@@ -289,10 +301,13 @@ answered yes).
 
 1. **Cancel route** (Alvaro): method, path and answer of the backend's cancel endpoint.
    Default: the button shows "not available yet" until the route is merged.
-2. **Trade history during the evaluation:** only `SubscribeEvents` records trades, so without
-   it the trade page's price, chart and recent trades are empty while evaluators try it.
-   Default: say "not available yet" (follow-up above). If the team adds the event stream
-   before the evaluation, flip the flag.
+2. ~~Trade history during the evaluation~~: answered 2026-11-25, `SubscribeEvents` and
+   `SubscribeMarketData` are in scope.
+3. **Order book** (Alvaro): will the backend expose the engine's market data (a REST snapshot,
+   or a WebSocket/SSE stream of `BookDelta`)? Default: no order book panel until it does.
+4. **Closed accounts** (Alvaro): could `GET /accounts/{id}` or the position say whether an
+   account is closed (e.g. `account_status: "closed"`)? Default: the account page offers both
+   close and reopen, and says nothing about the state.
 
 ## Decisions
 
@@ -372,7 +387,25 @@ Things decided or learned while building, which the next phases rely on:
   the order form; do the same for any dialog placed inside a form.
 - **Buttons on Gain/Loss:** `text-gain-foreground` / `text-loss-foreground` (white in light
   mode, dark ink in dark mode: white on the dark theme's Gain is only 2.1:1).
-- **Bundle:** 758 kB after phase 2 (the chart library is most of the growth); phase 5 splits it.
+- **Worktree:** since 2026-11-25 this branch lives in its own folder,
+  `~/Desktop/github/transcendence-frontend` (`git worktree`), so the main checkout can stay
+  on the user's branch. Work, build and commit there. The browser preview runs Vite from the
+  worktree (`./node_modules/.bin/vite`) and opens its URL, instead of a launch config in the
+  main checkout.
+- **Accounts (phase 3):** `features/account/`. `OpenAccountDialog` remembers the new account
+  (`rememberAccount`) and seeds the cache; `accountQueries.detail` polls every 2 s while an
+  account is "processing". `DepositDialog` keeps CreateOrder's idempotency key rules.
+  `availableUnits(position)` in `balance.ts` is the one place "what can be spent" is worked
+  out. Transfers have TigerBeetle timestamps (nanoseconds): `formatLedgerWhen`.
+- **Dialogs:** a dialog that starts on a chosen value should focus the next field itself
+  (`onOpenAutoFocus`, see `OpenAccountDialog`); otherwise focus lands on the first control and
+  Enter reopens a select. Dialogs inside forms or clickable rows stop their events
+  (`stopPropagation`), see "Portals and forms".
+- **Disabled buttons with a reason:** a disabled button gets no hover or focus, so its tooltip
+  hangs on a focusable wrapper with `role="button"` and `aria-disabled` (`CancelOrderButton`).
+- **Phones:** wide tables drop secondary columns below `sm`/`md` and move the essentials into
+  the first cell (`AccountsTable`); a footer row uses one cell per column, not `colSpan`.
+- **Bundle:** 784 kB after phase 3 (758 kB after phase 2) (the chart library is most of the growth); phase 5 splits it.
 - **npm audit** reports 13 findings, all in build tools (ESLint, typescript-eslint, the shadcn
   CLI and its `zod`), none in the code the browser runs. Don't run `npm audit fix` blindly:
   it changes dependency versions.
@@ -412,3 +445,15 @@ Things decided or learned while building, which the next phases rely on:
 - 2026-11-23: the user set the scope until the evaluation (only `SetMarket`, `PlaceOrder`,
   `CancelOrder`) and left the presentation of the rest to me: decision 7, a phase 2 follow-up
   list, two open questions. Phase 3 is on hold until the user says go; no app code changed.
+- 2026-11-25: the branch moved to its own worktree. The user corrected the scope:
+  `SubscribeEvents` and `SubscribeMarketData` come before the evaluation, so trade history
+  isn't marked unavailable. Phase 2 follow-ups done (explained order states, the engine's
+  immediate answer in the toast, a disabled Cancel), and phase 3 done: portfolio, account
+  page, open account, deposit, close/reopen, plus "Open one" and "Deposit" in the order form.
+  Tested on a throwaway stack (backend and engine built from the worktree): opened an EUR
+  account, deposited, closed it (a deposit then got the 409 message), reopened, deposited
+  again; filled a buy against a resting sell (toast "Buy order filled"); opened and funded an
+  ETH account from the order form; light, dark, 1280 / 1024 / 375 px; empty portfolio; unknown
+  account. Fixed on the way: the open-account dialog focused the asset instead of the name, the
+  My orders table overflowed its card, the portfolio table hid "Available" on phones, and the
+  balance label squeezed the total. Next: phase 4 (orders, users, admin).

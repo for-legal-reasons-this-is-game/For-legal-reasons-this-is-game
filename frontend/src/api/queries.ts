@@ -12,12 +12,14 @@
 //   ["markets", symbol, "ticker" | "trades" | "orders", ...]
 //   ["users"], ["users", id, "orders", query]
 //   ["account", id], ["position", id]        (the old components use these keys too)
+//   ["transfers", "account", id, query], ["ledgers"]
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { api } from "./index";
 import type { MarketOrderQuery } from "@/types/MarketOrderQuery";
 import type { MarketTradeQuery } from "@/types/MarketTradeQuery";
 import type { OrderQuery } from "@/types/OrderQuery";
 import type { Trade } from "@/types/Trade";
+import type { TransferQuery } from "@/types/TransferQuery";
 
 // How often live market data refreshes. There's no push from the backend yet (the
 // engine's market-data stream isn't implemented), so pages poll.
@@ -99,12 +101,38 @@ export const accountQueries = {
             queryKey: ["account", accountID],
             queryFn: () => api.accounts.get(accountID),
             enabled: !!accountID,
+            // A new account is "processing" until TigerBeetle has it (usually a moment), so
+            // ask again every 2 s until it's active.
+            // New TanStack: refetchInterval can be a function of the query, deciding after
+            // every fetch whether to keep polling (false = stop).
+            refetchInterval: (query) =>
+                query.state.data?.account_status === "processing" ? 2_000 : false,
         }),
-    // the balance; placing an order or a deposit invalidates ["position"]
+    // The balance. Placing an order or a deposit invalidates ["position"]; trades settle
+    // without anything happening on the page, so it's polled as well.
     position: (accountID: string) =>
         queryOptions({
             queryKey: ["position", accountID],
             queryFn: () => api.accounts.position(accountID),
             enabled: !!accountID,
+            refetchInterval: LIVE_MS,
+        }),
+    // one page of transfers (the old ListAccountTransfers uses the same key)
+    transfers: (accountID: string, query: TransferQuery) =>
+        queryOptions({
+            queryKey: ["transfers", "account", accountID, query],
+            queryFn: () => api.accounts.transfers(accountID, query),
+            enabled: !!accountID,
+            placeholderData: keepPreviousData,
+            refetchInterval: LIVE_MS,
+        }),
+};
+
+export const ledgerQueries = {
+    // the old CreateMarket uses the same key
+    list: () =>
+        queryOptions({
+            queryKey: ["ledgers"],
+            queryFn: () => api.ledgers.list(),
         }),
 };

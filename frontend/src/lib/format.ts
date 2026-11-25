@@ -97,10 +97,24 @@ const DAY_TIME = new Intl.DateTimeFormat(LOCALE, {
     hourCycle: "h23",
 });
 
-// For lists: "14:02:11" today, "Nov 22, 14:02" on other days
-export function formatWhen(iso: string): string {
-    const date = parseTime(iso);
+function when(date: Date): string {
     return date.toDateString() === new Date().toDateString()
         ? TIME.format(date)
         : DAY_TIME.format(date);
+}
+
+// For lists: "14:02:11" today, "Nov 22, 14:02" on other days
+export function formatWhen(iso: string): string {
+    return when(parseTime(iso));
+}
+
+// Transfers come from TigerBeetle, whose timestamps are nanoseconds since 1970 as a string
+// ("1795441758269000000"). BigInt divides them down to milliseconds without losing digits.
+export function parseLedgerTime(nanoseconds: string): Date {
+    return new Date(Number(BigInt(nanoseconds) / 1_000_000n));
+}
+
+// formatWhen for a TigerBeetle timestamp
+export function formatLedgerWhen(nanoseconds: string): string {
+    return when(parseLedgerTime(nanoseconds));
 }

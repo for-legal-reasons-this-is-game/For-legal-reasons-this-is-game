@@ -167,6 +167,7 @@ function MyOrders({ market }: { market: Market }) {
             <OrdersTable
                 result={orders}
                 market={market}
+                cancellable
                 empty={
                     query.status
                         ? "None of your orders here have this status."

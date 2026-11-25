@@ -13,11 +13,12 @@ import {
 import { formatDecimal, formatWhen } from "@/lib/format";
 import type { Market } from "@/types/Market";
 import type { Order } from "@/types/Order";
+import { CancelOrderButton } from "./CancelOrderButton";
 import { ORDER_TYPE_LABELS, SIDE_LABELS } from "./labels";
+import { isOpen } from "./order-state";
 import { OrderStateBadge } from "./OrderStateBadge";
 
 const NUMBER = "text-right";
-const COLUMNS = 7;
 
 // What a list query gives this table (a useQuery result fits)
 type OrdersResult = {
@@ -27,9 +28,16 @@ type OrdersResult = {
     error: ApiError | null;
 };
 
-function OrderRow({ order, market }: { order: Order; market: Market }) {
+function OrderRow({
+    order,
+    market,
+    cancellable,
+}: {
+    order: Order;
+    market: Market;
+    cancellable: boolean;
+}) {
     const navigate = useNavigate();
-    const base = market.base_asset.symbol;
     const quote = market.quote_asset.symbol;
     const muted = (text: string) => <span className="text-muted-foreground">{text}</span>;
 
@@ -54,12 +62,11 @@ function OrderRow({ order, market }: { order: Order; market: Market }) {
                 {order.limit_price ? formatDecimal(order.limit_price) : muted("Market")}
             </TableCell>
             <TableCell className={NUMBER}>
+                {/* the base asset is in the column's heading; market buys say how much
+                    quote to spend, so they name it */}
                 {order.base_quantity ? (
-                    <>
-                        {formatDecimal(order.base_quantity)} {muted(base)}
-                    </>
+                    formatDecimal(order.base_quantity)
                 ) : order.quote_quantity ? (
-                    // market buys say how much to spend
                     <>
                         {formatDecimal(order.quote_quantity)} {muted(quote)}
                     </>
@@ -71,21 +78,31 @@ function OrderRow({ order, market }: { order: Order; market: Market }) {
             <TableCell>
                 <OrderStateBadge order={order} />
             </TableCell>
+            {cancellable && (
+                <TableCell className="text-right">
+                    {isOpen(order) && <CancelOrderButton />}
+                </TableCell>
+            )}
         </TableRow>
     );
 }
 
 // One page of orders in a market, with loading, empty and error states. The caller
-// owns the query and puts filters and paging around it.
+// owns the query and puts filters and paging around it. `cancellable`: the acting user's
+// own orders, which get a "Cancel" button while they're open.
 export function OrdersTable({
     result,
     market,
     empty,
+    cancellable = false,
 }: {
     result: OrdersResult;
     market: Market;
     empty: ReactNode;
+    cancellable?: boolean;
 }) {
+    const columns = cancellable ? 8 : 7;
+
     if (result.isError) {
         return (
             <p role="alert" className="py-4 text-destructive">
@@ -104,20 +121,34 @@ export function OrdersTable({
                     <TableHead>Time</TableHead>
                     <TableHead>Side</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead className={NUMBER}>Price</TableHead>
-                    <TableHead className={NUMBER}>Amount</TableHead>
+                    <TableHead className={NUMBER}>
+                        Price ({market.quote_asset.symbol})
+                    </TableHead>
+                    <TableHead className={NUMBER}>
+                        Amount ({market.base_asset.symbol})
+                    </TableHead>
                     <TableHead className={NUMBER}>Filled</TableHead>
                     <TableHead>Status</TableHead>
+                    {cancellable && (
+                        <TableHead>
+                            <span className="sr-only">Actions</span>
+                        </TableHead>
+                    )}
                 </TableRow>
             </TableHeader>
             <TableBody>
                 {result.data
                     ? result.data.items.map((order) => (
-                          <OrderRow key={order.order_id} order={order} market={market} />
+                          <OrderRow
+                              key={order.order_id}
+                              order={order}
+                              market={market}
+                              cancellable={cancellable}
+                          />
                       ))
                     : [0, 1, 2].map((row) => (
                           <TableRow key={row}>
-                              {Array.from({ length: COLUMNS }, (_, cell) => (
+                              {Array.from({ length: columns }, (_, cell) => (
                                   <TableCell key={cell}>
                                       <Skeleton className="h-4 w-full" />
                                   </TableCell>
