@@ -5,6 +5,13 @@ use redis::{
     aio::{ConnectionManager, ConnectionManagerConfig},
 };
 
+/// We currently save the whole state with every request, which could get
+/// very big if the command_cache is full, and will take time. This connection
+/// config timeout is shared while the save (set) happens. once we change
+/// the saving process to only save what changed instead of rewriting the
+/// whole state, we can lower this timeout. I didn't test the times with hand,
+/// claude did and says the state will reach around 12mb with full
+/// command_cache (100k entries).
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct RedisStore {

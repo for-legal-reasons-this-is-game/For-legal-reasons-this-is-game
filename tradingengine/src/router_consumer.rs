@@ -10,7 +10,13 @@ use redis::{
 use crate::{engine::Engine, engine::State, redis_store::RedisStore};
 
 const POP_TIMEOUT: f64 = 5.0;
-const ANSWER_TOTAL_SECONDS: i64 = 60;
+/// This time-to-live is how long an answer (that reached redis, but
+/// the router hasn't read yet) stays in redis before it gets deleted,
+/// and in that case it's a timeout in backend so it retries. the
+/// router will need to have a timeout that is smaller than this (will
+/// likely be 5-10 secs), because if it didn't, the answer could be
+/// deleted before the router reads it.
+const ANSWER_TTL_SECONDS: i64 = 60;
 
 pub struct RouterConsumer {
     connection: ConnectionManager,
@@ -84,13 +90,13 @@ impl RouterConsumer {
         Some(answer)
     }
 
-    /// Pushes response (`answer`) back to `redis` with a `ANSWER_TOTAL_SECONDS` timeout
+    /// Pushes response (`answer`) back to `redis` with a `ANSWER_TTL_SECONDS` timeout
     async fn answer(&mut self, reply_to: String, answer: Vec<u8>) -> redis::RedisResult<()> {
         redis::pipe()
             .atomic()
             .rpush(&reply_to, answer)
             .ignore()
-            .expire(reply_to, ANSWER_TOTAL_SECONDS)
+            .expire(reply_to, ANSWER_TTL_SECONDS)
             .ignore()
             .query_async(&mut self.connection)
             .await
