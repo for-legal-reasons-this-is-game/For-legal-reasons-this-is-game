@@ -14,8 +14,9 @@ fn loading_a_saved_engine_works() {
     let response_1 = engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC));
     let response_2 = engine.place_order(limit(2, Side::Buy, PRICE_29_000, HALF_BTC));
 
-    let state = engine.save();
-    let mut engine_2 = Engine::load(state, 100_000).expect("loading a saved engine state failed");
+    let state = engine.get_engine_state();
+    let mut engine_2 =
+        Engine::new_from_state(state, 100_000).expect("loading a saved engine state failed");
     let saved_cached_response_1 = engine_2.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC));
     let saved_cached_response_2 = engine_2.place_order(limit(2, Side::Buy, PRICE_29_000, HALF_BTC));
 
@@ -38,9 +39,12 @@ const CACHE_CAPACITY: usize = 50;
 
 /// Saves `engine` to bytes and loads them into a new engine, like a restart.
 fn save_and_load(engine: &Engine, capacity: usize) -> Engine {
-    let bytes = engine.save().to_bytes().expect("saving to bytes");
+    let bytes = engine
+        .get_engine_state()
+        .to_bytes()
+        .expect("saving to bytes");
     let state = EngineState::from_bytes(&bytes).expect("loading bytes");
-    Engine::load(state, capacity).expect("a saved engine loads")
+    Engine::new_from_state(state, capacity).expect("a saved engine loads")
 }
 
 // ---- save and load ----
@@ -155,12 +159,12 @@ fn loading_into_a_smaller_cache_keeps_the_newest_entries() {
 fn a_saved_state_with_a_duplicate_order_does_not_load() {
     let mut engine = engine_with_cache(CACHE_CAPACITY);
     assert_accepted(&engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)));
-    let mut state = engine.save();
+    let mut state = engine.get_engine_state();
     let order = state.markets[0].orders[0].clone();
     state.markets[0].orders.push(order);
 
     assert_eq!(
-        Engine::load(state, CACHE_CAPACITY),
+        Engine::new_from_state(state, CACHE_CAPACITY),
         Err(EngineError::DuplicateOrderId)
     );
 }
@@ -181,7 +185,10 @@ fn a_save_still_loads_after_a_field_is_added() {
     }
     let mut engine = engine_with_cache(CACHE_CAPACITY);
     assert_accepted(&engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)));
-    let bytes = engine.save().to_bytes().expect("saving to bytes");
+    let bytes = engine
+        .get_engine_state()
+        .to_bytes()
+        .expect("saving to bytes");
 
     rmp_serde::from_slice::<NextEngineState>(&bytes)
         .expect("a save from this version loads into the next one");

@@ -15,7 +15,7 @@ pub mod quantity;
 pub mod quote;
 pub mod redis_store;
 pub mod resting_order;
-pub mod service;
+pub mod router_consumer;
 pub mod wire;
 
 mod wide;
