@@ -11,12 +11,11 @@ use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
 use crate::ids::CommandId;
 use crate::market::{MarketInfo, Placed};
-use crate::order::OrderStatus;
 use crate::place::parse_place_order;
 use crate::quantity::BaseQuantity;
 use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
-use crate::wire::required;
+use crate::wire::{order_status, required};
 
 #[derive(Default)]
 pub struct State {
@@ -51,6 +50,8 @@ pub struct Engine {
     // The cache lives here, so an [`EngineService`] messege handler that will lock
     // the [`Engine`] mutex will guarantee no two requests race on the cache
     command_cache: CommandCache,
+    /// the `sequence` of the last event. 0 means no event yet
+    sequence: u64,
 }
 
 impl Engine {
@@ -75,6 +76,7 @@ impl Engine {
         Ok(Engine {
             markets,
             command_cache,
+            sequence: engine_state.sequence,
         })
     }
 
@@ -88,8 +90,16 @@ impl Engine {
                     orders: info.book().get_orders(),
                 })
                 .collect(),
+            sequence: self.sequence,
             command_cache: self.command_cache.get_cache(),
         }
+    }
+
+    /// The `sequence` for the next event: one more than the last, so the first event
+    /// gets 1. The contract wants no gaps and no repeats.
+    pub fn next_sequence(&mut self) -> Result<u64> {
+        self.sequence = self.sequence.checked_add(1).ok_or(EngineError::Overflow)?;
+        Ok(self.sequence)
     }
 
     pub fn with_cache_capacity(n: usize) -> Self {
@@ -216,13 +226,10 @@ impl Engine {
 
         let response = match self.try_cancel_order(&request) {
             Ok((cancelled_order, filled_base)) => {
-                // TODO(mehras): RestingOrder doesn't keep the quote it has filled, so the answer
-                // has no filled_quote_quantity yet. The contract wants both filled amounts
-                // (how_to_use.md, "Handling command responses"). Settle how to track it, and
-                // until then tell Alvaro that a cancel answer only has the filled base
                 let mut response = CancelOrderResponse {
                     command_id: Some(command_id.into()),
                     filled_base_quantity: Some(Uint128::from(filled_base)),
+                    filled_quote_quantity: Some(Uint128::from(cancelled_order.filled_quote())),
                     ..Default::default()
                 };
                 response.set_status(order_status(cancelled_order.status()));
@@ -289,12 +296,3 @@ fn reject_reason(error: &EngineError) -> RejectReason {
 }
 
 // the proto has no Open, a resting order with no fills is New there
-fn order_status(status: OrderStatus) -> proto::OrderStatus {
-    match status {
-        OrderStatus::New | OrderStatus::Open => proto::OrderStatus::New,
-        OrderStatus::PartiallyFilled => proto::OrderStatus::PartiallyFilled,
-        OrderStatus::Filled => proto::OrderStatus::Filled,
-        OrderStatus::Cancelled => proto::OrderStatus::Cancelled,
-        OrderStatus::Rejected => proto::OrderStatus::Unspecified,
-    }
-}

@@ -1,4 +1,4 @@
-use tradingengine::ids::CommandId;
+use tradingengine::ids::{CommandId, TradeId};
 
 // the ids are plain u128 wrappers now, the string checks that were here went
 // away when CommandId changed from a string key to the contract's 128 bit Id
@@ -19,4 +19,12 @@ fn uses_all_128_bits() {
     // backend ids are UUIDs, a u64 would cut off the top half
     let id = CommandId::new(u128::MAX);
     assert_eq!(id.value(), u128::MAX);
+}
+
+#[test]
+fn generated_trade_ids_keep_increasing() {
+    let ids: Vec<u128> = (0..10_000).map(|_| TradeId::generate().value()).collect();
+
+    // 10_000 ids land in the same few milliseconds, so this checks the counter too
+    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
 }

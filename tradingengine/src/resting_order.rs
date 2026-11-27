@@ -1,10 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{EngineError, Result};
-use crate::ids::{CommandId, OrderId, UserId};
+use crate::ids::{AccountId, CommandId, OrderId, UserId};
 use crate::order::{OrderStatus, Side};
 use crate::price::Price;
-use crate::quantity::BaseQuantity;
+use crate::quantity::{BaseQuantity, QuoteQuantity};
+
+/// What a `TradeSettlement` needs about one order: the accounts its money moves between.
+/// The engine doesn't use them; it stores them and sends them back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementInfo {
+    pub base_account: AccountId,
+    pub quote_account: AccountId,
+}
 
 /// An order sitting in the [`Book`](crate::book::Book).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,8 +23,10 @@ pub struct RestingOrder {
     price: Price,
     qty_total: BaseQuantity,
     qty_remaining: BaseQuantity,
+    filled_quote: QuoteQuantity,
     status: OrderStatus,
     command_id: CommandId,
+    settlement: SettlementInfo,
 }
 
 impl RestingOrder {
@@ -27,6 +37,7 @@ impl RestingOrder {
         price: Price,
         qty_total: BaseQuantity,
         command_id: CommandId,
+        settlement: SettlementInfo,
     ) -> Result<Self> {
         let qty_total = qty_total.require_positive()?;
 
@@ -37,18 +48,21 @@ impl RestingOrder {
             price,
             qty_total,
             qty_remaining: qty_total,
+            filled_quote: QuoteQuantity::ZERO,
             status: OrderStatus::Open,
             command_id,
+            settlement,
         })
     }
 
-    pub fn fill(&mut self, quantity: BaseQuantity) -> Result<()> {
+    pub fn fill(&mut self, quantity: BaseQuantity, quote: QuoteQuantity) -> Result<()> {
         let quantity = quantity.require_positive()?;
         if quantity > self.qty_remaining {
             return Err(EngineError::FillExceedsRemaining);
         }
 
         let qty_remaining = self.qty_remaining.checked_sub(quantity)?;
+        let filled_quote = self.filled_quote.checked_add(quote)?;
         let status = if qty_remaining.is_zero() {
             OrderStatus::Filled
         } else {
@@ -56,6 +70,7 @@ impl RestingOrder {
         };
 
         self.qty_remaining = qty_remaining;
+        self.filled_quote = filled_quote;
         self.status = status;
         Ok(())
     }
@@ -121,6 +136,14 @@ impl RestingOrder {
 
     pub const fn qty_remaining(&self) -> BaseQuantity {
         self.qty_remaining
+    }
+
+    pub const fn filled_quote(&self) -> QuoteQuantity {
+        self.filled_quote
+    }
+
+    pub const fn settlement(&self) -> SettlementInfo {
+        self.settlement
     }
 
     pub const fn status(&self) -> OrderStatus {

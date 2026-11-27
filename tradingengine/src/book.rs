@@ -4,18 +4,24 @@ use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::Side;
 use crate::price::Price;
-use crate::quantity::BaseQuantity;
+use crate::quantity::{BaseQuantity, QuoteQuantity};
+use crate::quote::QuoteScale;
 use crate::resting_order::RestingOrder;
 
 type Level = VecDeque<RestingOrder>; // all the orders at the same price 
 type BookSide = BTreeMap<Price, Level>; // a map of one side of the book (sell/by) price is needed for faster access
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One match between a resting order (maker) and the incoming order (taker).
+///
+/// `maker` and `taker` are copies of the two orders right after this match, so the
+/// events for it can be built later, even if the maker has left the book.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fill {
-    pub maker: OrderId,
-    pub taker: OrderId,
+    pub maker: RestingOrder,
+    pub taker: RestingOrder,
     pub price: Price,
     pub quantity: BaseQuantity,
+    pub quote: QuoteQuantity,
 }
 
 /// The result returned after an order is matched against the [`Book`].
@@ -59,13 +65,15 @@ impl Book {
 
     /// Puts a new incoming order into the book, unless it can be matched against a
     /// price on the opposite side of the book.
-    pub fn insert(&mut self, mut order: RestingOrder) -> Result<Execution> {
+    ///
+    /// `scale` turns each fill's price and quantity into quote, see [`QuoteScale::quote_for`].
+    pub fn insert(&mut self, mut order: RestingOrder, scale: QuoteScale) -> Result<Execution> {
         let id = order.id();
         if self.all_orders.contains_key(&id) {
             return Err(EngineError::DuplicateOrderId);
         }
 
-        let fills = self.match_incoming(&mut order)?;
+        let fills = self.match_incoming(&mut order, scale)?;
 
         let resting = if order.qty_remaining().is_zero() {
             None
@@ -108,7 +116,11 @@ impl Book {
     /// Tries to match the incoming order against the other side of the book.
     ///
     /// Returns the [`Fill`]s it matched.
-    fn match_incoming(&mut self, incoming: &mut RestingOrder) -> Result<Vec<Fill>> {
+    fn match_incoming(
+        &mut self,
+        incoming: &mut RestingOrder,
+        scale: QuoteScale,
+    ) -> Result<Vec<Fill>> {
         let taker_side = incoming.side();
         let limit = incoming.price();
 
@@ -148,16 +160,20 @@ impl Book {
 
                 let maker_id = maker.id();
                 let quantity = incoming.qty_remaining().min(maker.qty_remaining());
+                let quote = scale.quote_for(price, quantity)?;
 
-                maker.fill(quantity)?;
+                maker.fill(quantity, quote)?;
                 let exhausted = maker.qty_remaining().is_zero();
-                incoming.fill(quantity)?;
+                incoming.fill(quantity, quote)?;
+
+                // cloning here is for several orders mathcing to the incoming order
 
                 fills.push(Fill {
-                    maker: maker_id,
-                    taker: incoming.id(),
+                    maker: maker.clone(),
+                    taker: incoming.clone(),
                     price,
                     quantity,
+                    quote,
                 });
 
                 if exhausted {
@@ -213,6 +229,7 @@ impl Book {
         id: OrderId,
         new_quantity: Option<BaseQuantity>,
         new_price: Option<Price>,
+        scale: QuoteScale,
     ) -> Result<Execution> {
         let &(side, price) = self.all_orders.get(&id).ok_or(EngineError::OrderNotFound)?;
         let order = self
@@ -239,7 +256,7 @@ impl Book {
         changed.modify(new_quantity, new_price)?;
 
         self.remove(id)?;
-        self.insert(changed)
+        self.insert(changed, scale)
     }
 
     pub fn get_by_id(&self, id: OrderId) -> Option<&RestingOrder> {

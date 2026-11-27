@@ -1,5 +1,6 @@
 use proto::Id;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// The id of an incoming order, given by the backend.
 ///
@@ -7,6 +8,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrderId(u128);
 
+impl From<OrderId> for Id {
+    fn from(id: OrderId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl OrderId {
     pub const fn new(value: u128) -> Self {
         Self(value)
@@ -22,9 +28,22 @@ impl OrderId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradeId(u128);
 
+impl From<TradeId> for Id {
+    fn from(id: TradeId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl TradeId {
     pub const fn new(value: u128) -> Self {
         Self(value)
+    }
+
+    /// A new UUIDv7, as the contract asks for `trade_id`.
+    ///
+    /// Each one is bigger than the one before it in this process, even within the same
+    /// millisecond, and its random bits keep two engine instances from colliding.
+    pub fn generate() -> Self {
+        Self(Uuid::now_v7().as_u128())
     }
     pub const fn value(self) -> u128 {
         self.0
@@ -37,7 +56,32 @@ impl TradeId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(u128);
 
+impl From<UserId> for Id {
+    fn from(id: UserId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl UserId {
+    pub const fn new(value: u128) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u128 {
+        self.0
+    }
+}
+
+/// The id of a TigerBeetle account, sent by the backend. The engine only stores it and
+/// sends it back in the `TradeSettlement`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AccountId(u128);
+
+impl From<AccountId> for Id {
+    fn from(id: AccountId) -> Self {
+        Id::from(id.value())
+    }
+}
+impl AccountId {
     pub const fn new(value: u128) -> Self {
         Self(value)
     }
