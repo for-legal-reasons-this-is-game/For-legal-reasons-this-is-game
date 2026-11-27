@@ -2,6 +2,8 @@
 //! Run them through `scripts/integration-test.sh`, or point `DATABASE_URL` / `TB_*` at a
 //! throwaway stack. Every test seeds its own ledgers, users and orders with fresh ids.
 
+mod common;
+
 use backend::consumer::ledger::{self, LedgerError};
 use backend::consumer::lock;
 use backend::consumer::plan::{OrderUpdate, TradeInsert};
@@ -9,6 +11,7 @@ use backend::consumer::store;
 use backend::consumer::{self, Config, ConsumerError};
 use backend::domain::TransferCodeType;
 use cn_tigerbeetle as tb;
+use common::relay;
 use sqlx::PgPool;
 use std::time::{Duration, SystemTime};
 use tokio::sync::OnceCell;
@@ -629,21 +632,6 @@ async fn stop(running: Running) {
     assert!(result.is_ok(), "{result:?}");
 }
 
-/// A TCP relay for one connection. Aborting its task drops both sockets: the consumer sees the
-/// connection vanish in the middle of a stream, like when an engine dies. (Aborting the client
-/// task is not enough: the request body just ends cleanly. See `ingest_test.rs`.)
-async fn relay(server_url: &str) -> (String, JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let target = server_url.trim_start_matches("http://").to_string();
-    let task = tokio::spawn(async move {
-        let (mut engine_side, _) = listener.accept().await.unwrap();
-        let mut server_side = tokio::net::TcpStream::connect(target).await.unwrap();
-        let _ = tokio::io::copy_bidirectional(&mut engine_side, &mut server_side).await;
-    });
-    (url, task)
-}
-
 /// Plays an engine: one `PublishEvents` stream to the consumer, through a [`relay`] so it can be
 /// broken.
 struct FakeEngine {
@@ -694,6 +682,14 @@ where
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("timed out waiting for: {what}");
+}
+
+/// The usual end of an end-to-end test: both orders get FILLED, the money and the rows are there
+/// exactly once, and the consumer stops cleanly.
+async fn settle_and_stop(pool: &PgPool, c: &tb::Client, s: &Scenario, running: Running) {
+    wait_for("both orders FILLED", || is_settled(pool, s)).await;
+    assert_settled_exactly_once(pool, c, s).await;
+    stop(running).await;
 }
 
 fn ev(w: &World, body: Body) -> EventItem {
@@ -903,9 +899,7 @@ async fn e2e_trade_settles_and_orders_update() {
     let (running, url) = start(config(fresh_lock_key()).await).await;
     let engine = FakeEngine::connect(&url).await;
     engine.send(full_history(&s, s.trade)).await; // and the stream stays open
-    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
-    assert_settled_exactly_once(&pool, &c, &s).await;
-    stop(running).await;
+    settle_and_stop(&pool, &c, &s, running).await;
     drop(engine);
 }
 
@@ -954,9 +948,7 @@ async fn e2e_stream_drop_mid_history_then_full_replay_ends_consistent() {
 
     let second = FakeEngine::connect(&url).await;
     second.send(history).await;
-    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
-    assert_settled_exactly_once(&pool, &c, &s).await;
-    stop(running).await;
+    settle_and_stop(&pool, &c, &s, running).await;
     drop(second);
 }
 
@@ -1060,9 +1052,7 @@ async fn e2e_a_repricing_and_the_trade_after_it_in_different_batches() {
     let (running, url) = start(cfg).await;
     let engine = FakeEngine::connect(&url).await;
     engine.send(history).await;
-    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
-    assert_settled_exactly_once(&pool, &c, &s).await;
-    stop(running).await;
+    settle_and_stop(&pool, &c, &s, running).await;
     drop(engine);
 }
 

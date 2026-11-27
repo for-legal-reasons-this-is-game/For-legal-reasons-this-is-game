@@ -1,8 +1,11 @@
 //! Tests for the ingest side of the consumer: engines push events over gRPC, the handler puts
 //! them on one shared channel, and `ChannelSource` reads them back out. No database needed.
 
+mod common;
+
 use backend::consumer::ingest::{self, ChannelSource, IngestService};
 use backend::consumer::stream::EventSource;
+use common::relay;
 use proto::event_consumer_client::EventConsumerClient;
 use proto::event_consumer_server::EventConsumerServer;
 use proto::{EventItem, PublishEventsResponse};
@@ -97,6 +100,23 @@ async fn finished(call: Call) -> Result<Response<PublishEventsResponse>, Status>
 
 // --- tests ------------------------------------------------------------------
 
+/// Shuts the server down and checks it stops cleanly within 5 s, and that the call still open on
+/// it ends with `Unavailable` (the engine is told to come back later).
+async fn shutdown_cuts_the_call(
+    cancel: CancellationToken,
+    server: JoinHandle<Result<(), tonic::transport::Error>>,
+    call: Call,
+) {
+    cancel.cancel();
+    timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the server stops within 5s")
+        .unwrap()
+        .expect("the server stopped cleanly");
+    let status = finished(call).await.expect_err("a cut stream is an error");
+    assert_eq!(status.code(), Code::Unavailable, "{status}");
+}
+
 #[tokio::test]
 async fn forwards_items_in_order() {
     let (url, mut source, _cancel, _server) = serve(16).await;
@@ -141,22 +161,6 @@ async fn two_streams_both_arrive_and_each_keeps_its_own_order() {
     send_b.await.unwrap();
     finished(call_a).await.expect("a clean end is Ok");
     finished(call_b).await.expect("a clean end is Ok");
-}
-
-/// A TCP relay in front of the server, for one connection. Aborting the returned task drops both
-/// sockets, which is what the server sees when an engine dies: the connection is gone in the
-/// middle of a stream. (Aborting the client task is not enough: its request body just ends
-/// cleanly.)
-async fn relay(server_url: &str) -> (String, JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let target = server_url.trim_start_matches("http://").to_string();
-    let task = tokio::spawn(async move {
-        let (mut engine_side, _) = listener.accept().await.unwrap();
-        let mut server_side = tokio::net::TcpStream::connect(target).await.unwrap();
-        let _ = tokio::io::copy_bidirectional(&mut engine_side, &mut server_side).await;
-    });
-    (url, task)
 }
 
 #[tokio::test]
@@ -214,14 +218,7 @@ async fn a_full_channel_stops_reading_and_shutdown_still_completes() {
     }
     assert!(accepted < 1000, "the client never stalled");
 
-    cancel.cancel();
-    timeout(Duration::from_secs(5), server)
-        .await
-        .expect("the server stops within 5s")
-        .unwrap()
-        .expect("the server stopped cleanly");
-    let status = finished(call).await.expect_err("a cut stream is an error");
-    assert_eq!(status.code(), Code::Unavailable, "{status}");
+    shutdown_cuts_the_call(cancel, server, call).await;
 }
 
 #[tokio::test]
@@ -232,14 +229,7 @@ async fn shutdown_completes_with_a_quiet_stream_still_open() {
     send_all(&tx, [1]).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    cancel.cancel();
-    timeout(Duration::from_secs(5), server)
-        .await
-        .expect("the server stops within 5s")
-        .unwrap()
-        .expect("the server stopped cleanly");
-    let status = finished(call).await.expect_err("a cut stream is an error");
-    assert_eq!(status.code(), Code::Unavailable, "{status}");
+    shutdown_cuts_the_call(cancel, server, call).await;
     drop(tx); // kept alive until here, so the stream never ended by itself
 }
 
