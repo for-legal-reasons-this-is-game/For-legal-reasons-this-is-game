@@ -3,9 +3,8 @@ use proto::engine_command::Body;
 use proto::trading_engine_server::TradingEngine;
 use proto::{
     CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse,
-    EngineCommand, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse,
-    PlaceOrderRequest, PlaceOrderResponse, SetMarketRequest, SetMarketResponse,
-    SubscribeMarketDataRequest,
+    EngineCommand, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse, PlaceOrderRequest,
+    PlaceOrderResponse, SetMarketRequest, SetMarketResponse, SubscribeMarketDataRequest,
 };
 use std::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;

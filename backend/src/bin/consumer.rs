@@ -2,7 +2,7 @@ use backend::consumer::{self, Config};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
-/// Settles trades from the router's event stream. See [`consumer`] for how.
+/// Settles trades from the engines' event streams, which they push to this server. See [`consumer`] for how.
 #[tokio::main]
 async fn main() -> Result<(), consumer::ConsumerError> {
     // LISTEN_ADDR, DATABASE_URL, TB_CLUSTER_ID and TB_IP_ADRESSES come from the

@@ -6,7 +6,8 @@ use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
-/// Waits between attempts to resubscribe, doubling up to a cap.
+/// The retry backoff: waits that double up to a cap. The consumer no longer uses it (the engines
+/// reconnect on their own); the backend's place-order retry in `v1.rs` does.
 ///
 /// The caller passes the jitter (0.0..=1.0), so tests are deterministic. A delay is shortened
 /// by at most half.
@@ -36,7 +37,8 @@ impl Backoff {
     }
 }
 
-/// What the router sends: a source of events. It's a trait, so tests can stand in for the router.
+/// A source of events that the batcher reads. It's a trait, so tests can stand in for the real
+/// source.
 pub trait EventSource {
     fn next(&mut self) -> impl Future<Output = Result<Option<EventItem>, Status>> + Send;
 }
@@ -58,9 +60,9 @@ pub fn clock_jitter() -> f64 {
 pub enum BatchRead {
     /// A batch that closed because it was full or because the wait ran out. The stream goes on.
     Items(Vec<EventItem>),
-    /// The stream ended cleanly: the items read so far, then resubscribe.
+    /// The stream ended cleanly: the items read so far; the source is over.
     Ended(Vec<EventItem>),
-    /// The stream broke: the items read so far, then resubscribe.
+    /// The stream broke: the items read so far; the source is over.
     Failed(Vec<EventItem>, Status),
 }
 
@@ -168,7 +170,7 @@ mod tests {
         assert_eq!(b.next_delay(0.0), ms(100));
     }
 
-    // --- batching, with a scripted fake in place of the router ----------------------------------
+    // --- batching, with a scripted fake source ----------------------------------
 
     use proto::EventItem;
     use std::collections::VecDeque;
@@ -210,7 +212,7 @@ mod tests {
                     }
                     Some(Step::Fail) => {
                         self.0.pop_front();
-                        return Err(Status::unavailable("router went away"));
+                        return Err(Status::unavailable("the stream broke"));
                     }
                 }
             }
