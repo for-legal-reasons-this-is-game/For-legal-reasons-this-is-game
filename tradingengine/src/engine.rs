@@ -11,12 +11,11 @@ use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
 use crate::ids::CommandId;
 use crate::market::{MarketInfo, Placed};
-use crate::order::OrderStatus;
 use crate::place::parse_place_order;
 use crate::quantity::BaseQuantity;
 use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
-use crate::wire::required;
+use crate::wire::{order_status, required};
 
 #[derive(Default)]
 pub struct State {
@@ -297,12 +296,3 @@ fn reject_reason(error: &EngineError) -> RejectReason {
 }
 
 // the proto has no Open, a resting order with no fills is New there
-fn order_status(status: OrderStatus) -> proto::OrderStatus {
-    match status {
-        OrderStatus::New | OrderStatus::Open => proto::OrderStatus::New,
-        OrderStatus::PartiallyFilled => proto::OrderStatus::PartiallyFilled,
-        OrderStatus::Filled => proto::OrderStatus::Filled,
-        OrderStatus::Cancelled => proto::OrderStatus::Cancelled,
-        OrderStatus::Rejected => proto::OrderStatus::Unspecified,
-    }
-}

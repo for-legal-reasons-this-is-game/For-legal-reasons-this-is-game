@@ -8,6 +8,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrderId(u128);
 
+impl From<OrderId> for Id {
+    fn from(id: OrderId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl OrderId {
     pub const fn new(value: u128) -> Self {
         Self(value)
@@ -23,6 +28,11 @@ impl OrderId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradeId(u128);
 
+impl From<TradeId> for Id {
+    fn from(id: TradeId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl TradeId {
     pub const fn new(value: u128) -> Self {
         Self(value)
@@ -46,6 +56,11 @@ impl TradeId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(u128);
 
+impl From<UserId> for Id {
+    fn from(id: UserId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl UserId {
     pub const fn new(value: u128) -> Self {
         Self(value)
@@ -61,6 +76,11 @@ impl UserId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(u128);
 
+impl From<AccountId> for Id {
+    fn from(id: AccountId) -> Self {
+        Id::from(id.value())
+    }
+}
 impl AccountId {
     pub const fn new(value: u128) -> Self {
         Self(value)
