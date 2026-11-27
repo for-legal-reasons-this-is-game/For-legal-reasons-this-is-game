@@ -10,7 +10,7 @@ component needs and why.
 |---|---|---|
 | Engine | `StatefulSet` with a headless Service | One pod per instance. Each pod owns up to 8 markets. |
 | Router | `Deployment` | One or more. It keeps no state of its own. |
-| Event consumer | `Deployment` with the `Recreate` strategy | Exactly 1. |
+| Event consumer | `Deployment` with the `Recreate` strategy, and a Service so the engines can reach it | Exactly 1. |
 | Backend | `Deployment` | As needed. It only talks to the router. |
 | Redis | Highly available setup (managed service or Sentinel/cluster) | Not a single pod. |
 
@@ -106,18 +106,16 @@ response, because the engine writes to it before it replies.
 
 - The router holds two maps: which market belongs to which instance, and the
   address of each instance. Keep them in a `ConfigMap` or another source the
-  router reads at startup and on change. The backend and the consumer never read
-  it.
-- It is stateless, so it can have several replicas. Each replica opens its own
-  stream to every engine instance.
+  router reads at startup and on change. The backend never reads it.
+- It is stateless, so it can have several replicas.
 - gRPC uses long-lived HTTP/2 connections. A Layer 4 load balancer in front of
   the router pins all traffic of a client to one replica, and a Layer 7 one
-  needs HTTP/2 support. Check how the backend and the consumer reach the router.
-- Enable gRPC keepalive between the consumer and the router, and between the
-  router and the engines. Make sure no proxy, ingress, or service mesh in the
-  path has an idle or maximum-duration timeout that cuts a stream.
-- A router replica that restarts drops the consumer's stream. The consumer
-  reconnects and replays; that is expected.
+  needs HTTP/2 support. Check how the backend reaches the router.
+- The router handles commands only. It has no event streams: the engines push
+  their events to the consumer.
+- Enable gRPC keepalive between the router and the engines. Make sure no proxy,
+  ingress, or service mesh in the path has an idle or maximum-duration timeout
+  that cuts a connection.
 
 ## Event consumer
 
@@ -125,6 +123,17 @@ response, because the engine writes to it before it replies.
   which the design can survive but doesn't need to.
 - Use the `Recreate` strategy, so that the old pod stops before the new one
   starts.
+- It is a gRPC server. It listens on `LISTEN_ADDR` (default `0.0.0.0:50052`)
+  and the engine instances connect to it and call `PublishEvents`. Give it a
+  Service with a stable name so the engines can find it. It starts listening
+  only after it holds the single-consumer lock.
+- The port has no authentication or encryption. Rely on the cluster network: a
+  `NetworkPolicy` that allows traffic into it only from the engine pods.
+- Enable gRPC keepalive on the connection between each engine and the consumer
+  (the consumer pings every 20 s and waits 10 s). Make sure no proxy, ingress,
+  or service mesh between them has an idle or maximum-duration timeout that cuts
+  a stream. A consumer restart or a broken stream is expected; the engines
+  reconnect and replay.
 - It keeps no stream position. After a restart it replays the engines' whole
   retained history, so give it enough CPU and memory to do that quickly.
 - Its downtime must stay well below the engines' retention window. Alert when it

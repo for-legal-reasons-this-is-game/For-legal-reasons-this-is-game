@@ -39,18 +39,20 @@ The engine never touches money. The backend never decides matching outcomes.
   in Redis under that identity. At most one process may run for an instance at
   any time, including during rolling updates. Two processes writing the same
   Redis state corrupt it.
-- The backend and the event consumer never talk to an engine directly. They
-  talk to the router, which holds the map of markets to instances and the
-  address of each instance.
+- The backend never talks to an engine directly. It talks to the router, which
+  holds the map of markets to instances and the address of each instance.
 - Commands go to the router, which forwards each one to the instance that owns
-  its market.
-- The event consumer is a single service. It subscribes to the router once. The
-  router subscribes to every instance, merges their streams, and forwards the
-  items unchanged. Items from different instances interleave in no fixed
-  order; items from one instance keep the order the engine sent them in. If the
-  stream from one instance drops, the router subscribes to it again. It then
-  receives that instance's whole retained history again, which the consumer
-  handles because it is idempotent.
+  its market. The router handles commands only; it is not in the event path.
+- The event consumer is a single service that **listens**. Each engine instance
+  dials it and calls `EventConsumer.PublishEvents` (`proto/consumer.proto`): one
+  long-lived client-streaming call per instance, on which the instance sends its
+  `EventItem`s. Items from different instances interleave in no fixed order;
+  items from one instance keep the order the engine sent them in. The engine is
+  the client because the consumer is the one stable address; engine pods come
+  and go. The consumer never connects to an engine.
+- Every time an instance connects, it sends its whole retained history first,
+  then live events. If the stream drops, the instance reconnects and replays
+  again. The consumer handles this because it is idempotent.
 - The consumer is the only service that reads the event stream, and it writes
   the results to TigerBeetle and Postgres. Where this guide says "the backend"
   in the event stream, settlement, and refund sections, it means that consumer.
@@ -189,15 +191,28 @@ before a crash returns its stored response; a command that wasn't returns
 
 ### Processing the event stream
 
-The event stream carries `ExecutionReport` and `TradeSettlement` items. Open
-one subscription to the router at startup and keep it alive. Use gRPC keepalive
-so that a silently dropped connection is noticed and you reconnect.
+The event stream carries `ExecutionReport` and `TradeSettlement` items. The
+consumer runs a gRPC server (`EventConsumer`, `proto/consumer.proto`) and the
+engine instances push their items to it. The consumer sends nothing back per
+item; the `PublishEventsResponse` arrives only when a stream ends cleanly.
 
-#### Subscribing
+#### What the engine does on its side
 
-There is no resume position. Every subscription replays the whole history that
-the engines retain, then continues live. After a disconnect, a consumer restart,
-or an engine restart, subscribe again the same way.
+- Dial the consumer's address and call `PublishEvents` at startup. Keep the call
+  open for as long as the process runs.
+- Send the retained history in order, then live events in order.
+- When the stream ends or breaks, reconnect with backoff and jitter. The consumer
+  never reconnects for you.
+- Enable HTTP/2 keepalive, so that a silently dropped connection is noticed.
+- A `send` that blocks is backpressure: the consumer is slower than you. Wait.
+  It is not an error. A quiet stream is also normal.
+
+#### Receiving
+
+There is no resume position. Every connection replays the whole history that the
+engine retains, then continues live. After a disconnect, a consumer restart, or
+an engine restart, the engine connects again the same way. The consumer logs a
+stream that ends or breaks and keeps serving the others.
 
 Because of that, everything the consumer does must be safe to repeat:
 
@@ -219,7 +234,7 @@ fraction of the window, and size the window with that in mind.
 
 The engine guarantees that a trade's settlement arrives before the reports that
 reflect it, and that an order's final report arrives after every settlement that
-touched it. The router keeps that order per instance. No additional ordering
+touched it. Each instance sends in that order. No additional ordering
 logic is needed.
 
 Process items in batches:
@@ -233,7 +248,7 @@ Process items in batches:
 5. In one Postgres transaction, write the batch's trades and order updates.
 
 If the consumer crashes between steps 4 and 5, it processes the batch again
-after it reconnects. Deterministic transfer IDs make TigerBeetle return `exists`
+after the engines reconnect. Deterministic transfer IDs make TigerBeetle return `exists`
 instead of moving money twice.
 
 If any transfer chain fails, stop processing at that item and raise an alert.
@@ -340,8 +355,8 @@ them when it starts, so nothing the backend knows becomes wrong.
   `INTERNAL_ERROR`. See [Handling command responses](#handling-command-responses).
 - Commands that fail at the transport level while the engine is down follow the
   normal transport error rules. Retrying with the same `command_id` is safe.
-- The router subscribes to the instance again, and the instance replays its
-  retained history. The consumer skips what it already recorded.
+- The instance connects to the consumer again and replays its retained history.
+  The consumer skips what it already recorded.
 - Don't send `SetMarket` again. The engine restores its markets from Redis.
 - Don't cancel or refund working orders. They are still working.
 
@@ -508,11 +523,13 @@ current `limit_price`.
   It numbers the engine's own history; no subscriber resumes from it.
 - Persist every emitted item with its `sequence` in Redis, so a restart can
   replay it.
-- Every subscription starts with a replay of the whole retained history, in
-  order, and then continues live. There are no snapshots.
-- Allow multiple subscribers.
-- If a subscriber falls behind and the buffer limit is reached, drop it and let
-  it reconnect. Never block matching.
+- Push the items to the consumer: dial it, call `EventConsumer.PublishEvents`
+  and send on that stream. Every connection starts with a replay of the whole
+  retained history, in order, and then continues live. There are no snapshots.
+- Reconnect with backoff and jitter when the stream ends or breaks, and enable
+  HTTP/2 keepalive. A blocked `send` means the consumer is slower
+  than you; never let it block matching. The events are in Redis, so the stream
+  catches up when it can.
 - Retain the history for a fixed window, for example a number of hours or a
   maximum item count, and trim anything older. Document the value. Nobody
   acknowledges items, so a consumer that stays down longer than the window

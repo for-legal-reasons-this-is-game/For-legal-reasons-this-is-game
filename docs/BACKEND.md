@@ -79,8 +79,8 @@ The engine is the authority on market outcomes.
   order.
 - Order expiry for GTD orders, and stop order triggers.
 - Idempotency of commands, using `command_id`.
-- The event stream (`SubscribeEvents`) and the market data stream
-  (`SubscribeMarketData`).
+- The event stream (`PublishEvents`, which the engine pushes to the event
+  consumer) and the market data stream (`SubscribeMarketData`).
 
 ### The engine doesn't own
 
