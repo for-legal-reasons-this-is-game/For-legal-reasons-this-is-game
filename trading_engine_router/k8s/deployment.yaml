@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.30.0-standalone-strict/all.json
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  namespace: transcendence
+  labels:
+    app: router
+spec:
+  selector:
+    matchLabels:
+      app: router
+  template:
+    metadata:
+      labels:
+        app: router
+    spec:
+      containers:
+        - name: router
+          image: router:latest
+          # image is built locally and loaded into minikube, never pulled
+          # update env for router this is copied from backend
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 50051
+          envFrom:
+            - secretRef:
+                name: router-secrets
+          env:
+            - name: ENGINE_URL
+              value: http://tradingengine:50051
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+          resources:
+            requests:
+              cpu: 200m
+              memory: 50Mi
+              ephemeral-storage: 50Mi
+            limits:
+              cpu: 500m
+              memory: 500Mi
+              ephemeral-storage: 500Mi
+
+      automountServiceAccountToken: false
+  replicas: 1

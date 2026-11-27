@@ -28,7 +28,11 @@ impl EventHandler {
     fn push(&self, market_symbol: &str, body: Body) -> Result<(), Status> {
         // guaranteed by the contract; an empty symbol is a bug, so panic
         assert!(!market_symbol.is_empty(), "market_symbol must be set");
-        let command = EngineCommand { body: Some(body) };
+        let command = EngineCommand {
+            body: Some(body),
+            // no reply path yet: results don't flow back through the router
+            reply_to: String::new(),
+        };
         let mut redis = self
             .redis
             .lock()
