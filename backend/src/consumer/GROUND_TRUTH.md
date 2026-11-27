@@ -925,14 +925,14 @@ All tests run against the same code as production.
 - `ci.yaml` (pull requests and pushes to `main` and `database`): `cargo build --all-targets`,
   `cargo test --lib --bins` (all the consumer's **unit tests**, no database), clippy with
   `-D warnings`, and the job `backend-mock-tests`, which starts Postgres 16, Redis and TigerBeetle
-  and runs `cargo test --test consumer_test --test order_test` (so `consumer_test.rs` **is** run
-  there).
+  and runs `cargo test --test consumer_test --test order_test --test ingest_test` (so
+  `consumer_test.rs` and `ingest_test.rs` **are** run there).
 - `backend_ci.yaml` (branch `backend_staging`): the same build, `--lib --bins` and clippy, plus the
   `integration` job, which runs `backend/scripts/integration-test.sh` (that runs `integration_test`
   and `consumer_test`).
-- `ingest_test.rs` needs no database but no workflow runs it: it is only **compiled** (by
-  `build --all-targets` and clippy `--all-targets`). Run it by hand with `cargo test --test
-  ingest_test`.
+- `ingest_test.rs` needs no database; it runs in `backend-mock-tests` only because that job is where
+  the backend's `tests/` files run (the plain `test` job is shared with `tradingengine`, which has no
+  such file). You can also run it by hand with `cargo test --test ingest_test`.
 
 **What is not tested:** a real engine pushing events (the engine does not emit events yet; section
 12). The fake engines in the tests are written from `proto/consumer.proto`.
