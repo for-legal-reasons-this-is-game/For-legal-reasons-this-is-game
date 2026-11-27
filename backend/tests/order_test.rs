@@ -400,14 +400,6 @@ impl TradingEngine for FakeEngine {
         Err(Status::unimplemented("fake"))
     }
 
-    type SubscribeEventsStream = ReceiverStream<Result<proto::EventItem, Status>>;
-    async fn subscribe_events(
-        &self,
-        _: Request<proto::SubscribeEventsRequest>,
-    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-
     type SubscribeMarketDataStream = ReceiverStream<Result<proto::MarketDataItem, Status>>;
     async fn subscribe_market_data(
         &self,

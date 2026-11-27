@@ -3,9 +3,9 @@ use proto::engine_command::Body;
 use proto::trading_engine_server::TradingEngine;
 use proto::{
     CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse,
-    EngineCommand, EventItem, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse,
+    EngineCommand, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse,
     PlaceOrderRequest, PlaceOrderResponse, SetMarketRequest, SetMarketResponse,
-    SubscribeEventsRequest, SubscribeMarketDataRequest,
+    SubscribeMarketDataRequest,
 };
 use std::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
@@ -99,16 +99,6 @@ impl TradingEngine for EventHandler {
         &self,
         request: Request<ModifyOrderRequest>,
     ) -> Result<Response<ModifyOrderResponse>, Status> {
-        request.into_inner();
-        Err(Status::unimplemented("unimplemented"))
-    }
-
-    type SubscribeEventsStream = ReceiverStream<Result<EventItem, Status>>;
-
-    async fn subscribe_events(
-        &self,
-        request: Request<SubscribeEventsRequest>,
-    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
         request.into_inner();
         Err(Status::unimplemented("unimplemented"))
     }
