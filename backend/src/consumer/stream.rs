@@ -210,8 +210,17 @@ pub async fn run_batcher<S: EventSource + Send>(
             BatchRead::Items(b) => (b, false),
             BatchRead::Ended(b) | BatchRead::Failed(b, _) => (b, true),
         };
-        if !batch.is_empty() && out.send(batch).await.is_err() {
-            return;
+        if !batch.is_empty() {
+            // A full pipeline makes the send wait, but shutdown wins: the unsent batch is dropped
+            // and a replay brings it back.
+            let sent = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                s = out.send(batch) => s,
+            };
+            if sent.is_err() {
+                return;
+            }
         }
         if over {
             return;
@@ -469,6 +478,23 @@ mod tests {
         cancel.cancel();
         task.await.unwrap();
         assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_stops_on_cancel_while_blocked_on_a_full_pipeline() {
+        let (tx, rx) = mpsc::channel(1);
+        tx.try_send(vec![]).unwrap(); // the queue is full and nobody receives
+        let src = fake(vec![Step::Item(1), Step::Item(2)]);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_batcher(src, 1, ms(50), tx, cancel.clone()));
+
+        tokio::time::sleep(ms(10)).await; // the batcher is now stuck in send
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the batcher did not stop on cancel")
+            .unwrap();
+        drop(rx); // kept alive until here, so the queue never drained
     }
 
     #[tokio::test(start_paused = true)]
