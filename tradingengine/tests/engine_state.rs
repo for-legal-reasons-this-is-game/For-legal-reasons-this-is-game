@@ -173,14 +173,15 @@ fn a_saved_state_with_a_duplicate_order_does_not_load() {
 /// must load that save. So a save has to load into a version that added a field.
 #[test]
 fn a_save_still_loads_after_a_field_is_added() {
-    // `EngineState` as a later version could look: the contract's event `sequence`,
+    // `EngineState` as a later version could look: the contract's event history,
     // added between the fields that exist now
     #[derive(Deserialize)]
     #[allow(dead_code)]
     struct NextEngineState {
         markets: IgnoredAny,
-        #[serde(default)]
         sequence: u64,
+        #[serde(default)]
+        event_history: Vec<u64>,
         command_cache: IgnoredAny,
     }
     let mut engine = engine_with_cache(CACHE_CAPACITY);
@@ -192,4 +193,16 @@ fn a_save_still_loads_after_a_field_is_added() {
 
     rmp_serde::from_slice::<NextEngineState>(&bytes)
         .expect("a save from this version loads into the next one");
+}
+
+/// The contract wants `sequence` to keep counting across restarts, with no gaps or repeats.
+#[test]
+fn the_event_sequence_counts_up_and_survives_a_restart() {
+    let mut engine = engine();
+    assert_eq!(engine.next_sequence(), Ok(1));
+    assert_eq!(engine.next_sequence(), Ok(2));
+
+    let mut restarted = save_and_load(&engine, CACHE_CAPACITY);
+
+    assert_eq!(restarted.next_sequence(), Ok(3));
 }

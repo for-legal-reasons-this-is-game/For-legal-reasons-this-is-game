@@ -166,6 +166,8 @@ impl Book {
                 let exhausted = maker.qty_remaining().is_zero();
                 incoming.fill(quantity, quote)?;
 
+                // cloning here is for several orders mathcing to the incoming order
+
                 fills.push(Fill {
                     maker: maker.clone(),
                     taker: incoming.clone(),

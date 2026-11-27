@@ -51,6 +51,8 @@ pub struct Engine {
     // The cache lives here, so an [`EngineService`] messege handler that will lock
     // the [`Engine`] mutex will guarantee no two requests race on the cache
     command_cache: CommandCache,
+    /// the `sequence` of the last event. 0 means no event yet
+    sequence: u64,
 }
 
 impl Engine {
@@ -75,6 +77,7 @@ impl Engine {
         Ok(Engine {
             markets,
             command_cache,
+            sequence: engine_state.sequence,
         })
     }
 
@@ -88,8 +91,16 @@ impl Engine {
                     orders: info.book().get_orders(),
                 })
                 .collect(),
+            sequence: self.sequence,
             command_cache: self.command_cache.get_cache(),
         }
+    }
+
+    /// The `sequence` for the next event: one more than the last, so the first event
+    /// gets 1. The contract wants no gaps and no repeats.
+    pub fn next_sequence(&mut self) -> Result<u64> {
+        self.sequence = self.sequence.checked_add(1).ok_or(EngineError::Overflow)?;
+        Ok(self.sequence)
     }
 
     pub fn with_cache_capacity(n: usize) -> Self {

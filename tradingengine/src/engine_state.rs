@@ -11,6 +11,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EngineState {
     pub markets: Vec<MarketState>,
+    /// the `sequence` of the last event, so a restart keeps counting from there
+    pub sequence: u64,
     pub command_cache: Vec<(CommandId, Command, Answer)>,
 }
 
