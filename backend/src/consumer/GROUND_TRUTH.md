@@ -182,7 +182,11 @@ So after a restart, history is re-read quickly, only the really new events chang
 nothing is ever applied twice. The same applies mid-run, when one engine reconnects and its history
 arrives again in the middle of the other events. It can even happen that an old stream of an engine
 is still delivering while the new one already replays the history from the start: both feed the
-same channel, and the rules above (and `LimitMemory`, section 7.3) make that harmless.
+same channel. The rules above (and `LimitMemory`, section 7.3) cover almost every case, but not all:
+there is a pre-existing weak spot (it existed when the router resubscribed to engines too) that an
+overlap or a mid-run replay can hit. See "Replay while a trade is in flight" in section 12. It
+fails safe: the consumer stops and the restart recovers. An engine should close or abandon its old
+stream before it replays on a new one; that narrows the window.
 
 ### 4.4 When an engine's stream breaks
 
@@ -203,8 +207,11 @@ reaches the same event again. Section 9 lists each case.
 
 On SIGTERM or Ctrl-C the consumer stops reading, **finishes the batches already in the pipeline**,
 releases the lock and exits with code 0. A batch that was only half read is dropped; the next
-replay brings it back. Engines that are still connected see their stream cut (status `unavailable`)
-and reconnect on their own.
+replay brings it back. Besides the half-read batch, shutdown also drops the events still waiting in
+the channel (up to `BATCH_MAX_ITEMS`), the one item each handler is holding, and a batch blocked in
+the batcher's send. All of them come back with the replay, which is why a stop that is not followed
+by a quick restart counts against the retention window (section 12). Engines that are still
+connected see their stream cut (status `unavailable`) and reconnect on their own.
 
 Shutdown does not wait for the engines. Every stream handler watches the cancellation token in
 **both** places where it can wait: while waiting for the next item from its engine and while
@@ -340,7 +347,8 @@ builds the tonic server (keepalive 20 s / 10 s, `IngestService` as its only serv
 `serve_with_incoming_shutdown` on the given listener, stopping when the token is cancelled), and
 runs the server and `run_pipeline` (with `run_batcher` as its source) side by side. If the server
 fails, it cancels the token so the pipeline stops too. When the server ends it drops the service and
-with it the channel's sender, so the batcher sees the channel close and the stages drain.
+with it the channel's sender. In practice the batcher ends on cancellation first; the channel
+closing is the backup path (for example when the server fails). Either way the stages drain.
 
 **`prepare_batch` (`mod.rs`)**
 1. `plan::wanted_ids(&items)` lists the trade ids, order ids and market symbols the batch mentions.
@@ -520,8 +528,11 @@ long as the program: *the newest limit price seen for each open order*.
   when the order is not in the notebook.
 - **A replay cannot bring an old limit back.** Each entry remembers the *progress* of the report it
   came from, the sort key *(finished?, filled base, filled quote)*. A report only replaces the
-  entry if its progress is **equal or bigger**, so an older report arriving again is ignored. This
-  is the same rule used to choose between two reports of one order inside a batch (section 7.2).
+  entry if its progress is **equal or bigger**, so an older report with strictly smaller progress
+  arriving again is ignored. A report with *equal* progress replaces the entry (like the rule that
+  chooses between two reports of one order inside a batch, section 7.2), so a stale report of equal
+  progress can move the limit back; and a replayed trade that is not yet committed can be checked
+  against a limit that is newer than the trade (both in section 12, "Known limits").
 - **It does not grow forever.** When a report says the order is over (terminal), the order is
   removed from the notebook. Only open orders that were modified stay in it.
 - **A restart empties it.** That is correct: Postgres has everything that was saved, and the
@@ -907,15 +918,21 @@ All tests run against the same code as production.
     end consistent; a cancel with engines still connected exits cleanly.
 - `backend/scripts/integration-test.sh` starts a whole stack in Docker (Postgres, TigerBeetle, the
   engine, the backend) and runs the existing integration tests plus these. It is for running
-  everything on a laptop; the GitHub workflows no longer use it (`ci.yaml` has the job commented
-  out, and the Kubernetes tests replaced it).
+  everything on a laptop. `ci.yaml` does not use it, but `backend_ci.yaml` (the `integration` job,
+  branch `backend_staging`) still runs it; it runs `integration_test` and `consumer_test`.
 
-**What runs in the GitHub workflows (`ci.yaml`, `backend_ci.yaml`):** the build, clippy with
-`-D warnings`, and `cargo test --lib --bins`, which runs all the **unit tests** of the consumer
-(they need no database). The integration tests in `backend/tests/consumer_test.rs` are **not** run
-by the workflows: they need Postgres and TigerBeetle, and the Kubernetes job only runs the existing
-`integration_test`, because there is no engine to deploy yet. (`ingest_test.rs` needs no database, but
-the workflows do not run it by name either.)
+**What runs in the GitHub workflows:**
+- `ci.yaml` (pull requests and pushes to `main` and `database`): `cargo build --all-targets`,
+  `cargo test --lib --bins` (all the consumer's **unit tests**, no database), clippy with
+  `-D warnings`, and the job `backend-mock-tests`, which starts Postgres 16, Redis and TigerBeetle
+  and runs `cargo test --test consumer_test --test order_test` (so `consumer_test.rs` **is** run
+  there).
+- `backend_ci.yaml` (branch `backend_staging`): the same build, `--lib --bins` and clippy, plus the
+  `integration` job, which runs `backend/scripts/integration-test.sh` (that runs `integration_test`
+  and `consumer_test`).
+- `ingest_test.rs` needs no database but no workflow runs it: it is only **compiled** (by
+  `build --all-targets` and clippy `--all-targets`). Run it by hand with `cargo test --test
+  ingest_test`.
 
 **What is not tested:** a real engine pushing events (the engine does not emit events yet; section
 12). The fake engines in the tests are written from `proto/consumer.proto`.
@@ -945,9 +962,23 @@ the workflows do not run it by name either.)
 
 **Known limits**
 - **Equal filled amounts.** Two reports with the same filled amount (for example `NEW` and
-  `REPLACED`) cannot be ordered by the update rule. A replay may briefly show the older price or
-  status until it reaches the latest report. The final state is correct. A crash in the middle
-  leaves the older value until the next replay.
+  `REPLACED`, or two `REPLACED` with no fill between) cannot be ordered by the update rule: both
+  `LimitMemory::see` (`plan.rs`, replaces on equal progress) and the SQL (`<=`, `store.rs`) accept
+  the later arrival. In a normal replay the latest report arrives last and the final state is
+  correct. With overlapping streams or a mid-run replay, a stale equal-progress report that arrives
+  after the newest one can move the limit and the status backwards until that order's next report.
+  A crash in the middle leaves the older value until the next replay. Pre-existing.
+- **Replay while a trade is in flight.** (Pre-existing; the same happened behind the router.)
+  `plan_trade` checks a trade against the limit in `LimitMemory` first, and the memory is updated
+  at prepare time, but "already known" trades (`known_trade_ids`) only include **committed**
+  trades. Example: batch k holds `NEW` (limit 1000), a trade at 1000, a `PARTIALLY_FILLED`, and
+  `REPLACED` (limit 900, same fill); the memory now says 900. The engine reconnects and its replay
+  lands in batch k+1, which is prepared while batch k is still in the money or commit stage. The
+  trade is not "known" yet, the replayed `NEW` has less progress and is ignored, and the trade is
+  checked against 900: 1000 is above 900, so `Validation` and the consumer exits with code 1. It
+  fails safe: the stages after prepare still finish batch k, nothing moves wrongly, and after the
+  restart the trade is known and skipped. But it is a spurious stop. A possible follow-up (treat
+  trades planned but not yet committed as known in prepare) is **not built**.
 - **Throughput.** Batches are processed one stage at a time, and the whole history is re-read on
   every restart. How long that takes depends on the engines' retention window, which is not decided.
 - **Downtime.** If the consumer is down longer than the engines' retention window, events in the gap

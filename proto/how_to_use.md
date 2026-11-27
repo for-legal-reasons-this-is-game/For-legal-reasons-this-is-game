@@ -364,7 +364,7 @@ them when it starts, so nothing the backend knows becomes wrong.
 
 The market data stream is for display only. Nothing decides from it.
 
-- Use a separate subscription from the event stream.
+- Use a separate connection from the event stream (the engine's own, not the consumer's).
 - Keep the order book in memory. Never write it to Postgres.
 - A market's `BookSnapshot` always arrives before any delta for that market.
 - If `md_sequence` has a gap, discard the book, reconnect, and take a new
@@ -520,12 +520,15 @@ current `limit_price`.
 
 - Increase `sequence` by 1 per item, with no gaps or repeats, for the life of
   the instance's data. It keeps counting across restarts; it comes from Redis.
-  It numbers the engine's own history; no subscriber resumes from it.
+  It numbers the engine's own history; nobody resumes from it.
 - Persist every emitted item with its `sequence` in Redis, so a restart can
   replay it.
 - Push the items to the consumer: dial it, call `EventConsumer.PublishEvents`
   and send on that stream. Every connection starts with a replay of the whole
   retained history, in order, and then continues live. There are no snapshots.
+- Before you replay on a new connection, close or abandon your old stream to
+  the consumer. An old stream still sending while the new one replays can make
+  the consumer stop spuriously (see `GROUND_TRUTH.md`, section 12).
 - Reconnect with backoff and jitter when the stream ends or breaks, and enable
   HTTP/2 keepalive. A blocked `send` means the consumer is slower
   than you; never let it block matching. The events are in Redis, so the stream

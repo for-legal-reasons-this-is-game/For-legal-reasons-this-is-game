@@ -134,6 +134,11 @@ response, because the engine writes to it before it replies.
   or service mesh between them has an idle or maximum-duration timeout that cuts
   a stream. A consumer restart or a broken stream is expected; the engines
   reconnect and replay.
+- Caution, not verified against the tonic version in use: a graceful shutdown
+  while an engine's connection has silently died may wait for the HTTP/2
+  keepalive (about 20 s plus 10 s) before it completes. That is close to
+  Kubernetes' default 30 s `terminationGracePeriodSeconds`. When you write the
+  manifest, set the grace period above that, or bound the graceful shutdown.
 - It keeps no stream position. After a restart it replays the engines' whole
   retained history, so give it enough CPU and memory to do that quickly.
 - Its downtime must stay well below the engines' retention window. Alert when it
