@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package trading.v1;
+
+import "events.proto";
+
+// The engine is the gRPC client and the consumer is the gRPC server.
+// The engine opens a PublishEvents stream and sends the retained history in
+// order, then live events in order. There is no resume position: the consumer
+// does not tell the engine where to continue from. When the stream ends or
+// breaks, the engine reconnects with backoff.
+service EventConsumer {
+  rpc PublishEvents(stream EventItem) returns (PublishEventsResponse);
+}
+
+message PublishEventsResponse {}

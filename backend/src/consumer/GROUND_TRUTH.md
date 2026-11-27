@@ -41,35 +41,40 @@ them into permanent facts:
 
 ```
   engine instances (match orders, emit events)
-        │   gRPC stream "SubscribeEvents"
-        ▼
-     router            merges the streams of all engine instances
-        │   gRPC stream "SubscribeEvents" (same shape)
+        │   each one dials the consumer and calls "PublishEvents"
+        │   (one long-lived gRPC stream per engine instance, events flow engine -> consumer)
         ▼
     CONSUMER  ───────►  TigerBeetle   (moves the money)
         │
         └─────────────►  Postgres     (records trades, updates orders)
+
+  The router is not in this path. It only forwards commands to the engines.
 ```
+
+The consumer is a gRPC **server**: it listens on a port and the engines are its **clients**. The
+reason is that the consumer is one stable pod, while engine pods come and go: it is easy for a pod
+that moves to find the one that stays, and hard the other way round.
 
 Two properties drive the whole design:
 
 1. **The consumer is the only writer of trades and of the engine-owned columns of `orders`**
    (status, filled amounts). The backend never writes those, so nothing else can disagree with it.
-2. **Every event may arrive many times.** The stream has no "resume from here" feature. Every time
-   the consumer subscribes (after a restart, after a dropped connection, or when the router
-   reconnects to an engine) it receives the engine's whole retained history again, and then live
-   events. So the consumer is built so that handling the same event twice does nothing the second
-   time. This is called being *idempotent*, and it is the main thing to understand about this code.
-
-The consumer never talks to an engine directly. It talks to the router, which sits behind the same
-`ENGINE_URL` the backend uses.
+2. **Every event may arrive many times.** The stream has no "resume from here" feature. Every
+   connection of an engine starts with a replay: the engine sends its whole retained history, and
+   then live events. Engines reconnect by themselves whenever their stream ends or breaks (after a
+   consumer restart, after a dropped connection, after an engine restart), and each new connection
+   replays again. The consumer never reconnects for them. So the consumer is built so that handling
+   the same event twice does nothing the second time. This is called being *idempotent*, and it is
+   the main thing to understand about this code.
 
 ## 2. Vocabulary
 
 | Term | Meaning |
 |---|---|
 | **Engine** | The trading engine. Holds order books, matches orders, emits events. Never touches money. |
-| **Router** | Sits between the backend/consumer and the engine instances. For events, it subscribes to every engine instance, merges the streams and forwards the events unchanged. Events from different instances interleave; events from one instance keep their order. (The router does not exist in the repo yet.) |
+| **Router** | Sits between the backend and the engine instances and forwards **commands** only. It is not in the event path: the engines send their events straight to the consumer. |
+| **`PublishEvents`** | The one gRPC call the consumer serves (`EventConsumer` in `proto/consumer.proto`). The engine calls it once per connection and streams `EventItem`s on it; the consumer answers with an empty `PublishEventsResponse` only when a stream ends cleanly. Events from different engine instances interleave; events from one instance keep their order. |
+| **Ingest** | The receiving side inside the consumer (`ingest.rs`): the gRPC service `IngestService`, one handler call per engine stream, and one shared bounded channel into which all the handlers put their events. The batching reads the other end of that channel. |
 | **Event** (`EventItem`) | One message on the stream. It has a `sequence` number, an `engine_time`, a `market_symbol` and a `body` that is either a trade settlement or an execution report. |
 | **Trade settlement** (`TradeSettlement`) | "These two orders matched." It carries both order ids, price, quantities, fees and the accounts involved. This is the event that makes money move. |
 | **Execution report** (`ExecutionReport`) | "This order is now in this state." It carries the order's complete current state: status and how much is filled. It does not move money by itself. |
@@ -80,7 +85,7 @@ The consumer never talks to an engine directly. It talks to the router, which si
 | **Hold account** | One TigerBeetle account **per order**, whose id equals the order id. When an order is placed, the backend moves the funds the order might spend into it. A buy reserves the **quote** asset (money to pay with). A sell reserves the **base** asset (the thing to sell). |
 | **Transfer** | A movement of an amount from a *debit account* (money leaves) to a *credit account* (money arrives). |
 | **Linked chain** | Several transfers sent together that succeed or fail as a unit. If one fails, none are applied. |
-| **Replay** | The engine re-sending its retained history to a new subscriber. |
+| **Replay** | The engine re-sending its retained history at the start of every new connection to the consumer. |
 | **Idempotent** | Doing it twice has the same effect as doing it once. |
 | **Maker / taker** | In a match, the order that was already resting in the book is the maker; the one that arrived and matched is the taker. They can pay different fee rates. |
 | **bps** | Basis points. 1 bps = 0.01%. 30 bps = 0.30%. |
@@ -94,7 +99,7 @@ The consumer never talks to an engine directly. It talks to the router, which si
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
-| `ENGINE_URL` | yes | – | gRPC address of the event source (the router). Same variable the backend uses. |
+| `LISTEN_ADDR` | no | `0.0.0.0:50052` | Address and port where the gRPC server listens for the engines. |
 | `DATABASE_URL` | yes | – | Postgres connection string. |
 | `TB_CLUSTER_ID` | yes | – | TigerBeetle cluster id (a number). |
 | `TB_IP_ADRESSES` | yes | – | TigerBeetle replica addresses as **IPs** (`ip:port,ip:port`). The spelling `ADRESSES` is the repository's. In Kubernetes the backend's startup script turns `TB_HOSTS` (DNS names) into this; the consumer does not resolve names itself. |
@@ -107,7 +112,7 @@ message and exit code 1.
 
 ### What it reads
 
-- **The event stream** from `ENGINE_URL` (`SubscribeEvents`, an empty request).
+- **The incoming event streams**: every engine instance that connects to `LISTEN_ADDR` and calls `PublishEvents`.
 - **Postgres**: `trades` (which trades are already recorded), `orders` (what the backend wrote for
   each order: owner, accounts, limit price, fee rates) and `markets` (ledgers and fee account).
 
@@ -131,16 +136,22 @@ message and exit code 1.
 3. Take the **single-consumer lock** (a Postgres advisory lock on a dedicated connection). If
    another consumer holds it, exit with an error. This protects against two consumers settling the
    same events at once.
-4. Create the TigerBeetle client and the gRPC client for the router (with keepalive pings every 20
-   seconds, and a 10-second timeout for the reply).
-5. Start the pipeline (section 7.8) and the subscription loop.
+4. Create the TigerBeetle client.
+5. Start the gRPC server and the pipeline (section 7.8). The server uses HTTP/2 keepalive: it pings
+   every 20 seconds and waits 10 seconds for the reply, so dead engine connections are dropped.
+
+The program (`bin/consumer.rs`) binds the TCP listener on `LISTEN_ADDR` before it calls `run` and
+passes the listener in; this is what lets the tests bind port 0. The server only starts **serving**
+in step 5, after the lock is held, so a second consumer never receives an event. (Connections that
+arrive before that wait in the operating system's queue and are not read.)
 
 ### 4.2 Steady state
 
-The consumer subscribes to the event stream and reads events in **batches**. A batch closes when it
-has `BATCH_MAX_ITEMS` events, or when `BATCH_MAX_WAIT_MS` has passed since its first event,
+The engines push events into the consumer, and the consumer reads them in **batches** from the
+shared channel (all engine streams feed the same channel). A batch closes when it has
+`BATCH_MAX_ITEMS` events, or when `BATCH_MAX_WAIT_MS` has passed since its first event,
 whichever comes first. The consumer waits for the first event as long as it takes, so a quiet
-stream never produces empty batches.
+stream never produces empty batches. A batch can hold events from several engine instances.
 
 Each batch passes through three steps, in this order:
 
@@ -155,7 +166,7 @@ the events arrived.
 
 ### 4.3 Replays (the normal case, not an error)
 
-On every subscription the engine sends its whole retained history first. Most of it is already
+On every connection the engine sends its whole retained history first. Most of it is already
 recorded. The consumer handles this without any "where did I stop?" memory. Each kind of work is
 protected by something that refuses to do it twice:
 
@@ -168,16 +179,23 @@ protected by something that refuses to do it twice:
 | A refund | The refund's transfer id is computed from the order id; a repeat gets "exists". |
 
 So after a restart, history is re-read quickly, only the really new events change anything, and
-nothing is ever applied twice. The same applies mid-run, when the router reconnects to one engine
-and that engine's history arrives again in the middle of the stream.
+nothing is ever applied twice. The same applies mid-run, when one engine reconnects and its history
+arrives again in the middle of the other events. It can even happen that an old stream of an engine
+is still delivering while the new one already replays the history from the start: both feed the
+same channel. The rules above (and `LimitMemory`, section 7.3) cover almost every case, but not all:
+there is a pre-existing weak spot (it existed when the router resubscribed to engines too) that an
+overlap or a mid-run replay can hit. See "Replay while a trade is in flight" in section 12. It
+fails safe: the consumer stops and the restart recovers. An engine should close or abandon its old
+stream before it replays on a new one; that narrows the window.
 
-### 4.4 When the stream breaks
+### 4.4 When an engine's stream breaks
 
-If subscribing fails, or the stream ends or errors, the consumer keeps the events it already read
-(they form a last, partial batch and are processed), waits, and subscribes again. It never gives up.
-The wait starts at 200 ms and doubles each time up to 30 s, with a little randomness (up to half the
-wait is subtracted) so that instances do not retry in lockstep. It goes back to 200 ms as soon as a
-non-empty batch arrives.
+If an engine's stream ends or errors, the consumer logs one line (`CONSUMER: stream from <peer>
+ended` or `... broke: <reason>`) and keeps serving. That call ends, and nothing else is affected:
+not the other engines, not the batches in progress. The events already read from that stream stay
+in the channel and are processed. Reconnecting is the **engine's** job (with its own backoff and
+jitter): it dials again and replays its history (section 4.3). The consumer has no retry loop and
+no timer for this, and it does not try to close an old stream when a new one arrives.
 
 ### 4.5 When something is wrong with an event or a system
 
@@ -187,9 +205,19 @@ reaches the same event again. Section 9 lists each case.
 
 ### 4.6 Shutdown
 
-On SIGTERM or Ctrl-C the consumer stops reading the stream, **finishes the batches already in the
-pipeline**, releases the lock and exits with code 0. A batch that was only half read is dropped; the
-next replay brings it back.
+On SIGTERM or Ctrl-C the consumer stops reading, **finishes the batches already in the pipeline**,
+releases the lock and exits with code 0. A batch that was only half read is dropped; the next
+replay brings it back. Besides the half-read batch, shutdown also drops the events still waiting in
+the channel (up to `BATCH_MAX_ITEMS`), the one item each handler is holding, and a batch blocked in
+the batcher's send. All of them come back with the replay, which is why a stop that is not followed
+by a quick restart counts against the retention window (section 12). Engines that are still
+connected see their stream cut (status `unavailable`) and reconnect on their own.
+
+Shutdown does not wait for the engines. Every stream handler watches the cancellation token in
+**both** places where it can wait: while waiting for the next item from its engine and while
+waiting for room in the channel. So a quiet stream from an idle engine, or a full channel, cannot
+keep tonic's graceful shutdown waiting forever. The batcher does the same when its send into the
+pipeline is blocked (section 7.8).
 
 ## 5. How the code is organised
 
@@ -197,16 +225,19 @@ next replay brings it back.
 backend/src/bin/consumer.rs     entry point: read config, handle signals, call consumer::run
 backend/src/consumer/
   mod.rs        Config, run(), run_locked(), prepare_batch(): wires everything together
-  stream.rs     reading the stream: batches (collect_batch), the retry loop (run_source), Backoff
+  ingest.rs     the receiving side: IngestService (the gRPC handler), channel(), ChannelSource
+  stream.rs     batching: collect_batch, EventSource, run_batcher (Backoff and clock_jitter also
+                live here, used only by the backend's place-order retry)
   pipeline.rs   the three-stage pipeline: run_pipeline(), run_stage()
   plan.rs       PURE LOGIC, no I/O: validates events and decides what to do (build_plan)
   store.rs      everything that talks to Postgres
   ledger.rs     everything that talks to TigerBeetle (send)
   ids.rs        computes the deterministic transfer ids
   lock.rs       the single-consumer advisory lock
-backend/src/service.rs          EngineClient (shared with the backend), plus with_keepalive()
 backend/src/domain.rs           TransferCodeType (a `Refund = 6` code was added for the consumer)
-backend/tests/consumer_test.rs  integration tests against real Postgres and TigerBeetle
+backend/tests/consumer_test.rs  integration tests against real Postgres and TigerBeetle (fake engines)
+backend/tests/ingest_test.rs    tests of the gRPC receiving side alone (no database)
+proto/consumer.proto            the contract: EventConsumer.PublishEvents
 ```
 
 The design rule that makes this readable: **`plan.rs` does no I/O.** It receives the events plus
@@ -221,17 +252,21 @@ building) can be tested with plain unit tests, with no database.
 ```
 main()                                         bin/consumer.rs
 ├─ Config::from_env()                          mod.rs        read the environment
+├─ TcpListener::bind(listen_addr)              bin/consumer.rs
 ├─ spawn: signal handler → cancel.cancel()     bin/consumer.rs
-└─ consumer::run(config, cancel)               mod.rs
+└─ consumer::run(config, listener, cancel)     mod.rs
    ├─ PgPoolOptions...connect()                              Postgres pool
    ├─ lock::try_lock()                         lock.rs       single-consumer lock
    ├─ run_locked()                             mod.rs
    │  ├─ tb::Client::new()                                    TigerBeetle client
-   │  ├─ EngineClient::with_keepalive()        service.rs    gRPC client
    │  ├─ creates the LimitMemory                              newest limit price per open order
    │  ├─ builds three closures: prepare, settle, commit
+   │  ├─ ingest::channel()                     ingest.rs     the shared channel: (tx, ChannelSource)
+   │  ├─ Server::builder()...serve_with_incoming_shutdown     the gRPC server, with IngestService
+   │  │     └─ IngestService::publish_events()  ingest.rs     one call per engine stream, runs
+   │  │                                                       concurrently with the others
    │  └─ pipeline::run_pipeline(...)           pipeline.rs   runs until everything ends
-   │     ├─ source:   stream::run_source()     stream.rs     subscribe, batch, retry
+   │     ├─ source:   stream::run_batcher()    stream.rs     batch what ChannelSource delivers
    │     │     └─ collect_batch()                             one batch
    │     ├─ stage 1:  prepare  → prepare_batch()  mod.rs
    │     │     ├─ plan::wanted_ids()            plan.rs       what to look up
@@ -253,17 +288,20 @@ main()                                         bin/consumer.rs
 This is what happens to a single batch of events, from the stream to the databases.
 
 ```
- router ──events──► run_source ──Vec<EventItem>──► [queue] ──► PREPARE
-                    (collect_batch)                              │ wanted_ids → 3 Postgres lookups
-                                                                 │ build_plan  → BatchPlan
-                                                  [queue] ◄──────┘
-                                                     │
-                                                     ▼
-                                                   MONEY:  ledger::send(plan.transfers)  → TigerBeetle
-                                                     │
-                                                  [queue]
-                                                     ▼
-                                                   COMMIT: store::commit(trades, order_updates) → Postgres
+ engines ──events──► publish_events ──► [channel] ──► run_batcher ──Vec<EventItem>──► [queue]
+ (one stream each)   (one call per stream)  (ChannelSource)  (collect_batch)                 │
+                                                                                            ▼
+                                                                                          PREPARE
+                                                                      wanted_ids → 3 Postgres lookups
+                                                                      build_plan  → BatchPlan
+                                                                                            │
+                                                                                         [queue]
+                                                                                            ▼
+                                                                                          MONEY:  ledger::send(plan.transfers)  → TigerBeetle
+                                                                                            │
+                                                                                         [queue]
+                                                                                            ▼
+                                                                                          COMMIT: store::commit(trades, order_updates) → Postgres
 ```
 
 The value passed between the stages is a `BatchPlan`:
@@ -279,8 +317,9 @@ BatchPlan {
 ### 6.3 Function by function
 
 **`main` (`bin/consumer.rs`)**
-Reads the configuration, creates a `CancellationToken` (a shared "please stop" flag), starts a small
-task that cancels the token when SIGTERM or Ctrl-C arrives, and calls `consumer::run`. If `run`
+Reads the configuration, binds the TCP listener on `LISTEN_ADDR` (logging `CONSUMER: listening on
+...`), creates a `CancellationToken` (a shared "please stop" flag), starts a small task that cancels
+the token when SIGTERM or Ctrl-C arrives, and calls `consumer::run` with the listener. If `run`
 returns an error, `main` returns it, which prints it and exits with code 1.
 
 **`Config::from_env` / `Config::from_lookup` (`mod.rs`)**
@@ -290,19 +329,26 @@ live inside: `required(name)` fails if the variable is missing, `number(name, de
 number or uses the default.
 
 **`run` (`mod.rs`)**
-Connects to Postgres, takes the lock, calls `run_locked`, then releases the lock **whether or not**
-`run_locked` failed, and returns its result.
+Connects to Postgres, takes the lock, calls `run_locked` (which serves on the listener it was
+given), then releases the lock **whether or not** `run_locked` failed, and returns its result.
 
 **`run_locked` (`mod.rs`)**
-Builds the TigerBeetle client and the router client, creates the `LimitMemory` once (section 7.3;
-every batch shares it), then defines the three pieces of work as closures and hands them to
-`run_pipeline`:
+Builds the TigerBeetle client, creates the `LimitMemory` once (section 7.3; every batch shares it),
+then defines the three pieces of work as closures:
 
 - `prepare`: calls `prepare_batch(&pool, &limits, items)`.
 - `settle`: calls `ledger::send(&tb_client, &plan.transfers)` and passes the plan on.
 - `commit`: calls `store::commit(...)` and prints one `CONSUMER: batch committed: ...` line.
 
 The comment in the code explains the order: money first, records second.
+
+Then it creates the shared channel (`ingest::channel`, with room for `BATCH_MAX_ITEMS` events),
+builds the tonic server (keepalive 20 s / 10 s, `IngestService` as its only service,
+`serve_with_incoming_shutdown` on the given listener, stopping when the token is cancelled), and
+runs the server and `run_pipeline` (with `run_batcher` as its source) side by side. If the server
+fails, it cancels the token so the pipeline stops too. When the server ends it drops the service and
+with it the channel's sender. In practice the batcher ends on cancellation first; the channel
+closing is the backup path (for example when the server fails). Either way the stages drain.
 
 **`prepare_batch` (`mod.rs`)**
 1. `plan::wanted_ids(&items)` lists the trade ids, order ids and market symbols the batch mentions.
@@ -311,19 +357,37 @@ The comment in the code explains the order: money first, records second.
    waiting for a database), calls `plan::build_plan(&items, &lookups, &mut memory)` and returns the
    `BatchPlan`.
 
-**`run_source` (`stream.rs`)**
-The subscription loop. Repeatedly: connect (`engine.subscribe_events`), read batches with
-`collect_batch`, send each non-empty batch to the pipeline's first queue; when the stream is over,
-log why, count a reconnect, wait with `Backoff`, and subscribe again. It returns only when
-shutdown is requested or the pipeline is gone.
+**`ingest::channel` and `ChannelSource` (`ingest.rs`)**
+`channel(capacity)` creates the shared bounded channel and returns its sender (`tx`, which `IngestService`
+owns; all streams share it) and its receiving end wrapped as a `ChannelSource`. `ChannelSource` implements `EventSource`
+so `collect_batch` can read it. It returns `Ok(None)` once every sender is gone and the channel is
+empty, and it never returns an error: a broken engine stream is the handler's business.
+
+**`IngestService::publish_events` (`ingest.rs`)**
+The handler of one engine stream (tonic runs one call per stream, at the same time as the others).
+It logs `CONSUMER: stream from <peer> opened` (the peer is the connection's remote address), then
+loops: read the next item from the stream and `send` it into the shared channel, so that stream
+keeps its order. Both waits (for the next item, and for room in the channel) race against the
+cancellation token, so shutdown always gets through. It ends in one of four ways, each logged:
+the engine closed the stream (`ended`, answer: empty `PublishEventsResponse`), the stream errored
+(`broke: <status>`, the error is returned to the caller), shutdown started (`cut: shutting down`,
+status `unavailable`), or the channel's receiver is gone (`cut: the pipeline is gone`, status
+`unavailable`). None of these stops the consumer or any other stream.
+
+**`run_batcher` (`stream.rs`)**
+The task that feeds the pipeline's first queue. Repeatedly: call `collect_batch` on the source and
+send each non-empty batch to the queue. It returns when the source ends or breaks (after sending
+what it has), when shutdown is requested (dropping the half-read batch), or when the pipeline is
+gone. Its send into a full queue also races against cancellation, and cancellation wins.
 
 **`collect_batch` (`stream.rs`)**
-Reads events from the stream into one batch (section 4.2) and returns one of three results:
-`Items` (a normal batch; the stream continues), `Ended` (the stream ended; here are the events read
-so far) or `Failed` (the stream broke; same).
+Reads events from a source into one batch (section 4.2) and returns one of three results:
+`Items` (a normal batch; the source continues), `Ended` (the source is over; here are the events
+read so far) or `Failed` (the source broke; same). With the `ChannelSource` only `Items` and `Ended`
+happen in production.
 
 **`run_pipeline` and `run_stage` (`pipeline.rs`)**
-Create the queues and run the source and the three stages together (section 7.8).
+Create the queues and run the source (`run_batcher`) and the three stages together (section 7.8).
 
 **`wanted_ids` (`plan.rs`)**
 Walks the batch once and collects, without duplicates and in order of appearance: trade ids, order
@@ -464,8 +528,11 @@ long as the program: *the newest limit price seen for each open order*.
   when the order is not in the notebook.
 - **A replay cannot bring an old limit back.** Each entry remembers the *progress* of the report it
   came from, the sort key *(finished?, filled base, filled quote)*. A report only replaces the
-  entry if its progress is **equal or bigger**, so an older report arriving again is ignored. This
-  is the same rule used to choose between two reports of one order inside a batch (section 7.2).
+  entry if its progress is **equal or bigger**, so an older report with strictly smaller progress
+  arriving again is ignored. A report with *equal* progress replaces the entry (like the rule that
+  chooses between two reports of one order inside a batch, section 7.2), so a stale report of equal
+  progress can move the limit back; and a replayed trade that is not yet committed can be checked
+  against a limit that is newer than the trade (both in section 12, "Known limits").
 - **It does not grow forever.** When a report says the order is over (terminal), the order is
   removed from the notebook. Only open orders that were modified stay in it.
 - **A restart empties it.** That is correct: Postgres has everything that was saved, and the
@@ -550,33 +617,42 @@ WHERE o.order_id = r.order_id
 the `rust_decimal` type cannot hold (it stops at 96 bits). So every quantity is sent as a string
 and converted with `::numeric` in SQL.
 
-### 7.7 The stream, batches and retries (`stream.rs`)
+### 7.7 The channel, the handlers and the batches (`ingest.rs`, `stream.rs`)
 
+- **The channel** is one bounded `tokio::sync::mpsc` channel shared by all engine streams
+  (capacity `BATCH_MAX_ITEMS`). `IngestService` owns the one sender, and every `publish_events` call sends through it.
+  Events of one stream stay in order because that handler sends them one at a time; events of
+  different streams interleave in whatever order they get in.
+- **The handler** (`publish_events`) reads its stream item by item and sends each into the channel
+  (section 6.3). An engine's stream that ends or breaks only ends that call.
 - **`collect_batch`** waits for the first event with no time limit, then starts a deadline
   (`max_wait`) and keeps reading until the batch is full or the deadline passes. It uses
   `tokio::select!` to race "next event" against "deadline". Reading the next event is safe to
   abandon and resume, so no event is lost when the deadline wins.
-- **`EventSource`** is a tiny trait with one method, `next()`. The real stream
-  (`tonic::Streaming`) implements it, and so does a fake in the tests.
-- **`Backoff`** is the waiting schedule: `next_delay(jitter)` returns the current wait and doubles
-  it up to the maximum; `reset()` goes back to the minimum. The caller passes the jitter (a number
-  from 0 to 1) so tests can be exact; production uses the clock's nanoseconds.
-- **`run_source`** ties it together (section 6.3). It also counts reconnects in `Stats.reconnects`
-  (currently only counted, never read).
+- **`EventSource`** is a tiny trait with one method, `next()`. `ChannelSource` (the channel's
+  receiving end) implements it, and so does `tonic::Streaming<EventItem>`; the unit tests use a
+  scripted fake.
+- **`run_batcher`** calls `collect_batch` in a loop and passes the batches on (section 6.3).
+- **`Backoff` and `clock_jitter`** are still in `stream.rs` but the consumer does not use them: the
+  engines do their own reconnecting. Only the backend's place-order retry loop (`v1.rs`) uses them.
 
 ### 7.8 The pipeline (`pipeline.rs`)
 
 ```
-source ──queue──► prepare ──queue──► ledger (money) ──queue──► commit
+engines ─► channel ─► batcher ──queue──► prepare ──queue──► ledger (money) ──queue──► commit
 ```
 
 - Each arrow is a **bounded** queue (`tokio::sync::mpsc`) holding at most `QUEUE_DEPTH` batches.
 - Each stage handles **one batch at a time**, so batches stay in order.
-- When a queue is full, the stage before it waits. That wait travels back to the source, which
-  stops reading the gRPC stream, and HTTP/2 flow control then slows the router. A slow stage slows
-  the stream; it does not make memory grow.
+- When a queue is full, the stage before it waits. That wait travels back: the batcher stops
+  taking events from the channel, the channel fills, every handler's `send` waits and stops
+  reading its gRPC stream, and HTTP/2 flow control then slows **each engine** (its `send` blocks).
+  A slow stage slows the engines; it does not make memory grow.
+- Waiting never blocks shutdown: the handlers' sends and the batcher's send into the first queue
+  both race against the cancellation token (sections 4.6 and 6.3).
 
-**Normal shutdown.** When the source ends (shutdown requested), it drops its sender. The prepare
+**Normal shutdown.** When the source (`run_batcher`) ends (shutdown requested), it drops its
+sender. The prepare
 stage sees an empty, closed queue after finishing what is in it, and ends, which closes the next
 queue, and so on. Everything already queued is processed.
 
@@ -634,9 +710,9 @@ quantity.
 
 | Situation | Where it is detected | Result |
 |---|---|---|
-| Router unreachable, or subscribe refused | `run_source` | Logs, waits (200 ms doubling to 30 s), subscribes again. Never exits. |
-| Stream ends or breaks | `collect_batch` | The events read so far are processed; then the same retry as above. |
-| Router sends an event with no body | `build_plan` | Logged, skipped. |
+| An engine disconnects, or its stream ends or breaks | `publish_events` | Logs `stream from <peer> ended` / `broke: ...`. The events already received are processed. The consumer keeps running and serving the other engines; the engine reconnects and replays. |
+| A handler's stream fails while others are fine | `publish_events` | Only that call returns an error. A broken stream never stops the consumer. |
+| An engine sends an event with no body | `build_plan` | Logged, skipped. |
 | A required field is absent, or a status/side is unknown | `plan_*` | `Malformed`: the consumer stops (exit 1). |
 | Trade fails validation (wrong account, price outside limit, fee too high, wrong fee account, zero amount) | `plan_trade` | `Validation`: the consumer stops. Nothing of that batch reaches TigerBeetle or Postgres. |
 | Event refers to an order or market missing from Postgres | `plan_*` | `UnknownOrder` / `UnknownMarket`: the consumer stops. |
@@ -675,7 +751,7 @@ is a plain word.
 | `m` | A message string (an error text). |
 | `f` | The formatter in `fmt(&self, f)`; it is how errors print themselves. |
 | `i` | A loop index. |
-| `tx` / `rx` | In `pipeline.rs`: the **s**ender and **r**eceiver ends of a queue (`events_tx`, `events_rx`). In `store.rs`, `tx` is a database **t**ransaction. |
+| `tx` / `rx` | In `pipeline.rs`: the **s**ender and **r**eceiver ends of a queue (`events_tx`, `events_rx`). In `ingest.rs`, `tx` is the sender of the shared channel (owned by `IngestService`, shared by all engine streams) and `rx` its receiver, inside `ChannelSource`. In `store.rs`, `tx` is a database **t**ransaction. |
 | `bps` | Basis points of a fee rate (1 bps = 0.01%). |
 | `fb`, `fq` | **F**illed **b**ase, **f**illed **q**uote (SQL, `store.rs`). |
 | `lp` | **L**imit **p**rice (SQL). |
@@ -759,17 +835,29 @@ filled quote)*; `memory` is the name of the `LimitMemory` passed to `build_plan`
 
 | Name | Meaning |
 |---|---|
-| `min`, `max`, `current` | `Backoff`'s shortest wait, longest wait, and the next wait. |
-| `jitter` | A number from 0 to 1 that shortens a wait by up to half. |
-| `source` | The thing events are read from (the real stream, or a fake in tests). |
+| `min`, `max`, `current` | `Backoff`'s shortest wait, longest wait, and the next wait. (`Backoff` and `jitter`, a number from 0 to 1 that shortens a wait by up to half, are not used by the consumer; only the backend's place-order retry uses them.) |
+| `source` | The thing events are read from (`ChannelSource`, or a fake in tests). |
 | `S` | The type of the source. |
 | `read` / `r` | The result of `collect_batch` (`Items`, `Ended`, `Failed`). |
-| `c` | The result of connecting (`connected`). |
 | `b` | A batch. |
-| `stop` / `why` | Set when the stream is over; the text says why. |
+| `over` | In `run_batcher`: set when the source is over (it ended or broke), so the loop returns after sending the last batch. |
+| `sent` / `s` | The result of sending a batch to the pipeline (an error means the pipeline is gone). |
 | `deadline` | The moment the current batch must close. |
 | `out` | The sender for the pipeline's first queue. |
-| `settings` | `SourceSettings`: batch limits and backoff limits. |
+| `cancel` | The shared cancellation token. |
+
+### `ingest.rs`
+
+| Name | Meaning |
+|---|---|
+| `tx` | The sender of the shared channel. `IngestService` owns one; each call uses it to send its events. |
+| `rx` | The receiver of the shared channel, inside `ChannelSource`. |
+| `peer` | The remote address of an engine's connection (or `an unknown peer`), used only in log lines. |
+| `stream` | The incoming `Streaming<EventItem>` of one call. |
+| `read` | The result of waiting for the next item: `None` if shutdown won the race, otherwise the stream's answer (an item, the end, or an error). |
+| `item` | One `EventItem` taken from the stream. |
+| `sent` | The result of putting an item on the channel (an error means the receiver is gone). |
+| `biased` | In `tokio::select!`: check the branches in the order written, so the cancellation token is looked at first. |
 
 ### `pipeline.rs` (generic type letters)
 
@@ -791,48 +879,75 @@ derives from: a trade id or an order id), `leg` (the leg number), `digest` (the 
 
 All tests run against the same code as production.
 
-- **Unit tests** (98, no database needed), in each module:
-  - `plan.rs`: validation of every rule, the four-leg chain and zero-fee chains, the refund (buyer
-    vs seller), collapsing several reports, limit changes inside a batch and across batches (`LimitMemory`), replay order.
-  - `ids.rs`: distinct, deterministic ids; no collision between consecutive trades; refund vs leg.
-  - `stream.rs` and `pipeline.rs`: batch size and wait, resubscribing, backoff, stage failure and
-    draining. They use a paused clock, so they take no real time.
-  - `mod.rs`: configuration.
-- **Integration tests** (26, `backend/tests/consumer_test.rs`), against a real Postgres and a real
+- **Unit tests** (no database needed), in each module. `cd backend && cargo test --lib --bins`
+  runs 140 in total (the whole crate, including backend tests that are not about the consumer); 56
+  of them are the consumer's:
+  - `plan.rs` (28): validation of every rule, the four-leg chain and zero-fee chains, the refund
+    (buyer vs seller), collapsing several reports, limit changes inside a batch and across batches
+    (`LimitMemory`), replay order.
+  - `ids.rs` (9): distinct, deterministic ids; no collision between consecutive trades; refund vs leg.
+  - `stream.rs` (12): batch size and wait, an idle stream never gives an empty batch, end and error
+    return the partial batch, `run_batcher` (full and timed batches, flush when the source ends,
+    stop on cancel and drop the partial batch, stop on cancel while blocked on a full pipeline, stop
+    when the pipeline is gone), and the three `Backoff` tests. They use a paused clock, so they take
+    no real time.
+  - `pipeline.rs` (3): stage failure and draining.
+  - `mod.rs` (4): configuration (defaults, overrides, `LISTEN_ADDR`, a bad number).
+- **Receiving side tests** (8, `backend/tests/ingest_test.rs`, no database): they start the real
+  gRPC server with `IngestService` on an ephemeral port and connect fake engines to it: items
+  arrive in order; two streams both arrive and each keeps its own order; a broken stream does not
+  affect another; an empty stream gets an empty response; an item without a body is forwarded
+  untouched; `ChannelSource` ends when all senders are gone; a full channel stops reading and
+  shutdown still completes; shutdown completes with a quiet stream still open.
+- **Integration tests** (31, `backend/tests/consumer_test.rs`), against a real Postgres and a real
   TigerBeetle:
-  - `store_*`: lookups, one-transaction commit, the `NULL` status case, the order-update rule, very
-    large numbers.
-  - `ledger_*`: replayed chains, failed legs named correctly, balancing refunds (repeatable, and of
-    an empty hold account).
-  - `lock_*`: the single-consumer lock.
-  - `e2e_*`: the real consumer connected to a **fake router** (a small gRPC server that plays the
-    router's part and sends scripted events): a trade settles and the balances are correct; the
-    same events delivered twice change nothing; a stream that drops halfway and then replays ends
-    consistent; a missing order and an invalid trade stop the consumer without moving money; a
-    second consumer cannot start; a limit raised by an edit is still honored when the edit and its
-    trade are in different batches (one event per batch).
+  - `store_*` (9): lookups, one-transaction commit, the `NULL` status case, the order-update rule,
+    very large numbers.
+  - `ledger_*` (7): replayed chains, failed legs named correctly, balancing refunds (repeatable, and
+    of an empty hold account).
+  - `lock_*` (3): the single-consumer lock.
+  - `e2e_*` (12): the real consumer, listening on an ephemeral port, with **fake engines** (tonic
+    clients that connect to it and push scripted events): a trade settles and the balances are
+    correct; the same events delivered twice change nothing; a stream that drops halfway and then
+    replays ends consistent; a missing order and an invalid trade stop the consumer without moving
+    money; a second consumer (on a different port) cannot start because of the lock; a limit raised
+    by an edit is still honored when the edit and its trade are in different batches (one event per
+    batch); an event without a body is skipped; two engines streaming at the same time both
+    settle; one engine's broken stream stops neither the consumer nor the other engine; two streams
+    of the same engine overlapping (an old one still sending while a new one replays the history)
+    end consistent; a cancel with engines still connected exits cleanly.
 - `backend/scripts/integration-test.sh` starts a whole stack in Docker (Postgres, TigerBeetle, the
   engine, the backend) and runs the existing integration tests plus these. It is for running
-  everything on a laptop; the GitHub workflows no longer use it (`ci.yaml` has the job commented
-  out, and the Kubernetes tests replaced it).
+  everything on a laptop. `ci.yaml` does not use it, but `backend_ci.yaml` (the `integration` job,
+  branch `backend_staging`) still runs it; it runs `integration_test` and `consumer_test`.
 
-**What runs in the GitHub workflows (`ci.yaml`, `backend_ci.yaml`):** the build, clippy with
-`-D warnings`, and `cargo test --lib --bins`, which runs all the **unit tests** of the consumer
-(they need no database). The integration tests in `backend/tests/consumer_test.rs` are **not** run
-by the workflows: they need Postgres and TigerBeetle, and the Kubernetes job only runs the existing
-`integration_test`, because there is no engine or router to deploy yet.
+**What runs in the GitHub workflows:**
+- `ci.yaml` (pull requests and pushes to `main` and `database`): `cargo build --all-targets`,
+  `cargo test --lib --bins` (all the consumer's **unit tests**, no database), clippy with
+  `-D warnings`, and the job `backend-mock-tests`, which starts Postgres 16, Redis and TigerBeetle
+  and runs `cargo test --test consumer_test --test order_test --test ingest_test` (so
+  `consumer_test.rs` and `ingest_test.rs` **are** run there).
+- `backend_ci.yaml` (branch `backend_staging`): the same build, `--lib --bins` and clippy, plus the
+  `integration` job, which runs `backend/scripts/integration-test.sh` (that runs `integration_test`
+  and `consumer_test`).
+- `ingest_test.rs` needs no database; it runs in `backend-mock-tests` only because that job is where
+  the backend's `tests/` files run (the plain `test` job is shared with `tradingengine`, which has no
+  such file). You can also run it by hand with `cargo test --test ingest_test`.
 
-**What is not tested:** a real router and a real engine stream (neither exists yet; section 12).
+**What is not tested:** a real engine pushing events (the engine does not emit events yet; section
+12). The fake engines in the tests are written from `proto/consumer.proto`.
 
 ## 12. Limits, open decisions, and what is not built
 
 **Not built yet**
-- The router, and the engine's `PlaceOrder` and `SubscribeEvents` (still `unimplemented`). The
-  consumer has only run against a fake router that follows `proto/events.proto`.
-- Deployment: no Dockerfile target, Kubernetes manifest or CI job for the consumer. It needs
-  `ENGINE_URL` as a plain environment value, the existing `backend-secrets` for `DATABASE_URL` and
-  `TB_CLUSTER_ID`, and the same startup step the backend uses to resolve `TB_HOSTS` into
-  `TB_IP_ADRESSES`.
+- The engine side: the engine does not emit events yet, so nothing pushes to the consumer outside
+  the tests. The consumer has only run against fake engines that follow `proto/consumer.proto`.
+  What the engine must do is in `proto/how_to_use.md` (dial, replay, reconnect with backoff and
+  jitter, keepalive).
+- Deployment: no Dockerfile target, Kubernetes manifest or CI job for the consumer. It needs a
+  Service so the engines can reach `LISTEN_ADDR`, the existing `backend-secrets` for
+  `DATABASE_URL` and `TB_CLUSTER_ID`, and the same startup step the backend uses to resolve
+  `TB_HOSTS` into `TB_IP_ADRESSES`.
 - Health probes, metrics, and alerts. The "alert" is the log line and the non-zero exit.
 
 **Decisions taken**
@@ -847,13 +962,31 @@ by the workflows: they need Postgres and TigerBeetle, and the Kubernetes job onl
 
 **Known limits**
 - **Equal filled amounts.** Two reports with the same filled amount (for example `NEW` and
-  `REPLACED`) cannot be ordered by the update rule. A replay may briefly show the older price or
-  status until it reaches the latest report. The final state is correct. A crash in the middle
-  leaves the older value until the next replay.
+  `REPLACED`, or two `REPLACED` with no fill between) cannot be ordered by the update rule: both
+  `LimitMemory::see` (`plan.rs`, replaces on equal progress) and the SQL (`<=`, `store.rs`) accept
+  the later arrival. In a normal replay the latest report arrives last and the final state is
+  correct. With overlapping streams or a mid-run replay, a stale equal-progress report that arrives
+  after the newest one can move the limit and the status backwards until that order's next report.
+  A crash in the middle leaves the older value until the next replay. Pre-existing.
+- **Replay while a trade is in flight.** (Pre-existing; the same happened behind the router.)
+  `plan_trade` checks a trade against the limit in `LimitMemory` first, and the memory is updated
+  at prepare time, but "already known" trades (`known_trade_ids`) only include **committed**
+  trades. Example: batch k holds `NEW` (limit 1000), a trade at 1000, a `PARTIALLY_FILLED`, and
+  `REPLACED` (limit 900, same fill); the memory now says 900. The engine reconnects and its replay
+  lands in batch k+1, which is prepared while batch k is still in the money or commit stage. The
+  trade is not "known" yet, the replayed `NEW` has less progress and is ignored, and the trade is
+  checked against 900: 1000 is above 900, so `Validation` and the consumer exits with code 1. It
+  fails safe: the stages after prepare still finish batch k, nothing moves wrongly, and after the
+  restart the trade is known and skipped. But it is a spurious stop. A possible follow-up (treat
+  trades planned but not yet committed as known in prepare) is **not built**.
 - **Throughput.** Batches are processed one stage at a time, and the whole history is re-read on
   every restart. How long that takes depends on the engines' retention window, which is not decided.
 - **Downtime.** If the consumer is down longer than the engines' retention window, events in the gap
   are never replayed and their trades never settle. Nothing detects it. Alert on consumer downtime.
+- **No authentication on the port.** Anyone who can reach `LISTEN_ADDR` can push events, and the
+  consumer trusts them as the engine's. It relies on the cluster network (for example a
+  `NetworkPolicy` that only lets the engine pods in). The consumer does not identify engines either:
+  streams are told apart in the logs only by the peer address.
 
 **Smaller, deferred items**
 - `BATCH_MAX_ITEMS` has no upper bound. TigerBeetle accepts a limited number of events per request
@@ -863,12 +996,12 @@ by the workflows: they need Postgres and TigerBeetle, and the Kubernetes job onl
 - The ledger stage may settle one more batch after the commit stage has failed (money stays
   correct; the replay answers "exists").
 - If the lock's connection dies, nobody notices.
-- Subscribing has no timeout of its own. Keepalive detects dead connections, but a router that
-  accepts the call and never answers would block it.
+- An engine that stays connected but never sends anything is accepted forever (a quiet market looks
+  the same). Only keepalive detects dead connections.
+- There is no limit on the number of connections.
 - The sides are not checked (that the "buyer" order really is a buy), and a refund takes its ledger
   from the event's market rather than from the order's.
 - An unknown `cancel_reason` number is stored as is.
-- `Stats.reconnects` is counted but never read.
 
 **Decisions that are fixed once deployed**
 - The transfer id formula (section 7.4).
@@ -880,7 +1013,7 @@ by the workflows: they need Postgres and TigerBeetle, and the Kubernetes job onl
 ### As a program
 
 ```
-ENGINE_URL=http://router:50051 \
+LISTEN_ADDR=0.0.0.0:50052 \
 DATABASE_URL=postgres://user:password@host:5432/db \
 TB_CLUSTER_ID=0 \
 TB_IP_ADRESSES=10.0.0.1:3000,10.0.0.2:3000,10.0.0.3:3000 \
@@ -893,8 +1026,11 @@ cargo run --bin consumer
 
 | Line | Meaning |
 |---|---|
-| `CONSUMER: could not subscribe to the event stream: ...` | The subscription failed; it will retry. |
-| `CONSUMER: the event stream ended` / `broke: ...` | The stream is over; it will resubscribe. |
+| `CONSUMER: listening on <addr>` | The listener is bound (printed by the program before `run`; serving starts after the lock is taken). |
+| `CONSUMER: stream from <peer> opened` | An engine connected and called `PublishEvents`. |
+| `CONSUMER: stream from <peer> ended` | The engine closed its stream cleanly. |
+| `CONSUMER: stream from <peer> broke: <status>` | That stream failed. Only that stream is over; the engine should reconnect. |
+| `CONSUMER: stream from <peer> cut: shutting down` / `cut: the pipeline is gone` | The consumer ended that stream itself. |
 | `CONSUMER: batch committed: CommitStats { trades_inserted, orders_updated, orders_skipped }` | One batch saved. `orders_skipped` counts old reports; large numbers right after a restart are normal. |
 | `CONSUMER: the <prepare/ledger/commit> stage failed: ...` | Fatal. The next line of the process is its exit. |
 | `CONSUMER: stopping` | A shutdown signal arrived. |
@@ -912,7 +1048,7 @@ docker run -d --name tb --security-opt seccomp=unconfined --cap-add IPC_LOCK -p 
 cd backend
 TB_CLUSTER_ID=0 TB_IP_ADRESSES=127.0.0.1:3000 \
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/backend \
-  cargo test --lib --test consumer_test
+  cargo test --lib --test consumer_test --test ingest_test
 ```
 
 Or run the whole stack locally with Docker: `bash backend/scripts/integration-test.sh` (not part of

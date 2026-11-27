@@ -1,15 +1,13 @@
-use crate::consumer::Config;
 use proto::EventItem;
 use std::future::Future;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use tokio::time::{Instant, sleep, sleep_until};
+use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
-/// Waits between attempts to resubscribe, doubling up to a cap.
+/// The retry backoff: waits that double up to a cap. The consumer no longer uses it (the engines
+/// reconnect on their own); the backend's place-order retry in `v1.rs` does.
 ///
 /// The caller passes the jitter (0.0..=1.0), so tests are deterministic. A delay is shortened
 /// by at most half.
@@ -39,7 +37,8 @@ impl Backoff {
     }
 }
 
-/// What the router sends: a source of events. It's a trait, so tests can stand in for the router.
+/// A source of events that the batcher reads. It's a trait, so tests can stand in for the real
+/// source.
 pub trait EventSource {
     fn next(&mut self) -> impl Future<Output = Result<Option<EventItem>, Status>> + Send;
 }
@@ -50,12 +49,20 @@ impl EventSource for tonic::Streaming<EventItem> {
     }
 }
 
+pub fn clock_jitter() -> f64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    (nanos % 1000) as f64 / 1000.0
+}
+
 pub enum BatchRead {
     /// A batch that closed because it was full or because the wait ran out. The stream goes on.
     Items(Vec<EventItem>),
-    /// The stream ended cleanly: the items read so far, then resubscribe.
+    /// The stream ended cleanly: the items read so far; the source is over.
     Ended(Vec<EventItem>),
-    /// The stream broke: the items read so far, then resubscribe.
+    /// The stream broke: the items read so far; the source is over.
     Failed(Vec<EventItem>, Status),
 }
 
@@ -90,101 +97,39 @@ pub async fn collect_batch<S: EventSource>(
     BatchRead::Items(batch)
 }
 
-#[derive(Default)]
-pub struct Stats {
-    pub reconnects: AtomicU64,
-}
-
-pub struct SourceSettings {
-    pub max_items: usize,
-    pub max_wait: Duration,
-    pub backoff_min: Duration,
-    pub backoff_max: Duration,
-    pub jitter: fn() -> f64,
-}
-
-pub fn clock_jitter() -> f64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or_default();
-    (nanos % 1000) as f64 / 1000.0
-}
-
-impl SourceSettings {
-    pub fn from_config(cfg: &Config) -> Self {
-        SourceSettings {
-            max_items: cfg.batch_max_items,
-            max_wait: cfg.batch_max_wait,
-            backoff_min: Duration::from_millis(200),
-            backoff_max: Duration::from_secs(30),
-            jitter: clock_jitter,
-        }
-    }
-}
-
-/// Returns `false` if shutdown came first.
-async fn pause(delay: Duration, cancel: &CancellationToken) -> bool {
-    tokio::select! {
-        _ = cancel.cancelled() => false,
-        _ = sleep(delay) => true,
-    }
-}
-
-/// Subscribes, batches, and hands the batches to the pipeline.
+/// Batches the events of one source and hands the batches to the pipeline.
 ///
-/// When the subscription fails, ends or breaks, it flushes what it has, waits ([`Backoff`]) and
-/// subscribes again, forever: the router sends the whole retained history again, and everything
-/// downstream is safe to repeat.
-///
-/// Returns only on shutdown, or when the pipeline has gone away.
-pub async fn run_source<S, F, Fut>(
-    mut connect: F,
-    settings: SourceSettings,
+/// Returns when the source ends or breaks (after flushing what it has), on shutdown (dropping the
+/// half-read batch, which a replay brings back), or when the pipeline has gone away.
+pub async fn run_batcher<S: EventSource + Send>(
+    mut source: S,
+    max_items: usize,
+    max_wait: Duration,
     out: mpsc::Sender<Vec<EventItem>>,
     cancel: CancellationToken,
-    stats: Arc<Stats>,
-) where
-    S: EventSource + Send,
-    F: FnMut() -> Fut + Send,
-    Fut: Future<Output = Result<S, Status>> + Send,
-{
-    let mut backoff = Backoff::new(settings.backoff_min, settings.backoff_max);
+) {
     loop {
-        let connected = tokio::select! {
+        let read = tokio::select! {
             _ = cancel.cancelled() => return,
-            c = connect() => c,
+            r = collect_batch(&mut source, max_items.max(1), max_wait) => r,
         };
-        match connected {
-            Err(status) => {
-                eprintln!("CONSUMER: could not subscribe to the event stream: {status}");
+        let (batch, over) = match read {
+            BatchRead::Items(b) => (b, false),
+            BatchRead::Ended(b) | BatchRead::Failed(b, _) => (b, true),
+        };
+        if !batch.is_empty() {
+            // A full pipeline makes the send wait, but shutdown wins: the unsent batch is dropped
+            // and a replay brings it back.
+            let sent = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                s = out.send(batch) => s,
+            };
+            if sent.is_err() {
+                return;
             }
-            Ok(mut source) => loop {
-                let read = tokio::select! {
-                    _ = cancel.cancelled() => return,
-                    r = collect_batch(&mut source, settings.max_items.max(1), settings.max_wait) => r,
-                };
-                let (batch, stop) = match read {
-                    BatchRead::Items(b) => (b, None),
-                    BatchRead::Ended(b) => (b, Some("the event stream ended".to_string())),
-                    BatchRead::Failed(b, status) => {
-                        (b, Some(format!("the event stream broke: {status}")))
-                    }
-                };
-                if !batch.is_empty() {
-                    backoff.reset();
-                    if out.send(batch).await.is_err() {
-                        return;
-                    }
-                }
-                if let Some(why) = stop {
-                    eprintln!("CONSUMER: {why}");
-                    break;
-                }
-            },
         }
-        stats.reconnects.fetch_add(1, Ordering::Relaxed);
-        if !pause(backoff.next_delay((settings.jitter)()), &cancel).await {
+        if over {
             return;
         }
     }
@@ -225,11 +170,10 @@ mod tests {
         assert_eq!(b.next_delay(0.0), ms(100));
     }
 
-    // --- batching and resubscribing, with a scripted fake in place of the router ---------------
+    // --- batching, with a scripted fake source ----------------------------------
 
     use proto::EventItem;
     use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
     use tokio::sync::mpsc;
     use tokio::time::Instant;
     use tokio_util::sync::CancellationToken;
@@ -268,7 +212,7 @@ mod tests {
                     }
                     Some(Step::Fail) => {
                         self.0.pop_front();
-                        return Err(Status::unavailable("router went away"));
+                        return Err(Status::unavailable("the stream broke"));
                     }
                 }
             }
@@ -334,80 +278,74 @@ mod tests {
         );
     }
 
-    fn settings() -> SourceSettings {
-        SourceSettings {
-            max_items: 10,
-            max_wait: ms(50),
-            backoff_min: ms(100),
-            backoff_max: ms(1000),
-            jitter: || 0.0,
-        }
-    }
-
     #[tokio::test(start_paused = true)]
-    async fn run_source_resubscribes_after_end_error_and_failed_connect() {
-        let connections: Arc<Mutex<VecDeque<Result<Fake, Status>>>> = Arc::new(Mutex::new(
-            vec![
-                Ok(fake(vec![Step::Item(1), Step::End])),
-                Err(Status::unavailable("no router yet")),
-                Ok(fake(vec![Step::Item(2), Step::Fail])),
-                Ok(fake(vec![Step::Item(3)])), // then idle
-            ]
-            .into(),
-        ));
-        let calls = Arc::new(Mutex::new(0u32));
-        let stats = Arc::new(Stats::default());
+    async fn batcher_sends_full_and_timed_batches() {
+        let src = fake((1..=5).map(Step::Item).collect());
         let (tx, mut rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_batcher(src, 3, ms(50), tx, cancel.clone()));
 
-        let (conns, n) = (connections.clone(), calls.clone());
-        let task = tokio::spawn(run_source(
-            move || {
-                *n.lock().unwrap() += 1;
-                let next = conns
-                    .lock()
-                    .unwrap()
-                    .pop_front()
-                    .expect("no more scripted connections");
-                async move { next }
-            },
-            settings(),
-            tx,
-            cancel.clone(),
-            stats.clone(),
-        ));
-
-        let start = Instant::now();
-        let mut got = vec![];
-        for _ in 0..3 {
-            got.extend(seqs(&rx.recv().await.unwrap()));
-        }
-        assert_eq!(got, vec![1, 2, 3]);
-        // waits: 100ms after the first end (backoff was reset by its batch), 200ms after the
-        // failed connect, 100ms after the failed stream (reset by its batch)
-        let waited = start.elapsed();
-        assert!(waited >= ms(400) && waited < ms(500), "{waited:?}");
-        assert_eq!(*calls.lock().unwrap(), 4);
-        assert_eq!(
-            stats.reconnects.load(std::sync::atomic::Ordering::Relaxed),
-            3
-        );
+        assert_eq!(seqs(&rx.recv().await.unwrap()), vec![1, 2, 3]);
+        assert_eq!(seqs(&rx.recv().await.unwrap()), vec![4, 5]);
 
         cancel.cancel();
         task.await.unwrap();
     }
 
     #[tokio::test(start_paused = true)]
-    async fn run_source_stops_when_the_pipeline_is_gone() {
+    async fn batcher_flushes_the_partial_batch_when_the_source_ends() {
+        let src = fake(vec![Step::Item(1), Step::Item(2), Step::End]);
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = tokio::spawn(run_batcher(src, 10, ms(50), tx, CancellationToken::new()));
+
+        assert_eq!(seqs(&rx.recv().await.unwrap()), vec![1, 2]);
+        task.await.unwrap();
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_stops_on_cancel_and_drops_the_partial_batch() {
+        // one item, then idle: the batch stays open until the wait runs out
+        let src = fake(vec![Step::Item(1)]);
+        let (tx, mut rx) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_batcher(
+            src,
+            10,
+            Duration::from_secs(60),
+            tx,
+            cancel.clone(),
+        ));
+
+        tokio::time::sleep(ms(10)).await;
+        cancel.cancel();
+        task.await.unwrap();
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_stops_on_cancel_while_blocked_on_a_full_pipeline() {
+        let (tx, rx) = mpsc::channel(1);
+        tx.try_send(vec![]).unwrap(); // the queue is full and nobody receives
+        let src = fake(vec![Step::Item(1), Step::Item(2)]);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_batcher(src, 1, ms(50), tx, cancel.clone()));
+
+        tokio::time::sleep(ms(10)).await; // the batcher is now stuck in send
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the batcher did not stop on cancel")
+            .unwrap();
+        drop(rx); // kept alive until here, so the queue never drained
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_stops_when_the_pipeline_is_gone() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        let task = tokio::spawn(run_source(
-            || async { Ok(fake(vec![Step::Item(1)])) },
-            settings(),
-            tx,
-            CancellationToken::new(),
-            Arc::new(Stats::default()),
-        ));
-        task.await.unwrap(); // returns instead of looping forever
+        let src = fake(vec![Step::Item(1)]);
+        let task = tokio::spawn(run_batcher(src, 10, ms(50), tx, CancellationToken::new()));
+        task.await.unwrap();
     }
 }

@@ -16,7 +16,6 @@ service TradingEngine {
   rpc ModifyOrder(ModifyOrderRequest) returns (ModifyOrderResponse);
 
   //for subscription
-  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream EventItem);
   rpc SubscribeMarketData(SubscribeMarketDataRequest) returns (stream MarketDataItem);
 }
 

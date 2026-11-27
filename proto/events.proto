@@ -4,13 +4,10 @@ package trading.v1;
 import "google/protobuf/timestamp.proto";
 import "common.proto";
 
-// There is no resume position: every subscription starts with a replay of the
-// whole history the engine retains, then continues live. The consumer is
-// idempotent, so it just skips what it already recorded.
-// The consumer only talks to the router, which subscribes to every engine
-// instance and merges the streams.
-message SubscribeEventsRequest {}
-
+// The engine is the client: it pushes events to the consumer through
+// EventConsumer.PublishEvents. There is no resume position: every connection
+// starts with a replay of the history the engine retains, then continues live.
+// The consumer is idempotent, so it just skips what it already recorded.
 message EventItem {
   // it's basically a counter of each individual "frame" of the processing.
   // you need to increase it every time you return a ExecutionReport or a TradeSettlement.

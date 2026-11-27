@@ -2,6 +2,8 @@
 //! Run them through `scripts/integration-test.sh`, or point `DATABASE_URL` / `TB_*` at a
 //! throwaway stack. Every test seeds its own ledgers, users and orders with fresh ids.
 
+mod common;
+
 use backend::consumer::ledger::{self, LedgerError};
 use backend::consumer::lock;
 use backend::consumer::plan::{OrderUpdate, TradeInsert};
@@ -9,6 +11,7 @@ use backend::consumer::store;
 use backend::consumer::{self, Config, ConsumerError};
 use backend::domain::TransferCodeType;
 use cn_tigerbeetle as tb;
+use common::relay;
 use sqlx::PgPool;
 use std::time::{Duration, SystemTime};
 use tokio::sync::OnceCell;
@@ -575,131 +578,22 @@ async fn lock_is_released_when_the_guard_is_dropped() {
     panic!("the lock was still held 5s after the guard was dropped");
 }
 
-// --- end to end: a fake router, the real consumer, real Postgres and TigerBeetle -----------------
+// --- end to end: fake engines, the real consumer, real Postgres and TigerBeetle ------------------
 
-use proto::trading_engine_server::{TradingEngine, TradingEngineServer};
+use proto::event_consumer_client::EventConsumerClient;
 use proto::{
-    EventItem, ExecutionReport, Id, OrderStatus, Side, TradeSettlement, Uint128, event_item::Body,
+    EventItem, ExecutionReport, Id, OrderStatus, PublishEventsResponse, Side, TradeSettlement,
+    Uint128, event_item::Body,
 };
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tonic::codegen::tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
-use tonic::{Request, Response, Status};
+use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
+use tonic::{Response, Status};
 
-#[derive(Clone, Copy)]
-enum Ending {
-    Hang,  // stay open and idle
-    Close, // end the stream cleanly
-    Error, // break the stream
-}
-
-struct Sub {
-    items: Vec<EventItem>,
-    ending: Ending,
-}
-
-struct FakeRouter {
-    subs: Mutex<VecDeque<Sub>>,
-    subscribed: Arc<AtomicUsize>,
-}
-
-#[tonic::async_trait]
-impl TradingEngine for FakeRouter {
-    async fn set_market(
-        &self,
-        _: Request<proto::SetMarketRequest>,
-    ) -> Result<Response<proto::SetMarketResponse>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-    async fn place_order(
-        &self,
-        _: Request<proto::PlaceOrderRequest>,
-    ) -> Result<Response<proto::PlaceOrderResponse>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-    async fn cancel_order(
-        &self,
-        _: Request<proto::CancelOrderRequest>,
-    ) -> Result<Response<proto::CancelOrderResponse>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-    async fn cancel_orders(
-        &self,
-        _: Request<proto::CancelOrdersRequest>,
-    ) -> Result<Response<proto::CancelOrdersResponse>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-    async fn modify_order(
-        &self,
-        _: Request<proto::ModifyOrderRequest>,
-    ) -> Result<Response<proto::ModifyOrderResponse>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-
-    type SubscribeEventsStream = ReceiverStream<Result<EventItem, Status>>;
-    async fn subscribe_events(
-        &self,
-        _: Request<proto::SubscribeEventsRequest>,
-    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
-        self.subscribed.fetch_add(1, Ordering::SeqCst);
-        let sub = self.subs.lock().unwrap().pop_front();
-        let (tx, rx) = mpsc::channel(1024);
-        tokio::spawn(async move {
-            if let Some(sub) = sub {
-                for item in sub.items {
-                    if tx.send(Ok(item)).await.is_err() {
-                        return;
-                    }
-                }
-                match sub.ending {
-                    Ending::Close => return,
-                    Ending::Error => {
-                        let _ = tx
-                            .send(Err(Status::unavailable("router lost the engine")))
-                            .await;
-                        return;
-                    }
-                    Ending::Hang => {}
-                }
-            }
-            tx.closed().await; // idle until the consumer goes away
-        });
-        Ok(Response::new(ReceiverStream::new(rx)))
-    }
-
-    type SubscribeMarketDataStream = ReceiverStream<Result<proto::MarketDataItem, Status>>;
-    async fn subscribe_market_data(
-        &self,
-        _: Request<proto::SubscribeMarketDataRequest>,
-    ) -> Result<Response<Self::SubscribeMarketDataStream>, Status> {
-        Err(Status::unimplemented("fake"))
-    }
-}
-
-/// Serves the scripted subscriptions (the n-th subscribe gets the n-th script) and returns its
-/// URL.
-async fn serve(subs: Vec<Sub>) -> (String, Arc<AtomicUsize>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let subscribed = Arc::new(AtomicUsize::new(0));
-    let router = FakeRouter {
-        subs: Mutex::new(subs.into()),
-        subscribed: subscribed.clone(),
-    };
-    tokio::spawn(
-        tonic::transport::Server::builder()
-            .add_service(TradingEngineServer::new(router))
-            .serve_with_incoming(TcpListenerStream::new(listener)),
-    );
-    (url, subscribed)
-}
-
-fn config(router_url: String, lock_key: i64) -> Config {
+async fn config(lock_key: i64) -> Config {
     Config {
-        engine_url: router_url,
+        // unused: `start` binds its own listener and hands it to the consumer
+        listen_addr: "127.0.0.1:0".to_string(),
         database_url: database_url(),
         tb_cluster_id: std::env::var("TB_CLUSTER_ID")
             .map(|v| v.parse().unwrap())
@@ -715,9 +609,17 @@ fn config(router_url: String, lock_key: i64) -> Config {
 
 type Running = (JoinHandle<Result<(), ConsumerError>>, CancellationToken);
 
-fn start(cfg: Config) -> Running {
+/// Starts the consumer on a free port and returns it with its URL.
+///
+/// The port accepts TCP connections as soon as it is bound, before the consumer holds the lock
+/// and serves, so a successful connect does not mean the consumer is ready. Engines can connect
+/// early anyway: their streams are served once it is.
+async fn start(cfg: Config) -> (Running, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
     let cancel = CancellationToken::new();
-    (tokio::spawn(consumer::run(cfg, cancel.clone())), cancel)
+    let task = tokio::spawn(consumer::run(cfg, listener, cancel.clone()));
+    ((task, cancel), url)
 }
 
 async fn stop(running: Running) {
@@ -728,6 +630,44 @@ async fn stop(running: Running) {
         .expect("the consumer did not stop")
         .unwrap();
     assert!(result.is_ok(), "{result:?}");
+}
+
+/// Plays an engine: one `PublishEvents` stream to the consumer, through a [`relay`] so it can be
+/// broken.
+struct FakeEngine {
+    tx: mpsc::Sender<EventItem>,
+    call: JoinHandle<Result<Response<PublishEventsResponse>, Status>>,
+    relay: JoinHandle<()>,
+}
+
+impl FakeEngine {
+    async fn connect(url: &str) -> FakeEngine {
+        let (relay_url, relay) = relay(url).await;
+        let mut client = EventConsumerClient::connect(relay_url)
+            .await
+            .expect("connect to the consumer");
+        let (tx, rx) = mpsc::channel(16);
+        let call =
+            tokio::spawn(async move { client.publish_events(ReceiverStream::new(rx)).await });
+        FakeEngine { tx, call, relay }
+    }
+
+    async fn send(&self, items: Vec<EventItem>) {
+        for item in items {
+            self.tx.send(item).await.expect("the stream is still open");
+        }
+    }
+
+    /// Ends the stream cleanly (the call and the relay finish on their own).
+    fn close(self) {
+        drop(self.tx);
+    }
+
+    /// Breaks the stream: the connection is gone and the stream never ended.
+    fn kill(self) {
+        self.relay.abort();
+        self.call.abort();
+    }
 }
 
 async fn wait_for<F, Fut>(what: &str, mut check: F)
@@ -742,6 +682,14 @@ where
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("timed out waiting for: {what}");
+}
+
+/// The usual end of an end-to-end test: both orders get FILLED, the money and the rows are there
+/// exactly once, and the consumer stops cleanly.
+async fn settle_and_stop(pool: &PgPool, c: &tb::Client, s: &Scenario, running: Running) {
+    wait_for("both orders FILLED", || is_settled(pool, s)).await;
+    assert_settled_exactly_once(pool, c, s).await;
+    stop(running).await;
 }
 
 fn ev(w: &World, body: Body) -> EventItem {
@@ -948,15 +896,11 @@ async fn e2e_trade_settles_and_orders_update() {
         None,
         "a new order has no status yet"
     );
-    let (url, _) = serve(vec![Sub {
-        items: full_history(&s, s.trade),
-        ending: Ending::Hang,
-    }])
-    .await;
-    let running = start(config(url, fresh_lock_key()));
-    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
-    assert_settled_exactly_once(&pool, &c, &s).await;
-    stop(running).await;
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+    let engine = FakeEngine::connect(&url).await;
+    engine.send(full_history(&s, s.trade)).await; // and the stream stays open
+    settle_and_stop(&pool, &c, &s, running).await;
+    drop(engine);
 }
 
 #[tokio::test]
@@ -968,25 +912,22 @@ async fn e2e_replaying_the_same_events_changes_nothing() {
     let marker = order(&pool, &s.w, &s.buyer, true).await;
     let mut replay = full_history(&s, s.trade);
     replay.push(report_event(&s.w, marker, OrderStatus::New, 0, 0));
-    let (url, subscribed) = serve(vec![
-        Sub {
-            items: full_history(&s, s.trade),
-            ending: Ending::Close,
-        },
-        Sub {
-            items: replay,
-            ending: Ending::Hang,
-        },
-    ])
-    .await;
-    let running = start(config(url, fresh_lock_key()));
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+
+    let first = FakeEngine::connect(&url).await;
+    first.send(full_history(&s, s.trade)).await;
+    first.close();
+    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
+
+    let second = FakeEngine::connect(&url).await;
+    second.send(replay).await;
     wait_for("the replay reached the marker order", || async {
         order_state(&pool, marker).await.0 == Some(1)
     })
     .await;
-    assert!(subscribed.load(Ordering::SeqCst) >= 2);
     assert_settled_exactly_once(&pool, &c, &s).await;
     stop(running).await;
+    drop(second);
 }
 
 #[tokio::test]
@@ -994,21 +935,21 @@ async fn e2e_stream_drop_mid_history_then_full_replay_ends_consistent() {
     let (pool, c) = (pool().await, tb_client());
     let s = scenario(&pool, &c).await;
     let history = full_history(&s, s.trade);
-    let (url, _) = serve(vec![
-        Sub {
-            items: history[..2].to_vec(),
-            ending: Ending::Error,
-        },
-        Sub {
-            items: history,
-            ending: Ending::Hang,
-        },
-    ])
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+
+    let first = FakeEngine::connect(&url).await;
+    first.send(history[..2].to_vec()).await;
+    // the trade and the buyer's report were processed before the stream breaks
+    wait_for("the buy order FILLED", || async {
+        order_state(&pool, s.buy_order).await.0 == Some(3)
+    })
     .await;
-    let running = start(config(url, fresh_lock_key()));
-    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
-    assert_settled_exactly_once(&pool, &c, &s).await;
-    stop(running).await;
+    first.kill();
+
+    let second = FakeEngine::connect(&url).await;
+    second.send(history).await;
+    settle_and_stop(&pool, &c, &s, running).await;
+    drop(second);
 }
 
 async fn finishes_with_error(running: Running) -> String {
@@ -1026,26 +967,31 @@ async fn finishes_with_error(running: Running) -> String {
 async fn e2e_report_for_an_order_missing_from_postgres_stops_the_consumer() {
     let pool = pool().await;
     let w = world(&pool).await;
-    let (url, _) = serve(vec![Sub {
-        items: vec![report_event(&w, Uuid::new_v4(), OrderStatus::New, 0, 0)],
-        ending: Ending::Hang,
-    }])
-    .await;
-    let message = finishes_with_error(start(config(url, fresh_lock_key()))).await;
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+    let engine = FakeEngine::connect(&url).await;
+    engine
+        .send(vec![report_event(
+            &w,
+            Uuid::new_v4(),
+            OrderStatus::New,
+            0,
+            0,
+        )])
+        .await;
+    let message = finishes_with_error(running).await;
     assert!(message.contains("not in postgres"), "{message}");
+    drop(engine);
 }
 
 #[tokio::test]
 async fn e2e_invalid_trade_stops_the_consumer_and_moves_nothing() {
     let (pool, c) = (pool().await, tb_client());
     let s = scenario(&pool, &c).await;
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+    let engine = FakeEngine::connect(&url).await;
     // above the buyer's limit price of 1000
-    let (url, _) = serve(vec![Sub {
-        items: vec![trade_event(&s, s.trade, 5000)],
-        ending: Ending::Hang,
-    }])
-    .await;
-    let message = finishes_with_error(start(config(url, fresh_lock_key()))).await;
+    engine.send(vec![trade_event(&s, s.trade, 5000)]).await;
+    let message = finishes_with_error(running).await;
     assert!(message.contains("validation"), "{message}");
     assert_eq!(balance(&c, s.buyer.base.as_u128()).await, (0, 0));
     let trades: i64 = sqlx::query_scalar("SELECT count(*) FROM trades WHERE market_id = $1")
@@ -1054,20 +1000,31 @@ async fn e2e_invalid_trade_stops_the_consumer_and_moves_nothing() {
         .await
         .unwrap();
     assert_eq!(trades, 0);
+    drop(engine);
 }
 
 #[tokio::test]
 async fn e2e_second_consumer_cannot_start_while_the_first_runs() {
+    let pool = pool().await;
+    let w = world(&pool).await;
+    let marker = order(&pool, &w, &party(&pool, &w).await, true).await;
     let key = fresh_lock_key();
-    let (url, subscribed) = serve(vec![]).await;
-    let first = start(config(url.clone(), key));
-    wait_for("the first consumer subscribed", || async {
-        subscribed.load(Ordering::SeqCst) >= 1
+    let (first, url) = start(config(key).await).await;
+    // a connect alone proves nothing (the port is bound before the lock is taken), but a processed
+    // event does: the first consumer holds the lock and serves
+    let engine = FakeEngine::connect(&url).await;
+    engine
+        .send(vec![report_event(&w, marker, OrderStatus::New, 0, 0)])
+        .await;
+    wait_for("the first consumer processed the marker", || async {
+        order_state(&pool, marker).await.0 == Some(1)
     })
     .await;
-    let message = finishes_with_error(start(config(url, key))).await;
+    let (second, _) = start(config(key).await).await;
+    let message = finishes_with_error(second).await;
     assert!(message.contains("advisory lock"), "{message}");
     stop(first).await;
+    drop(engine);
 }
 
 fn report_with_limit(w: &World, order: Uuid, limit: u128) -> EventItem {
@@ -1090,15 +1047,146 @@ async fn e2e_a_repricing_and_the_trade_after_it_in_different_batches() {
         report_event(&s.w, s.buy_order, OrderStatus::Filled, BASE_QTY, QUOTE_QTY),
         report_event(&s.w, s.sell_order, OrderStatus::Filled, BASE_QTY, QUOTE_QTY),
     ];
-    let (url, _) = serve(vec![Sub {
-        items: history,
-        ending: Ending::Hang,
-    }])
-    .await;
-    let mut cfg = config(url, fresh_lock_key());
+    let mut cfg = config(fresh_lock_key()).await;
     cfg.batch_max_items = 1;
-    let running = start(cfg);
+    let (running, url) = start(cfg).await;
+    let engine = FakeEngine::connect(&url).await;
+    engine.send(history).await;
+    settle_and_stop(&pool, &c, &s, running).await;
+    drop(engine);
+}
+
+#[tokio::test]
+async fn e2e_two_engines_streaming_at_once_both_settle() {
+    let (pool, c) = (pool().await, tb_client());
+    let (a, b) = (scenario(&pool, &c).await, scenario(&pool, &c).await);
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+    let (engine_a, engine_b) = (
+        FakeEngine::connect(&url).await,
+        FakeEngine::connect(&url).await,
+    );
+    tokio::join!(
+        engine_a.send(full_history(&a, a.trade)),
+        engine_b.send(full_history(&b, b.trade)),
+    );
+    wait_for("both scenarios FILLED", || async {
+        is_settled(&pool, &a).await && is_settled(&pool, &b).await
+    })
+    .await;
+    assert_settled_exactly_once(&pool, &c, &a).await;
+    assert_settled_exactly_once(&pool, &c, &b).await;
+    stop(running).await;
+    drop((engine_a, engine_b));
+}
+
+#[tokio::test]
+async fn e2e_one_broken_stream_does_not_stop_the_consumer_or_the_other_engine() {
+    let (pool, c) = (pool().await, tb_client());
+    let (a, b) = (scenario(&pool, &c).await, scenario(&pool, &c).await);
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+
+    let engine_a = FakeEngine::connect(&url).await;
+    let engine_b = FakeEngine::connect(&url).await;
+    engine_a.send(full_history(&a, a.trade)[..2].to_vec()).await;
+    wait_for("A's buy order FILLED", || async {
+        order_state(&pool, a.buy_order).await.0 == Some(3)
+    })
+    .await;
+    engine_a.kill();
+
+    engine_b.send(full_history(&b, b.trade)).await;
+    wait_for("B's orders FILLED", || is_settled(&pool, &b)).await;
+    assert_settled_exactly_once(&pool, &c, &b).await;
+    assert!(
+        !running.0.is_finished(),
+        "a broken stream must not stop the consumer"
+    );
+    stop(running).await;
+    drop(engine_b);
+}
+
+#[tokio::test]
+async fn e2e_an_event_without_a_body_is_skipped() {
+    let (pool, c) = (pool().await, tb_client());
+    let s = scenario(&pool, &c).await;
+    let history = full_history(&s, s.trade);
+    let mut items = vec![EventItem {
+        body: None,
+        ..history[0].clone()
+    }];
+    items.extend(history);
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+    let engine = FakeEngine::connect(&url).await;
+    engine.send(items).await;
     wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
     assert_settled_exactly_once(&pool, &c, &s).await;
+    assert!(
+        !running.0.is_finished(),
+        "an event without a body must not stop the consumer"
+    );
     stop(running).await;
+    drop(engine);
+}
+
+#[tokio::test]
+async fn e2e_overlapping_streams_of_the_same_engine_end_consistent() {
+    let (pool, c) = (pool().await, tb_client());
+    let s = scenario(&pool, &c).await;
+    // only the old stream mentions it, after its late events: once it is updated, the late events
+    // have been processed too
+    let marker = order(&pool, &s.w, &s.buyer, true).await;
+    let history = full_history(&s, s.trade);
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+
+    // the old stream delivers part of the history and stays open
+    let old = FakeEngine::connect(&url).await;
+    old.send(history[..2].to_vec()).await;
+    wait_for("the buy order FILLED", || async {
+        order_state(&pool, s.buy_order).await.0 == Some(3)
+    })
+    .await;
+    // the engine reconnects and replays everything on a new stream...
+    let new = FakeEngine::connect(&url).await;
+    new.send(history.clone()).await;
+    // ...while the old stream, still open, delivers the rest late
+    let mut late = history[2..].to_vec();
+    late.push(report_event(&s.w, marker, OrderStatus::New, 0, 0));
+    old.send(late).await;
+
+    wait_for("both orders FILLED", || is_settled(&pool, &s)).await;
+    wait_for("the late events were processed", || async {
+        order_state(&pool, marker).await.0 == Some(1)
+    })
+    .await;
+    assert_settled_exactly_once(&pool, &c, &s).await;
+    stop(running).await;
+    drop((old, new));
+}
+
+#[tokio::test]
+async fn e2e_cancel_with_engines_still_connected_exits_cleanly() {
+    let pool = pool().await;
+    let w = world(&pool).await;
+    let p = party(&pool, &w).await;
+    let markers = [
+        order(&pool, &w, &p, true).await,
+        order(&pool, &w, &p, true).await,
+    ];
+    let (running, url) = start(config(fresh_lock_key()).await).await;
+    let mut engines = Vec::new();
+    for marker in markers {
+        let engine = FakeEngine::connect(&url).await;
+        engine
+            .send(vec![report_event(&w, marker, OrderStatus::New, 0, 0)])
+            .await;
+        engines.push(engine);
+    }
+    // both streams reached the consumer, and now they sit idle with nothing to send
+    wait_for("both engines' events processed", || async {
+        order_state(&pool, markers[0]).await.0 == Some(1)
+            && order_state(&pool, markers[1]).await.0 == Some(1)
+    })
+    .await;
+    stop(running).await;
+    drop(engines);
 }

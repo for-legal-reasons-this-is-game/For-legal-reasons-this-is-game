@@ -1,8 +1,8 @@
 use proto::trading_engine_client::TradingEngineClient;
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse, EventItem,
+    CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse,
     MarketDataItem, ModifyOrderRequest, ModifyOrderResponse, PlaceOrderRequest, PlaceOrderResponse,
-    SetMarketRequest, SetMarketResponse, SubscribeEventsRequest, SubscribeMarketDataRequest,
+    SetMarketRequest, SetMarketResponse, SubscribeMarketDataRequest,
 };
 
 use tonic::transport::{Channel, Endpoint};
@@ -78,15 +78,6 @@ impl EngineClient {
     ) -> Result<ModifyOrderResponse, Status> {
         let mut client = self.inner.clone();
         let response = client.modify_order(req).await?;
-        Ok(response.into_inner())
-    }
-
-    pub async fn subscribe_events(
-        &self,
-        req: SubscribeEventsRequest,
-    ) -> Result<Streaming<EventItem>, Status> {
-        let mut client = self.inner.clone();
-        let response = client.subscribe_events(req).await?;
         Ok(response.into_inner())
     }
 
