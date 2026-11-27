@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
 
-/// The shared channel: the handlers get the sender (one clone each), the batching gets the source.
+/// The shared channel: the service gets the one sender, which every stream's handler shares, the batching gets the source.
 pub fn channel(capacity: usize) -> (mpsc::Sender<EventItem>, ChannelSource) {
     let (tx, rx) = mpsc::channel(capacity);
     (tx, ChannelSource { rx })

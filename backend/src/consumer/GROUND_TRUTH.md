@@ -350,8 +350,8 @@ with it the channel's sender, so the batcher sees the channel close and the stag
    `BatchPlan`.
 
 **`ingest::channel` and `ChannelSource` (`ingest.rs`)**
-`channel(capacity)` creates the shared bounded channel and returns its sender (`tx`, cloned for every
-stream) and its receiving end wrapped as a `ChannelSource`. `ChannelSource` implements `EventSource`
+`channel(capacity)` creates the shared bounded channel and returns its sender (`tx`, which `IngestService`
+owns; all streams share it) and its receiving end wrapped as a `ChannelSource`. `ChannelSource` implements `EventSource`
 so `collect_batch` can read it. It returns `Ok(None)` once every sender is gone and the channel is
 empty, and it never returns an error: a broken engine stream is the handler's business.
 
@@ -609,7 +609,7 @@ and converted with `::numeric` in SQL.
 ### 7.7 The channel, the handlers and the batches (`ingest.rs`, `stream.rs`)
 
 - **The channel** is one bounded `tokio::sync::mpsc` channel shared by all engine streams
-  (capacity `BATCH_MAX_ITEMS`). Each `publish_events` call holds its own clone of the sender.
+  (capacity `BATCH_MAX_ITEMS`). `IngestService` owns the one sender, and every `publish_events` call sends through it.
   Events of one stream stay in order because that handler sends them one at a time; events of
   different streams interleave in whatever order they get in.
 - **The handler** (`publish_events`) reads its stream item by item and sends each into the channel
@@ -740,7 +740,7 @@ is a plain word.
 | `m` | A message string (an error text). |
 | `f` | The formatter in `fmt(&self, f)`; it is how errors print themselves. |
 | `i` | A loop index. |
-| `tx` / `rx` | In `pipeline.rs`: the **s**ender and **r**eceiver ends of a queue (`events_tx`, `events_rx`). In `ingest.rs`, `tx` is the sender of the shared channel (one clone per engine stream) and `rx` its receiver, inside `ChannelSource`. In `store.rs`, `tx` is a database **t**ransaction. |
+| `tx` / `rx` | In `pipeline.rs`: the **s**ender and **r**eceiver ends of a queue (`events_tx`, `events_rx`). In `ingest.rs`, `tx` is the sender of the shared channel (owned by `IngestService`, shared by all engine streams) and `rx` its receiver, inside `ChannelSource`. In `store.rs`, `tx` is a database **t**ransaction. |
 | `bps` | Basis points of a fee rate (1 bps = 0.01%). |
 | `fb`, `fq` | **F**illed **b**ase, **f**illed **q**uote (SQL, `store.rs`). |
 | `lp` | **L**imit **p**rice (SQL). |

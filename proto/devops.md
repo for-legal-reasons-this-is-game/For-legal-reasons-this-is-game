@@ -125,7 +125,7 @@ response, because the engine writes to it before it replies.
   starts.
 - It is a gRPC server. It listens on `LISTEN_ADDR` (default `0.0.0.0:50052`)
   and the engine instances connect to it and call `PublishEvents`. Give it a
-  Service with a stable name so the engines can find it. It starts listening
+  Service with a stable name so the engines can find it. It starts serving
   only after it holds the single-consumer lock.
 - The port has no authentication or encryption. Rely on the cluster network: a
   `NetworkPolicy` that allows traffic into it only from the engine pods.
