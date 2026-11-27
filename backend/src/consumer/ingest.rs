@@ -59,11 +59,23 @@ impl EventConsumer for IngestService {
         println!("CONSUMER: stream from {peer} opened");
         let stream = request.get_mut();
         loop {
-            match stream.message().await {
+            // Both waits (for the next item and for room on the channel) also watch the token. A
+            // quiet stream or a full channel would otherwise keep tonic's graceful shutdown
+            // waiting forever. `biased` checks the token first, so once shutdown starts nothing
+            // more is read.
+            let read = tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => None,
+                read = stream.message() => Some(read),
+            };
+            let Some(read) = read else {
+                println!("CONSUMER: stream from {peer} cut: shutting down");
+                return Err(Status::unavailable("consumer is shutting down"));
+            };
+            match read {
                 Ok(Some(item)) => {
-                    // waits on the token too: a handler stuck on a full channel would otherwise
-                    // keep tonic's graceful shutdown waiting forever
                     tokio::select! {
+                        biased;
                         _ = self.cancel.cancelled() => {
                             println!("CONSUMER: stream from {peer} cut: shutting down");
                             return Err(Status::unavailable("consumer is shutting down"));

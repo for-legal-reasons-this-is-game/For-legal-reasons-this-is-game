@@ -47,7 +47,7 @@ async fn serve(
 type Call = JoinHandle<Result<Response<PublishEventsResponse>, Status>>;
 
 /// Plays an engine: opens one `PublishEvents` stream. The test sends items through the returned
-/// sender and ends the stream by dropping it. Aborting the task breaks the stream.
+/// sender and ends the stream by dropping it. (To break a stream, see [`relay`].)
 fn open(url: &str) -> (mpsc::Sender<EventItem>, Call) {
     let (tx, rx) = mpsc::channel(1);
     let url = url.to_string();
@@ -222,6 +222,25 @@ async fn a_full_channel_stops_reading_and_shutdown_still_completes() {
         .expect("the server stopped cleanly");
     let status = finished(call).await.expect_err("a cut stream is an error");
     assert_eq!(status.code(), Code::Unavailable, "{status}");
+}
+
+#[tokio::test]
+async fn shutdown_completes_with_a_quiet_stream_still_open() {
+    let (url, _source, cancel, server) = serve(16).await;
+    let (tx, call) = open(&url);
+    // the stream is open (one item went through) and then goes quiet, like a calm market
+    send_all(&tx, [1]).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    cancel.cancel();
+    timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the server stops within 5s")
+        .unwrap()
+        .expect("the server stopped cleanly");
+    let status = finished(call).await.expect_err("a cut stream is an error");
+    assert_eq!(status.code(), Code::Unavailable, "{status}");
+    drop(tx); // kept alive until here, so the stream never ended by itself
 }
 
 #[tokio::test]
