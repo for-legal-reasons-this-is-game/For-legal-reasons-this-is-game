@@ -190,6 +190,35 @@ pub async fn run_source<S, F, Fut>(
     }
 }
 
+/// Batches the events of one source and hands the batches to the pipeline.
+///
+/// Returns when the source ends or breaks (after flushing what it has), on shutdown (dropping the
+/// half-read batch, which a replay brings back), or when the pipeline has gone away.
+pub async fn run_batcher<S: EventSource + Send>(
+    mut source: S,
+    max_items: usize,
+    max_wait: Duration,
+    out: mpsc::Sender<Vec<EventItem>>,
+    cancel: CancellationToken,
+) {
+    loop {
+        let read = tokio::select! {
+            _ = cancel.cancelled() => return,
+            r = collect_batch(&mut source, max_items.max(1), max_wait) => r,
+        };
+        let (batch, over) = match read {
+            BatchRead::Items(b) => (b, false),
+            BatchRead::Ended(b) | BatchRead::Failed(b, _) => (b, true),
+        };
+        if !batch.is_empty() && out.send(batch).await.is_err() {
+            return;
+        }
+        if over {
+            return;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +423,60 @@ mod tests {
         );
 
         cancel.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_sends_full_and_timed_batches() {
+        let src = fake((1..=5).map(Step::Item).collect());
+        let (tx, mut rx) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_batcher(src, 3, ms(50), tx, cancel.clone()));
+
+        assert_eq!(seqs(&rx.recv().await.unwrap()), vec![1, 2, 3]);
+        assert_eq!(seqs(&rx.recv().await.unwrap()), vec![4, 5]);
+
+        cancel.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_flushes_the_partial_batch_when_the_source_ends() {
+        let src = fake(vec![Step::Item(1), Step::Item(2), Step::End]);
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = tokio::spawn(run_batcher(src, 10, ms(50), tx, CancellationToken::new()));
+
+        assert_eq!(seqs(&rx.recv().await.unwrap()), vec![1, 2]);
+        task.await.unwrap();
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_stops_on_cancel_and_drops_the_partial_batch() {
+        // one item, then idle: the batch stays open until the wait runs out
+        let src = fake(vec![Step::Item(1)]);
+        let (tx, mut rx) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_batcher(
+            src,
+            10,
+            Duration::from_secs(60),
+            tx,
+            cancel.clone(),
+        ));
+
+        tokio::time::sleep(ms(10)).await;
+        cancel.cancel();
+        task.await.unwrap();
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batcher_stops_when_the_pipeline_is_gone() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let src = fake(vec![Step::Item(1)]);
+        let task = tokio::spawn(run_batcher(src, 10, ms(50), tx, CancellationToken::new()));
         task.await.unwrap();
     }
 
