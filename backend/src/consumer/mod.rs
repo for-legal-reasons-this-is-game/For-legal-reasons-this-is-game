@@ -10,6 +10,7 @@ use stream::{SourceSettings, Stats, run_source};
 use tokio_util::sync::CancellationToken;
 
 pub mod ids;
+pub mod ingest;
 pub mod ledger;
 pub mod lock;
 pub mod pipeline;
