@@ -5,9 +5,11 @@ use tokio_util::sync::CancellationToken;
 /// Settles trades from the router's event stream. See [`consumer`] for how.
 #[tokio::main]
 async fn main() -> Result<(), consumer::ConsumerError> {
-    // ENGINE_URL, DATABASE_URL, TB_CLUSTER_ID and TB_IP_ADRESSES come from the
+    // LISTEN_ADDR, DATABASE_URL, TB_CLUSTER_ID and TB_IP_ADRESSES come from the
     // process environment, like the backend's.
     let config = Config::from_env()?;
+    let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;
+    println!("CONSUMER: listening on {}", listener.local_addr()?);
 
     let cancel = CancellationToken::new();
     let stop = cancel.clone();
@@ -23,6 +25,6 @@ async fn main() -> Result<(), consumer::ConsumerError> {
     });
 
     // an Err exits non-zero, so Kubernetes restarts the pod and the replay catches up
-    consumer::run(config, cancel).await?;
+    consumer::run(config, listener, cancel).await?;
     Ok(())
 }
