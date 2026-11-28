@@ -112,7 +112,7 @@ impl RouterConsumer {
         let Some(answer) = self.run(body) else {
             return Ok(());
         };
-        self.state.save().await;
+        self.state.save_engine_changes().await;
         self.answer(reply_to, answer).await
     }
 }

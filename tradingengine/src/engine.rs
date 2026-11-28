@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, Id, PlaceOrderRequest,
+    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, Id, Market, PlaceOrderRequest,
     PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse, Uint128,
 };
 
@@ -9,7 +9,7 @@ use crate::cancel::parse_cancel_order;
 use crate::command_cache::{Answer, Command, CommandCache};
 use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
-use crate::ids::CommandId;
+use crate::ids::{CommandId, OrderId};
 use crate::market::{MarketInfo, Placed};
 use crate::order::OrderStatus;
 use crate::place::parse_place_order;
@@ -18,6 +18,19 @@ use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
 use crate::wire::required;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Change {
+    MarketSet(Market),
+    OrderSaved(RestingOrder),
+    OrderRemoved(OrderId),
+    CacheAdded {
+        id: CommandId,
+        command: Command,
+        answer: Answer,
+    },
+    CacheRemoved(CommandId),
+}
+
 #[derive(Default)]
 pub struct State {
     pub engine: Engine,
@@ -25,20 +38,14 @@ pub struct State {
 }
 
 impl State {
-    /// Saves `engine`'s state to redis' `store`
-    pub async fn save(&mut self) {
-        let Some(store) = &mut self.store else {
-            return;
-        };
-        let state_bytes = self
-            .engine
-            .get_engine_state()
-            .to_bytes()
-            .expect("error converting `EngineState` to bytes");
-        match store.save_state(&state_bytes).await {
-            Ok(_) => {}
-            Err(error) => panic!("error saving in `RedisStore`: {error}"),
-        };
+    pub async fn save_engine_changes(&mut self) {
+        let Some(store) = &mut self.store else { return };
+        let changes = &mut self.engine.changes;
+        store
+            .save_engine_changes(changes)
+            .await
+            .expect("error while saving state");
+        self.engine.changes.clear();
     }
 }
 
@@ -51,6 +58,7 @@ pub struct Engine {
     // The cache lives here, so an [`EngineService`] messege handler that will lock
     // the [`Engine`] mutex will guarantee no two requests race on the cache
     command_cache: CommandCache,
+    changes: Vec<Change>,
 }
 
 impl Engine {
@@ -72,12 +80,15 @@ impl Engine {
             .collect::<Result<HashMap<_, _>>>()?;
 
         let command_cache = CommandCache::load_cache(cache_capacity, engine_state.command_cache);
+        let changes = Vec::new();
         Ok(Engine {
             markets,
             command_cache,
+            changes,
         })
     }
 
+    /// This function will be used in tests only
     pub fn get_engine_state(&self) -> EngineState {
         EngineState {
             markets: self
@@ -104,8 +115,13 @@ impl Engine {
     /// It can also reconfigure an existing market's scale or values, but only if the
     /// market's book is empty.
     pub fn set_market(&mut self, request: SetMarketRequest) -> SetMarketResponse {
-        match self.try_set_market(request) {
-            Ok(()) => SetMarketResponse::default(),
+        match self.try_set_market(&request) {
+            Ok(()) => {
+                let response = SetMarketResponse::default();
+                self.changes
+                    .push(Change::MarketSet(request.market.unwrap()));
+                response
+            }
             Err(error) => {
                 let mut response = SetMarketResponse {
                     reject_detail: error.to_string(),
@@ -117,8 +133,8 @@ impl Engine {
         }
     }
 
-    fn try_set_market(&mut self, request: SetMarketRequest) -> Result<()> {
-        let market = required(request.market)?;
+    fn try_set_market(&mut self, request: &SetMarketRequest) -> Result<()> {
+        let market = required(request.market.clone())?;
         match self.markets.get_mut(&market.symbol) {
             Some(state) => state.reconfigure(market),
             None => {
@@ -155,6 +171,7 @@ impl Engine {
             _ => {}
         }
 
+        // TODO unimplemented `Change` saving in this path. need to save all changed orders. do it with the stream with Mehres
         let response = match self.try_place_order(request) {
             Ok(placed) => {
                 let mut response = PlaceOrderResponse {
@@ -169,8 +186,19 @@ impl Engine {
             Err(error) => self.reject_place_order(Some(command_id), &error),
         };
 
-        self.command_cache
-            .add_entry(command_id, command, Answer::Place(response.clone()));
+        match self.command_cache.add_entry(
+            command_id,
+            command.clone(),
+            Answer::Place(response.clone()),
+        ) {
+            None => {}
+            Some(removed_id) => self.changes.push(Change::CacheRemoved(removed_id)),
+        }
+        self.changes.push(Change::CacheAdded {
+            id: command_id,
+            command,
+            answer: Answer::Place(response.clone()),
+        });
         response
     }
 
@@ -227,12 +255,26 @@ impl Engine {
                 };
                 response.set_status(order_status(cancelled_order.status()));
                 response.set_cancel_reason(proto::CancelReason::UserRequest);
+                self.changes
+                    .push(Change::OrderRemoved(cancelled_order.id()));
                 response
             }
             Err(error) => self.reject_cancel_order(Some(command_id), &error),
         };
-        self.command_cache
-            .add_entry(command_id, command, Answer::Cancel(response.clone()));
+
+        match self.command_cache.add_entry(
+            command_id,
+            command.clone(),
+            Answer::Cancel(response.clone()),
+        ) {
+            None => {}
+            Some(removed_id) => self.changes.push(Change::CacheRemoved(removed_id)),
+        }
+        self.changes.push(Change::CacheAdded {
+            id: command_id,
+            command,
+            answer: Answer::Cancel(response.clone()),
+        });
         response
     }
 
