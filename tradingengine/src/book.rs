@@ -24,6 +24,16 @@ pub struct Fill {
     pub quote: QuoteQuantity,
 }
 
+impl Fill {
+    /// the two orders as (buyer, seller). the taker is the buyer when it buys
+    pub fn buyer_and_seller(&self) -> (&RestingOrder, &RestingOrder) {
+        match self.taker.side() {
+            Side::Buy => (&self.taker, &self.maker),
+            Side::Sell => (&self.maker, &self.taker),
+        }
+    }
+}
+
 /// The result returned after an order is matched against the [`Book`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Execution {

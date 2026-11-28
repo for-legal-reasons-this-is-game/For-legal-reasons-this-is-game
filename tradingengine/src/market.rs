@@ -1,6 +1,6 @@
 use proto::Market;
 
-use crate::book::Book;
+use crate::book::{Book, Fill};
 use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::{OrderStatus, Side};
@@ -11,12 +11,13 @@ use crate::wire::required;
 
 /// what happend to a new order when it was placed. its used for the
 /// [`PlaceOrderResponse`](proto::PlaceOrderResponse)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placed {
     /// `New` `PartiallyFilled` or `Filled`
     pub status: OrderStatus,
     pub filled_base: BaseQuantity,
     pub filled_quote: QuoteQuantity,
+    pub fills: Vec<Fill>,
 }
 
 /// Everything a market needs: a [`Market`], a [`QuoteScale`] and a [`Book`].
@@ -98,6 +99,7 @@ impl MarketInfo {
             status,
             filled_base,
             filled_quote,
+            fills: execution.fills().to_vec(),
         })
     }
 
