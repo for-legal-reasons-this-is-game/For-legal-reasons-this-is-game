@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, time::Duration};
+use std::time::Duration;
 
 use prost::Message;
 use redis::{

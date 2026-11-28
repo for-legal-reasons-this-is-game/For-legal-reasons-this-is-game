@@ -1,15 +1,19 @@
-use crate::service::EngineClient;
 use cn_tigerbeetle as tb;
+use ingest::IngestService;
 use plan::{BatchPlan, LimitMemory, Lookups};
-use proto::{EventItem, SubscribeEventsRequest};
+use proto::EventItem;
+use proto::event_consumer_server::EventConsumerServer;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
-use stream::{SourceSettings, Stats, run_source};
+use stream::run_batcher;
+use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
+use tonic::codegen::tokio_stream::wrappers::TcpListenerStream;
 
 pub mod ids;
+pub mod ingest;
 pub mod ledger;
 pub mod lock;
 pub mod pipeline;
@@ -21,8 +25,8 @@ pub type ConsumerError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Where the events come from. The router sits behind this URL, like it does for the backend.
-    pub engine_url: String,
+    /// Where the gRPC server listens for the engines pushing their events.
+    pub listen_addr: String,
     pub database_url: String,
     pub tb_cluster_id: u128,
     pub tb_addresses: String,
@@ -53,7 +57,7 @@ impl Config {
         };
         let tb_cluster_id = required("TB_CLUSTER_ID")?;
         Ok(Config {
-            engine_url: required("ENGINE_URL")?,
+            listen_addr: get("LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:50052".to_string()),
             database_url: required("DATABASE_URL")?,
             tb_cluster_id: tb_cluster_id
                 .parse()
@@ -92,14 +96,18 @@ async fn prepare_batch(
 /// Runs the consumer until `cancel` fires (a graceful stop, `Ok`) or a stage fails (`Err`: the
 /// process should exit non-zero and be restarted).
 ///
-/// Takes the single-consumer [lock](lock::try_lock) first.
-pub async fn run(cfg: Config, cancel: CancellationToken) -> Result<(), ConsumerError> {
+/// Takes the single-consumer [lock](lock::try_lock) first, and only then serves on `listener`.
+pub async fn run(
+    cfg: Config,
+    listener: TcpListener,
+    cancel: CancellationToken,
+) -> Result<(), ConsumerError> {
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&cfg.database_url)
         .await?;
     let lock = lock::try_lock(&cfg.database_url, cfg.lock_key).await?;
-    let result = run_locked(&cfg, &pool, cancel).await;
+    let result = run_locked(&cfg, &pool, listener, cancel).await;
     lock.release().await;
     result
 }
@@ -107,20 +115,13 @@ pub async fn run(cfg: Config, cancel: CancellationToken) -> Result<(), ConsumerE
 async fn run_locked(
     cfg: &Config,
     pool: &PgPool,
+    listener: TcpListener,
     cancel: CancellationToken,
 ) -> Result<(), ConsumerError> {
     let tb_client = Arc::new(
         tb::Client::new(cfg.tb_cluster_id, &cfg.tb_addresses)
             .map_err(|e| format!("tigerbeetle client could not start: {e:?}"))?,
     );
-    let engine = EngineClient::with_keepalive(
-        &cfg.engine_url,
-        Duration::from_secs(20),
-        Duration::from_secs(10),
-    )?;
-    let stats = Arc::new(Stats::default());
-    let settings = SourceSettings::from_config(cfg);
-
     // the limit prices seen so far, shared by all the batches (see LimitMemory)
     let limits = Arc::new(Mutex::new(LimitMemory::default()));
     let prepare = {
@@ -154,27 +155,49 @@ async fn run_locked(
         }
     };
 
-    let source_cancel = cancel.clone();
-    pipeline::run_pipeline(
-        move |events| {
-            run_source(
-                move || {
-                    let engine = engine.clone();
-                    async move { engine.subscribe_events(SubscribeEventsRequest {}).await }
-                },
-                settings,
+    // the engines push into `tx`; the batcher reads the other end
+    let (tx, source) = ingest::channel(cfg.batch_max_items);
+    // A failed stage cancels the token, which stops the server. When the server ends it drops
+    // the service and with it `tx`, so the batcher sees the channel close and the stages drain.
+    let server = tonic::transport::Server::builder()
+        .http2_keepalive_interval(Some(Duration::from_secs(20)))
+        .http2_keepalive_timeout(Some(Duration::from_secs(10)))
+        .add_service(EventConsumerServer::new(IngestService::new(
+            tx,
+            cancel.clone(),
+        )))
+        .serve_with_incoming_shutdown(
+            TcpListenerStream::new(listener),
+            cancel.clone().cancelled_owned(),
+        );
+    let server = async {
+        let served = server.await;
+        if served.is_err() {
+            // the server is gone, so stop the pipeline too
+            cancel.cancel();
+        }
+        served
+    };
+    let batcher_cancel = cancel.clone();
+    let pipeline = pipeline::run_pipeline(
+        |events| {
+            run_batcher(
+                source,
+                cfg.batch_max_items,
+                cfg.batch_max_wait,
                 events,
-                source_cancel,
-                stats,
+                batcher_cancel,
             )
         },
         prepare,
         settle,
         commit,
         cfg.queue_depth,
-        cancel,
-    )
-    .await
+        cancel.clone(),
+    );
+    let (served, piped) = tokio::join!(server, pipeline);
+    served?;
+    piped
 }
 
 #[cfg(test)]
@@ -191,8 +214,7 @@ mod tests {
         move |k| map.get(k).cloned()
     }
 
-    const REQUIRED: [(&str, &str); 4] = [
-        ("ENGINE_URL", "http://tradingengine:50051"),
+    const REQUIRED: [(&str, &str); 3] = [
         ("DATABASE_URL", "postgres://x"),
         ("TB_CLUSTER_ID", "0"),
         ("TB_IP_ADRESSES", "127.0.0.1:3000"),
@@ -201,7 +223,7 @@ mod tests {
     #[test]
     fn config_defaults_when_optional_vars_missing() {
         let cfg = Config::from_lookup(lookup(&REQUIRED)).unwrap();
-        assert_eq!(cfg.engine_url, "http://tradingengine:50051");
+        assert_eq!(cfg.listen_addr, "0.0.0.0:50052");
         assert_eq!(cfg.batch_max_items, 500);
         assert_eq!(cfg.batch_max_wait, Duration::from_millis(50));
         assert_eq!(cfg.queue_depth, 4);
@@ -223,14 +245,14 @@ mod tests {
     }
 
     #[test]
-    fn config_missing_engine_url_is_error() {
-        let pairs: Vec<_> = REQUIRED
-            .iter()
-            .copied()
-            .filter(|(k, _)| *k != "ENGINE_URL")
-            .collect();
-        let err = Config::from_lookup(lookup(&pairs)).unwrap_err();
-        assert!(err.to_string().contains("ENGINE_URL"), "{err}");
+    fn listen_addr_defaults_and_can_be_overridden() {
+        let cfg = Config::from_lookup(lookup(&REQUIRED)).unwrap();
+        assert_eq!(cfg.listen_addr, "0.0.0.0:50052");
+
+        let mut pairs = REQUIRED.to_vec();
+        pairs.push(("LISTEN_ADDR", "127.0.0.1:9"));
+        let cfg = Config::from_lookup(lookup(&pairs)).unwrap();
+        assert_eq!(cfg.listen_addr, "127.0.0.1:9");
     }
 
     #[test]

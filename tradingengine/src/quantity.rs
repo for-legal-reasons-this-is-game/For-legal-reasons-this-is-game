@@ -55,7 +55,7 @@ impl BaseQuantity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct QuoteQuantity(u128);
 
 impl QuoteQuantity {

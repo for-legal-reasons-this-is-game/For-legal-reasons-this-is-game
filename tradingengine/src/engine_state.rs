@@ -1,4 +1,4 @@
-use proto::Market;
+use proto::{EventItem, Market};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,6 +11,13 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EngineState {
     pub markets: Vec<MarketState>,
+    /// the `sequence` of the last event, so a restart keeps counting from there
+    pub sequence: u64,
+    /// the last events, oldest first. they are sent again to the consumer on every
+    /// connect, so a restart must not lose them. `default` so a save from before
+    /// this field still loads
+    #[serde(default, with = "proto_bytes::list")]
+    pub event_history: Vec<EventItem>,
     pub command_cache: Vec<(CommandId, Command, Answer)>,
 }
 

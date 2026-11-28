@@ -3,7 +3,7 @@ use proto::{Id, Market, TimestampError, Uint128};
 
 use crate::error::{EngineError, Result};
 use crate::fee::FeeBps;
-use crate::order::Side;
+use crate::order::{OrderStatus, Side};
 use crate::price::Price;
 use crate::quantity::{BaseQuantity, QuoteQuantity};
 use crate::quote::QuoteScale;
@@ -122,5 +122,24 @@ pub fn base_quantity_from_proto(amount: Option<Amount>) -> Result<BaseQuantity> 
             "this order needs base_quantity, not quote_quantity",
         )),
         None => Err(EngineError::RequiredFieldAbsent),
+    }
+}
+
+/// turns our [`Side`] into the proto side
+pub fn side_to_proto(side: Side) -> proto::Side {
+    match side {
+        Side::Buy => proto::Side::Buy,
+        Side::Sell => proto::Side::Sell,
+    }
+}
+
+/// turns [`OrderStatus`] into the proto status. `Open` is still `NEW` to the backend
+pub fn order_status(status: OrderStatus) -> proto::OrderStatus {
+    match status {
+        OrderStatus::New | OrderStatus::Open => proto::OrderStatus::New,
+        OrderStatus::PartiallyFilled => proto::OrderStatus::PartiallyFilled,
+        OrderStatus::Filled => proto::OrderStatus::Filled,
+        OrderStatus::Cancelled => proto::OrderStatus::Cancelled,
+        OrderStatus::Rejected => proto::OrderStatus::Unspecified,
     }
 }

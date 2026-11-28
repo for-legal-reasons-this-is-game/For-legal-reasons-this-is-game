@@ -1,22 +1,26 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::time::SystemTime;
 
+use proto::event_item::Body;
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, Id, Market, PlaceOrderRequest,
-    PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse, Uint128,
+    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, EventItem, ExecType, Id, Market,
+    PlaceOrderRequest, PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse,
+    Timestamp, Uint128,
 };
 
+use crate::book::Fill;
 use crate::cancel::parse_cancel_order;
 use crate::command_cache::{Answer, Command, CommandCache};
 use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
-use crate::ids::{CommandId, OrderId};
+use crate::events::{execution_report, trade_settlement};
+use crate::ids::{CommandId, OrderId, TradeId};
 use crate::market::{MarketInfo, Placed};
-use crate::order::OrderStatus;
+use crate::order::Side;
 use crate::place::parse_place_order;
-use crate::quantity::BaseQuantity;
 use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
-use crate::wire::required;
+use crate::wire::{order_status, required};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
@@ -59,7 +63,18 @@ pub struct Engine {
     // the [`Engine`] mutex will guarantee no two requests race on the cache
     command_cache: CommandCache,
     changes: Vec<Change>,
+    /// the `sequence` of the last event. 0 means no event yet
+    sequence: u64,
+    /// the last [`EVENT_HISTORY_CAPACITY`] events, oldest first. the consumer gets
+    /// all of them again on every connect
+    event_history: VecDeque<EventItem>,
 }
+
+/// how many events the engine keeps for the consumer. this is the retention window
+/// of `how_to_use.md`: a consumer that is down for longer than it takes the engine
+/// to make this many events misses the oldest ones. the whole history is saved to
+/// redis with every command, so a bigger number makes every save bigger
+pub const EVENT_HISTORY_CAPACITY: usize = 10_000;
 
 impl Engine {
     // Engine starts without any books this might change for recovery
@@ -81,11 +96,15 @@ impl Engine {
 
         let command_cache = CommandCache::load_cache(cache_capacity, engine_state.command_cache);
         let changes = Vec::new();
-        Ok(Engine {
+        let mut engine = Engine {
             markets,
             command_cache,
             changes,
-        })
+            sequence: engine_state.sequence,
+            event_history: VecDeque::new(),
+        };
+        engine.keep_events(engine_state.event_history);
+        Ok(engine)
     }
 
     /// This function will be used in tests only
@@ -99,8 +118,33 @@ impl Engine {
                     orders: info.book().get_orders(),
                 })
                 .collect(),
+            sequence: self.sequence,
+            event_history: self.event_history.iter().cloned().collect(),
             command_cache: self.command_cache.get_cache(),
         }
+    }
+
+    /// The `sequence` for the next event: one more than the last, so the first event
+    /// gets 1. The contract wants no gaps and no repeats.
+    /// a u64 doesnt run out, even a billion events a second takes 500+ years
+    pub fn next_sequence(&mut self) -> u64 {
+        self.sequence += 1;
+        self.sequence
+    }
+
+    /// the events kept for the consumer, oldest first
+    pub fn event_history(&self) -> &VecDeque<EventItem> {
+        &self.event_history
+    }
+
+    /// adds the events to the history and drops the oldest ones past the capacity
+    fn keep_events(&mut self, events: Vec<EventItem>) {
+        self.event_history.extend(events);
+        let extra = self
+            .event_history
+            .len()
+            .saturating_sub(EVENT_HISTORY_CAPACITY);
+        self.event_history.drain(..extra);
     }
 
     pub fn with_cache_capacity(n: usize) -> Self {
@@ -153,11 +197,21 @@ impl Engine {
         self.markets.get(symbol)
     }
 
+    /// places the order and drops its events, see [`Engine::place_order_with_events`]
+    pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
+        self.place_order_with_events(request).0
+    }
+
     /// the heart of the place order it trues to place the order
     /// match it if possible against the book and keep the
     /// remainder as rests in the book
     /// this is only in case of limit
-    pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
+    ///
+    /// the events go to the backend. TODO
+    pub fn place_order_with_events(
+        &mut self,
+        request: PlaceOrderRequest,
+    ) -> (PlaceOrderResponse, Vec<EventItem>) {
         let Some(id) = request.command_id else {
             return self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
         };
@@ -166,23 +220,14 @@ impl Engine {
 
         match self.command_cache.search(command_id, &command) {
             Ok(None) => {}
-            Ok(Some(Answer::Place(response))) => return response.clone(),
+            Ok(Some(Answer::Place(response))) => return (response.clone(), Vec::new()),
             Err(error) => return self.reject_place_order(Some(command_id), &error),
             _ => {}
         }
 
         // TODO unimplemented `Change` saving in this path. need to save all changed orders. do it with the stream with Mehres
-        let response = match self.try_place_order(request) {
-            Ok(placed) => {
-                let mut response = PlaceOrderResponse {
-                    command_id: Some(command_id.into()),
-                    filled_base_quantity: Some(Uint128::from(placed.filled_base)),
-                    filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
-                    ..Default::default()
-                };
-                response.set_status(order_status(placed.status));
-                response
-            }
+        let (response, events) = match self.try_place_order(request) {
+            Ok((placed, events)) => (accept_place_order(command_id, &placed), events),
             Err(error) => self.reject_place_order(Some(command_id), &error),
         };
 
@@ -199,36 +244,91 @@ impl Engine {
             command,
             answer: Answer::Place(response.clone()),
         });
-        response
+
+        (response, events)
     }
 
-    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<Placed> {
+    /// places the order in its market and builds the events for it
+    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<(Placed, Vec<EventItem>)> {
+        let symbol = request.market_symbol.clone();
         let market = self
             .markets
-            .get_mut(&request.market_symbol)
+            .get_mut(&symbol)
             .ok_or(EngineError::UnknownMarket)?;
 
         let order = parse_place_order(request)?;
-        market.place(order)
+        let new_order = order.clone();
+        let placed = market.place(order)?;
+        let fee_account = market.fee_account();
+
+        let events = self.place_events(&symbol, &new_order, &placed.fills, fee_account);
+        Ok((placed, events))
+    }
+
+    /// NEW for the order, then the events of each match in the order they happend
+    fn place_events(
+        &mut self,
+        symbol: &str,
+        new_order: &RestingOrder,
+        fills: &[Fill],
+        fee_account: Id,
+    ) -> Vec<EventItem> {
+        let mut bodies = vec![Body::ExecutionReport(execution_report(
+            new_order,
+            ExecType::New,
+            None,
+        ))];
+        for fill in fills {
+            bodies.extend(fill_events(fill, fee_account));
+        }
+        self.set_unique_sequence(symbol, bodies)
+    }
+
+    /// gives every event of one command the next `sequence`, and `time`
+    /// and keeps them in the history for the consumer
+    fn set_unique_sequence(&mut self, symbol: &str, bodies: Vec<Body>) -> Vec<EventItem> {
+        let engine_time = Timestamp::from(SystemTime::now());
+        let events: Vec<EventItem> = bodies
+            .into_iter()
+            .map(|body| EventItem {
+                sequence: self.next_sequence(),
+                engine_time: Some(engine_time),
+                market_symbol: symbol.to_string(),
+                body: Some(body),
+            })
+            .collect();
+        self.keep_events(events.clone());
+        events
     }
 
     fn reject_place_order(
         &self,
         command_id: Option<CommandId>,
         error: &EngineError,
-    ) -> PlaceOrderResponse {
+    ) -> (PlaceOrderResponse, Vec<EventItem>) {
         let mut response = PlaceOrderResponse {
             command_id: command_id.map(Id::from),
             reject_detail: error.to_string(),
             ..Default::default()
         };
         response.set_reject_reason(reject_reason(error));
-        response
+        (response, Vec::new())
     }
+
+    /// cancels the order and drops its event, see [`Engine::cancel_order_with_events`]
+    pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
+        self.cancel_order_with_events(request).0
+    }
+
     /// Cancels an order at its owner's request, and answers with the order's final state.
     ///
     /// A rejected cancel changes nothing.
-    pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
+    ///
+    /// the event is one CANCELLED report. a rejected or retried cancel has none
+    pub fn cancel_order_with_events(
+        &mut self,
+        request: CancelOrderRequest,
+    ) -> (CancelOrderResponse, Vec<EventItem>) {
         let Some(id) = request.command_id else {
             return self.reject_cancel_order(None, &EngineError::RequiredFieldAbsent);
         };
@@ -237,27 +337,16 @@ impl Engine {
 
         match self.command_cache.search(command_id, &command) {
             Ok(None) => {}
-            Ok(Some(Answer::Cancel(response))) => return response.clone(),
+            Ok(Some(Answer::Cancel(response))) => return (response.clone(), Vec::new()),
             Err(error) => return self.reject_cancel_order(Some(command_id), &error),
             _ => {}
         }
 
-        let response = match self.try_cancel_order(&request) {
-            Ok((cancelled_order, filled_base)) => {
-                // TODO(mehras): RestingOrder doesn't keep the quote it has filled, so the answer
-                // has no filled_quote_quantity yet. The contract wants both filled amounts
-                // (how_to_use.md, "Handling command responses"). Settle how to track it, and
-                // until then tell Alvaro that a cancel answer only has the filled base
-                let mut response = CancelOrderResponse {
-                    command_id: Some(command_id.into()),
-                    filled_base_quantity: Some(Uint128::from(filled_base)),
-                    ..Default::default()
-                };
-                response.set_status(order_status(cancelled_order.status()));
-                response.set_cancel_reason(proto::CancelReason::UserRequest);
+        let (response, events) = match self.try_cancel_order(&request) {
+            Ok((cancelled_order, events)) => {
                 self.changes
                     .push(Change::OrderRemoved(cancelled_order.id()));
-                response
+                (accept_cancel_order(command_id, &cancelled_order), events)
             }
             Err(error) => self.reject_cancel_order(Some(command_id), &error),
         };
@@ -275,33 +364,76 @@ impl Engine {
             command,
             answer: Answer::Cancel(response.clone()),
         });
-        response
+        (response, events)
     }
 
-    /// The cancelled order and how much of its base it filled before the cancel.
+    /// cancels the order in its market and builds the event for it
     fn try_cancel_order(
         &mut self,
         request: &CancelOrderRequest,
-    ) -> Result<(RestingOrder, BaseQuantity)> {
+    ) -> Result<(RestingOrder, Vec<EventItem>)> {
         let (market, order_id) = parse_cancel_order(request, &mut self.markets)?;
-        let order = market.cancel(order_id)?;
-        let filled_base = order.qty_total().checked_sub(order.qty_remaining())?;
-        Ok((order, filled_base))
+        let cancelled_order = market.cancel(order_id)?;
+
+        let report = execution_report(&cancelled_order, ExecType::Cancelled, None);
+        let events =
+            self.set_unique_sequence(&request.market_symbol, vec![Body::ExecutionReport(report)]);
+        Ok((cancelled_order, events))
     }
 
     fn reject_cancel_order(
         &self,
         command_id: Option<CommandId>,
         error: &EngineError,
-    ) -> CancelOrderResponse {
+    ) -> (CancelOrderResponse, Vec<EventItem>) {
         let mut response = CancelOrderResponse {
             command_id: command_id.map(Id::from),
             reject_detail: error.to_string(),
             ..Default::default()
         };
         response.set_reject_reason(reject_reason(error));
-        response
+        (response, Vec::new())
     }
+}
+
+fn accept_place_order(command_id: CommandId, placed: &Placed) -> PlaceOrderResponse {
+    let mut response = PlaceOrderResponse {
+        command_id: Some(command_id.into()),
+        filled_base_quantity: Some(Uint128::from(placed.filled_base)),
+        filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
+        ..Default::default()
+    };
+    response.set_status(order_status(placed.status));
+    response
+}
+
+fn accept_cancel_order(
+    command_id: CommandId,
+    cancelled_order: &RestingOrder,
+) -> CancelOrderResponse {
+    let mut response = CancelOrderResponse {
+        command_id: Some(command_id.into()),
+        filled_base_quantity: Some(Uint128::from(cancelled_order.filled_base())),
+        filled_quote_quantity: Some(Uint128::from(cancelled_order.filled_quote())),
+        ..Default::default()
+    };
+    response.set_status(order_status(cancelled_order.status()));
+    response.set_cancel_reason(proto::CancelReason::UserRequest);
+    response
+}
+
+/// the events of one match on tradesettlement and 2 execution for 2 sides
+fn fill_events(fill: &Fill, fee_account: Id) -> [Body; 3] {
+    let trade_id = TradeId::generate();
+    let (buyer, seller) = match fill.taker.side() {
+        Side::Buy => (&fill.taker, &fill.maker),
+        Side::Sell => (&fill.maker, &fill.taker),
+    };
+    [
+        Body::TradeSettlement(trade_settlement(fill, trade_id, fee_account)),
+        Body::ExecutionReport(execution_report(buyer, ExecType::Trade, Some(trade_id))),
+        Body::ExecutionReport(execution_report(seller, ExecType::Trade, Some(trade_id))),
+    ]
 }
 
 fn config_reject_reason(error: &EngineError) -> ConfigRejectReason {
@@ -331,12 +463,3 @@ fn reject_reason(error: &EngineError) -> RejectReason {
 }
 
 // the proto has no Open, a resting order with no fills is New there
-fn order_status(status: OrderStatus) -> proto::OrderStatus {
-    match status {
-        OrderStatus::New | OrderStatus::Open => proto::OrderStatus::New,
-        OrderStatus::PartiallyFilled => proto::OrderStatus::PartiallyFilled,
-        OrderStatus::Filled => proto::OrderStatus::Filled,
-        OrderStatus::Cancelled => proto::OrderStatus::Cancelled,
-        OrderStatus::Rejected => proto::OrderStatus::Unspecified,
-    }
-}

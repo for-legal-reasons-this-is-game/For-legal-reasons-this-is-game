@@ -86,7 +86,9 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6380
           TB_CLUSTER_ID: "0"
           TB_IP_ADRESSES: 127.0.0.1:3000
-        run: nix develop --command cargo test --locked --test consumer_test --test order_test
+        # ingest_test (the consumer's gRPC server side) needs no database, but it only exists in
+        # the backend crate, so it can't go in the matrix job above.
+        run: nix develop --command cargo test --locked --test consumer_test --test order_test --test ingest_test
       - name: dump container logs
         if: failure()
         run: |

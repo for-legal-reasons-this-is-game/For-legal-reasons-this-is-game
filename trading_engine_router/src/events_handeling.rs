@@ -3,9 +3,8 @@ use proto::engine_command::Body;
 use proto::trading_engine_server::TradingEngine;
 use proto::{
     CancelOrderRequest, CancelOrderResponse, CancelOrdersRequest, CancelOrdersResponse,
-    EngineCommand, EventItem, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse,
-    PlaceOrderRequest, PlaceOrderResponse, SetMarketRequest, SetMarketResponse,
-    SubscribeEventsRequest, SubscribeMarketDataRequest,
+    EngineCommand, MarketDataItem, ModifyOrderRequest, ModifyOrderResponse, PlaceOrderRequest,
+    PlaceOrderResponse, SetMarketRequest, SetMarketResponse, SubscribeMarketDataRequest,
 };
 use std::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
@@ -28,7 +27,11 @@ impl EventHandler {
     fn push(&self, market_symbol: &str, body: Body) -> Result<(), Status> {
         // guaranteed by the contract; an empty symbol is a bug, so panic
         assert!(!market_symbol.is_empty(), "market_symbol must be set");
-        let command = EngineCommand { body: Some(body) };
+        let command = EngineCommand {
+            body: Some(body),
+            // no reply path yet: results don't flow back through the router
+            reply_to: String::new(),
+        };
         let mut redis = self
             .redis
             .lock()
@@ -99,16 +102,6 @@ impl TradingEngine for EventHandler {
         &self,
         request: Request<ModifyOrderRequest>,
     ) -> Result<Response<ModifyOrderResponse>, Status> {
-        request.into_inner();
-        Err(Status::unimplemented("unimplemented"))
-    }
-
-    type SubscribeEventsStream = ReceiverStream<Result<EventItem, Status>>;
-
-    async fn subscribe_events(
-        &self,
-        request: Request<SubscribeEventsRequest>,
-    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
         request.into_inner();
         Err(Status::unimplemented("unimplemented"))
     }
