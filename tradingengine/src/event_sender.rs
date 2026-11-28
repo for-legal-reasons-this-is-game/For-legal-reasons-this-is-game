@@ -162,8 +162,8 @@ fn why_it_ended(
     }
 }
 
-/// adds up to half of `wait` on top, so engines that lost the consumer at the same
-/// time don't all connect again at the same moment (not used currently)
+// adds up to half of `wait` on top, so engines that lost the consumer at the same
+// time don't all connect again at the same moment (not used currently)
 //fn with_jitter(wait: Duration) -> Duration {
 //    let nanos = SystemTime::now()
 //        .duration_since(UNIX_EPOCH)
