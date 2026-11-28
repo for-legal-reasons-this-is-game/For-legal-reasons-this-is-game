@@ -17,7 +17,6 @@ use crate::events::{execution_report, trade_settlement};
 use crate::ids::{CommandId, TradeId};
 use crate::market::{MarketInfo, Placed};
 use crate::place::parse_place_order;
-use crate::quantity::BaseQuantity;
 use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
 use crate::wire::{order_status, required};
@@ -163,7 +162,7 @@ impl Engine {
     /// remainder as rests in the book
     /// this is only in case of limit
     ///
-    /// the events go to the backend.
+    /// the events go to the backend. TODO
     pub fn place_order_with_events(
         &mut self,
         request: PlaceOrderRequest,
@@ -255,10 +254,20 @@ impl Engine {
         (response, Vec::new())
     }
 
+    /// cancels the order and drops its event, see [`Engine::cancel_order_with_events`]
+    pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
+        self.cancel_order_with_events(request).0
+    }
+
     /// Cancels an order at its owner's request, and answers with the order's final state.
     ///
     /// A rejected cancel changes nothing.
-    pub fn cancel_order(&mut self, request: CancelOrderRequest) -> CancelOrderResponse {
+    ///
+    /// the event is one CANCELLED report. a rejected or retried cancel has none
+    pub fn cancel_order_with_events(
+        &mut self,
+        request: CancelOrderRequest,
+    ) -> (CancelOrderResponse, Vec<EventItem>) {
         let Some(id) = request.command_id else {
             return self.reject_cancel_order(None, &EngineError::RequiredFieldAbsent);
         };
@@ -267,53 +276,49 @@ impl Engine {
 
         match self.command_cache.search(command_id, &command) {
             Ok(None) => {}
-            Ok(Some(Answer::Cancel(response))) => return response.clone(),
+            Ok(Some(Answer::Cancel(response))) => return (response.clone(), Vec::new()),
             Err(error) => return self.reject_cancel_order(Some(command_id), &error),
             _ => {}
         }
 
-        let response = match self.try_cancel_order(&request) {
-            Ok((cancelled_order, filled_base)) => {
-                let mut response = CancelOrderResponse {
-                    command_id: Some(command_id.into()),
-                    filled_base_quantity: Some(Uint128::from(filled_base)),
-                    filled_quote_quantity: Some(Uint128::from(cancelled_order.filled_quote())),
-                    ..Default::default()
-                };
-                response.set_status(order_status(cancelled_order.status()));
-                response.set_cancel_reason(proto::CancelReason::UserRequest);
-                response
+        let (response, events) = match self.try_cancel_order(&request) {
+            Ok((cancelled_order, events)) => {
+                (accept_cancel_order(command_id, &cancelled_order), events)
             }
             Err(error) => self.reject_cancel_order(Some(command_id), &error),
         };
+
         self.command_cache
             .add_entry(command_id, command, Answer::Cancel(response.clone()));
-        response
+        (response, events)
     }
 
-    /// The cancelled order and how much of its base it filled before the cancel.
+    /// cancels the order in its market and builds the event for it
     fn try_cancel_order(
         &mut self,
         request: &CancelOrderRequest,
-    ) -> Result<(RestingOrder, BaseQuantity)> {
+    ) -> Result<(RestingOrder, Vec<EventItem>)> {
         let (market, order_id) = parse_cancel_order(request, &mut self.markets)?;
-        let order = market.cancel(order_id)?;
-        let filled_base = order.qty_total().checked_sub(order.qty_remaining())?;
-        Ok((order, filled_base))
+        let cancelled_order = market.cancel(order_id)?;
+
+        let report = execution_report(&cancelled_order, ExecType::Cancelled, None);
+        let events =
+            self.set_unique_sequence(&request.market_symbol, vec![Body::ExecutionReport(report)]);
+        Ok((cancelled_order, events))
     }
 
     fn reject_cancel_order(
         &self,
         command_id: Option<CommandId>,
         error: &EngineError,
-    ) -> CancelOrderResponse {
+    ) -> (CancelOrderResponse, Vec<EventItem>) {
         let mut response = CancelOrderResponse {
             command_id: command_id.map(Id::from),
             reject_detail: error.to_string(),
             ..Default::default()
         };
         response.set_reject_reason(reject_reason(error));
-        response
+        (response, Vec::new())
     }
 }
 
@@ -325,6 +330,21 @@ fn accept_place_order(command_id: CommandId, placed: &Placed) -> PlaceOrderRespo
         ..Default::default()
     };
     response.set_status(order_status(placed.status));
+    response
+}
+
+fn accept_cancel_order(
+    command_id: CommandId,
+    cancelled_order: &RestingOrder,
+) -> CancelOrderResponse {
+    let mut response = CancelOrderResponse {
+        command_id: Some(command_id.into()),
+        filled_base_quantity: Some(Uint128::from(cancelled_order.filled_base())),
+        filled_quote_quantity: Some(Uint128::from(cancelled_order.filled_quote())),
+        ..Default::default()
+    };
+    response.set_status(order_status(cancelled_order.status()));
+    response.set_cancel_reason(proto::CancelReason::UserRequest);
     response
 }
 
