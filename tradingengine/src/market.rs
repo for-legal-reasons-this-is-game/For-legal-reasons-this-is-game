@@ -1,4 +1,4 @@
-use proto::Market;
+use proto::{Id, Market};
 
 use crate::book::{Book, Fill};
 use crate::error::{EngineError, Result};
@@ -28,15 +28,18 @@ pub struct Placed {
 pub struct MarketInfo {
     market: Market,
     scale: QuoteScale,
+    fee_account: Id, // taken out of `market` once so it never has to be checked again
     book: Book,
 }
 
 impl MarketInfo {
     pub fn new(market: Market) -> Result<MarketInfo> {
         let scale = check_definition_and_get_scale(&market)?;
+        let fee_account = required(market.fee_account)?;
         Ok(MarketInfo {
             market,
             scale,
+            fee_account,
             book: Book::new(),
         })
     }
@@ -55,11 +58,13 @@ impl MarketInfo {
     /// [`CancelOrdersRequest`](proto::CancelOrdersRequest).
     pub fn reconfigure(&mut self, market: Market) -> Result<()> {
         let scale = check_definition_and_get_scale(&market)?;
+        let fee_account = required(market.fee_account)?;
         if !self.book.is_empty() && !same_decimals(&self.market, &market) {
             return Err(EngineError::HasOpenOrders);
         }
         self.market = market;
         self.scale = scale;
+        self.fee_account = fee_account;
         Ok(())
     }
 
@@ -69,6 +74,11 @@ impl MarketInfo {
 
     pub fn scale(&self) -> QuoteScale {
         self.scale
+    }
+
+    /// the account the fees of every trade go to
+    pub fn fee_account(&self) -> Id {
+        self.fee_account
     }
 
     pub fn book(&self) -> &Book {
@@ -128,7 +138,8 @@ impl MarketInfo {
     }
 }
 
-/// Checks everything a market must have before it can be created.
+/// Checks the symbol and the decimals a market must have before it can be created.
+/// the fee account is checked by the caller since it keeps it
 ///
 /// Checking the scale already calculates it, so the function returns the
 /// [`QuoteScale`] as well, to avoid doing the calculation twice.
@@ -137,7 +148,6 @@ fn check_definition_and_get_scale(market: &Market) -> Result<QuoteScale> {
         return Err(EngineError::MarketSymbolEmpty);
     }
 
-    required(market.fee_account.as_ref())?;
     QuoteScale::try_from(market)
 }
 

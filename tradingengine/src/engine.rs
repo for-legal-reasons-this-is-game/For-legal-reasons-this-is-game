@@ -153,23 +153,23 @@ impl Engine {
         self.markets.get(symbol)
     }
 
+    /// places the order and drops its events, see [`Engine::place_order_with_events`]
+    pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
+        self.place_order_with_events(request).0
+    }
+
     /// the heart of the place order it trues to place the order
     /// match it if possible against the book and keep the
     /// remainder as rests in the book
     /// this is only in case of limit
-
-    pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
-        self.place_order_with_events(request).0
-        // the vec return goes to backend
-    }
-
+    ///
+    /// the events go to the backend.
     pub fn place_order_with_events(
         &mut self,
         request: PlaceOrderRequest,
     ) -> (PlaceOrderResponse, Vec<EventItem>) {
         let Some(id) = request.command_id else {
-            let response = self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
-            return (response, Vec::new());
+            return self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
         };
         let command_id = CommandId::from(id);
         let command = Command::Place(Box::new(request.clone()));
@@ -177,32 +177,13 @@ impl Engine {
         match self.command_cache.search(command_id, &command) {
             Ok(None) => {}
             Ok(Some(Answer::Place(response))) => return (response.clone(), Vec::new()),
-            Err(error) => {
-                return (
-                    self.reject_place_order(Some(command_id), &error),
-                    Vec::new(),
-                );
-            }
+            Err(error) => return self.reject_place_order(Some(command_id), &error),
             _ => {}
         }
 
-        let symbol = request.market_symbol.clone();
         let (response, events) = match self.try_place_order(request) {
-            Ok((new_order, placed)) => {
-                let events = self.place_events(&symbol, &new_order, &placed.fills);
-                let mut response = PlaceOrderResponse {
-                    command_id: Some(command_id.into()),
-                    filled_base_quantity: Some(Uint128::from(placed.filled_base)),
-                    filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
-                    ..Default::default()
-                };
-                response.set_status(order_status(placed.status));
-                (response, events)
-            }
-            Err(error) => (
-                self.reject_place_order(Some(command_id), &error),
-                Vec::new(),
-            ),
+            Ok((placed, events)) => (accept_place_order(command_id, &placed), events),
+            Err(error) => self.reject_place_order(Some(command_id), &error),
         };
 
         self.command_cache
@@ -210,40 +191,70 @@ impl Engine {
         (response, events)
     }
 
-    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<(RestingOrder, Placed)> {
+    /// places the order in its market and builds the events for it
+    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<(Placed, Vec<EventItem>)> {
+        let symbol = request.market_symbol.clone();
         let market = self
             .markets
-            .get_mut(&request.market_symbol)
+            .get_mut(&symbol)
             .ok_or(EngineError::UnknownMarket)?;
 
         let order = parse_place_order(request)?;
         let new_order = order.clone();
         let placed = market.place(order)?;
-        Ok((new_order, placed))
+        let fee_account = market.fee_account();
+
+        let events = self.place_events(&symbol, &new_order, &placed.fills, fee_account);
+        Ok((placed, events))
     }
 
+    /// NEW for the order, then the events of each match in the order they happend
     fn place_events(
         &mut self,
         symbol: &str,
         new_order: &RestingOrder,
         fills: &[Fill],
+        fee_account: Id,
     ) -> Vec<EventItem> {
-        todo!()
+        let mut bodies = vec![Body::ExecutionReport(execution_report(
+            new_order,
+            ExecType::New,
+            None,
+        ))];
+        for fill in fills {
+            bodies.extend(fill_events(fill, fee_account));
+        }
+        self.set_unique_sequence(symbol, bodies)
+    }
+
+    /// gives every event of one command the next `sequence`, and `time`
+    fn set_unique_sequence(&mut self, symbol: &str, bodies: Vec<Body>) -> Vec<EventItem> {
+        let engine_time = Timestamp::from(SystemTime::now());
+        bodies
+            .into_iter()
+            .map(|body| EventItem {
+                sequence: self.next_sequence(),
+                engine_time: Some(engine_time),
+                market_symbol: symbol.to_string(),
+                body: Some(body),
+            })
+            .collect()
     }
 
     fn reject_place_order(
         &self,
         command_id: Option<CommandId>,
         error: &EngineError,
-    ) -> PlaceOrderResponse {
+    ) -> (PlaceOrderResponse, Vec<EventItem>) {
         let mut response = PlaceOrderResponse {
             command_id: command_id.map(Id::from),
             reject_detail: error.to_string(),
             ..Default::default()
         };
         response.set_reject_reason(reject_reason(error));
-        response
+        (response, Vec::new())
     }
+
     /// Cancels an order at its owner's request, and answers with the order's final state.
     ///
     /// A rejected cancel changes nothing.
@@ -304,6 +315,28 @@ impl Engine {
         response.set_reject_reason(reject_reason(error));
         response
     }
+}
+
+fn accept_place_order(command_id: CommandId, placed: &Placed) -> PlaceOrderResponse {
+    let mut response = PlaceOrderResponse {
+        command_id: Some(command_id.into()),
+        filled_base_quantity: Some(Uint128::from(placed.filled_base)),
+        filled_quote_quantity: Some(Uint128::from(placed.filled_quote)),
+        ..Default::default()
+    };
+    response.set_status(order_status(placed.status));
+    response
+}
+
+/// the events of one match on tradesettlement and 2 execution for 2 sides
+fn fill_events(fill: &Fill, fee_account: Id) -> [Body; 3] {
+    let trade_id = TradeId::generate();
+    let (buyer, seller) = fill.buyer_and_seller();
+    [
+        Body::TradeSettlement(trade_settlement(fill, trade_id, fee_account)),
+        Body::ExecutionReport(execution_report(buyer, ExecType::Trade, Some(trade_id))),
+        Body::ExecutionReport(execution_report(seller, ExecType::Trade, Some(trade_id))),
+    ]
 }
 
 fn config_reject_reason(error: &EngineError) -> ConfigRejectReason {
