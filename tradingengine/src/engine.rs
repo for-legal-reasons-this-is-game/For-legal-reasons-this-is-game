@@ -1,15 +1,20 @@
 use std::collections::HashMap;
+use std::time::SystemTime;
 
+use proto::event_item::Body;
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, Id, PlaceOrderRequest,
-    PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse, Uint128,
+    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, EventItem, ExecType, Id,
+    PlaceOrderRequest, PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse,
+    Timestamp, Uint128,
 };
 
+use crate::book::Fill;
 use crate::cancel::parse_cancel_order;
 use crate::command_cache::{Answer, Command, CommandCache};
 use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
-use crate::ids::CommandId;
+use crate::events::{execution_report, trade_settlement};
+use crate::ids::{CommandId, TradeId};
 use crate::market::{MarketInfo, Placed};
 use crate::place::parse_place_order;
 use crate::quantity::BaseQuantity;
@@ -97,9 +102,10 @@ impl Engine {
 
     /// The `sequence` for the next event: one more than the last, so the first event
     /// gets 1. The contract wants no gaps and no repeats.
-    pub fn next_sequence(&mut self) -> Result<u64> {
-        self.sequence = self.sequence.checked_add(1).ok_or(EngineError::Overflow)?;
-        Ok(self.sequence)
+    /// a u64 doesnt run out, even a billion events a second takes 500+ years
+    pub fn next_sequence(&mut self) -> u64 {
+        self.sequence += 1;
+        self.sequence
     }
 
     pub fn with_cache_capacity(n: usize) -> Self {
@@ -151,22 +157,39 @@ impl Engine {
     /// match it if possible against the book and keep the
     /// remainder as rests in the book
     /// this is only in case of limit
+
     pub fn place_order(&mut self, request: PlaceOrderRequest) -> PlaceOrderResponse {
+        self.place_order_with_events(request).0
+        // the vec return goes to backend
+    }
+
+    pub fn place_order_with_events(
+        &mut self,
+        request: PlaceOrderRequest,
+    ) -> (PlaceOrderResponse, Vec<EventItem>) {
         let Some(id) = request.command_id else {
-            return self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
+            let response = self.reject_place_order(None, &EngineError::RequiredFieldAbsent);
+            return (response, Vec::new());
         };
         let command_id = CommandId::from(id);
         let command = Command::Place(Box::new(request.clone()));
 
         match self.command_cache.search(command_id, &command) {
             Ok(None) => {}
-            Ok(Some(Answer::Place(response))) => return response.clone(),
-            Err(error) => return self.reject_place_order(Some(command_id), &error),
+            Ok(Some(Answer::Place(response))) => return (response.clone(), Vec::new()),
+            Err(error) => {
+                return (
+                    self.reject_place_order(Some(command_id), &error),
+                    Vec::new(),
+                );
+            }
             _ => {}
         }
 
-        let response = match self.try_place_order(request) {
-            Ok(placed) => {
+        let symbol = request.market_symbol.clone();
+        let (response, events) = match self.try_place_order(request) {
+            Ok((new_order, placed)) => {
+                let events = self.place_events(&symbol, &new_order, &placed.fills);
                 let mut response = PlaceOrderResponse {
                     command_id: Some(command_id.into()),
                     filled_base_quantity: Some(Uint128::from(placed.filled_base)),
@@ -174,24 +197,38 @@ impl Engine {
                     ..Default::default()
                 };
                 response.set_status(order_status(placed.status));
-                response
+                (response, events)
             }
-            Err(error) => self.reject_place_order(Some(command_id), &error),
+            Err(error) => (
+                self.reject_place_order(Some(command_id), &error),
+                Vec::new(),
+            ),
         };
 
         self.command_cache
             .add_entry(command_id, command, Answer::Place(response.clone()));
-        response
+        (response, events)
     }
 
-    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<Placed> {
+    fn try_place_order(&mut self, request: PlaceOrderRequest) -> Result<(RestingOrder, Placed)> {
         let market = self
             .markets
             .get_mut(&request.market_symbol)
             .ok_or(EngineError::UnknownMarket)?;
 
         let order = parse_place_order(request)?;
-        market.place(order)
+        let new_order = order.clone();
+        let placed = market.place(order)?;
+        Ok((new_order, placed))
+    }
+
+    fn place_events(
+        &mut self,
+        symbol: &str,
+        new_order: &RestingOrder,
+        fills: &[Fill],
+    ) -> Vec<EventItem> {
+        todo!()
     }
 
     fn reject_place_order(

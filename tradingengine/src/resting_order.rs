@@ -138,6 +138,12 @@ impl RestingOrder {
         self.qty_remaining
     }
 
+    pub fn filled_base(&self) -> BaseQuantity {
+        BaseQuantity::from_minor_units(
+            self.qty_total.minor_units() - self.qty_remaining.minor_units(),
+        )
+    }
+
     pub const fn filled_quote(&self) -> QuoteQuantity {
         self.filled_quote
     }
