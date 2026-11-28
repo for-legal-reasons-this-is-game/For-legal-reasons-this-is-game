@@ -36,6 +36,7 @@ impl RouterConsumer {
         let mut connection = ConnectionManager::new_with_config(client, config).await?;
 
         let _: String = redis::cmd("PING").query_async(&mut connection).await?;
+        // tODO remove myself from to be created in redis and push it to active pods
         Ok((connection, format!("task:pending:{instance}")))
     }
 

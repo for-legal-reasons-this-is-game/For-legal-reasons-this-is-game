@@ -277,8 +277,7 @@ impl Engine {
         let placed = market.place(&mut self.changes, order)?;
         let fee_account = market.fee_account();
 
-        let events: Vec<EventItem> =
-            self.place_events(&symbol, &new_order, &placed.fills, fee_account);
+        let events = self.place_events(&symbol, &new_order, &placed.fills, fee_account);
         Ok((placed, events))
     }
 
