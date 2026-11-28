@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
 };
 
 use backend::{
@@ -77,6 +77,10 @@ async fn main() {
         .route("/users/{user_id}", get(v1::fetch_user))
         .route("/users/{user_id}/orders", get(v1::list_user_orders))
         .route("/users/{user_id}/orders", post(v1::create_order))
+        .route(
+            "/users/{user_id}/orders/{order_id}",
+            delete(v1::cancel_order),
+        )
         .route("/accounts/{account_id}", get(v1::fetch_account))
         .route("/accounts/{account_id}/close", post(v1::close_account))
         .route("/accounts/{account_id}/reopen", post(v1::reopen_account))
@@ -96,6 +100,7 @@ async fn main() {
         .route("/markets", get(v1::list_markets))
         .route("/markets", post(v1::create_market))
         .route("/markets/{symbol}", get(v1::fetch_market))
+        .route("/markets/{symbol}", patch(v1::update_market))
         .route("/markets/{symbol}/orders", get(v1::list_market_orders))
         .route("/markets/{symbol}/trades", get(v1::list_market_trades))
         .route("/markets/{symbol}/ticker", get(v1::fetch_market_ticker))
