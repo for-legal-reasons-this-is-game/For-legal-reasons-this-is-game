@@ -1,6 +1,7 @@
 use tradingengine::command_cache::DEFAULT_CACHE_CAPACITY;
 use tradingengine::engine::Engine;
 use tradingengine::engine_state::EngineState;
+use tradingengine::event_sender::{EventSender, NewEvents};
 use tradingengine::redis_store::RedisStore;
 use tradingengine::router_consumer::RouterConsumer;
 
@@ -58,5 +59,21 @@ async fn create_consumer() -> Result<RouterConsumer, Box<dyn std::error::Error>>
             DEFAULT_CACHE_CAPACITY,
         )?,
     };
-    Ok(RouterConsumer::new(engine, Some(store), &router_url, &instance).await?)
+    let new_events = spawn_event_sender(&engine)?;
+    let mut consumer = RouterConsumer::new(engine, Some(store), &router_url, &instance).await?;
+    consumer.send_events_to(new_events);
+    Ok(consumer)
+}
+
+/// starts the task that pushes the events to the consumer. it begins with the history
+/// loaded from redis, so a restart sends the kept events again
+fn spawn_event_sender(engine: &Engine) -> Result<NewEvents, Box<dyn std::error::Error>> {
+    let consumer_url = std::env::var("CONSUMER_URL")
+        .ok()
+        .filter(|consumer_url| !consumer_url.is_empty())
+        .expect("CONSUMER_URL is not set or empty!");
+    let (sender, new_events) =
+        EventSender::new(&consumer_url, engine.event_history().iter().cloned())?;
+    tokio::spawn(sender.run());
+    Ok(new_events)
 }

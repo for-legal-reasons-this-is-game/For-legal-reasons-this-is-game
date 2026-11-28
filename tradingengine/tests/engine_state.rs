@@ -5,8 +5,12 @@ use common::{
     filled_base, filled_quote, in_book, limit,
 };
 use proto::{OrderStatus, RejectReason, Side};
-use serde::{Deserialize, de::IgnoredAny};
-use tradingengine::{engine::Engine, engine_state::EngineState, error::EngineError};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
+use tradingengine::command_cache::{Answer, Command};
+use tradingengine::engine::{EVENT_HISTORY_CAPACITY, Engine};
+use tradingengine::engine_state::{EngineState, MarketState};
+use tradingengine::error::EngineError;
+use tradingengine::ids::CommandId;
 
 #[test]
 fn loading_a_saved_engine_works() {
@@ -173,7 +177,7 @@ fn a_saved_state_with_a_duplicate_order_does_not_load() {
 /// must load that save. So a save has to load into a version that added a field.
 #[test]
 fn a_save_still_loads_after_a_field_is_added() {
-    // `EngineState` as a later version could look: the contract's event history,
+    // `EngineState` as a later version could look: a market data sequence,
     // added between the fields that exist now
     #[derive(Deserialize)]
     #[allow(dead_code)]
@@ -181,7 +185,8 @@ fn a_save_still_loads_after_a_field_is_added() {
         markets: IgnoredAny,
         sequence: u64,
         #[serde(default)]
-        event_history: Vec<u64>,
+        md_sequence: u64,
+        event_history: IgnoredAny,
         command_cache: IgnoredAny,
     }
     let mut engine = engine_with_cache(CACHE_CAPACITY);
@@ -205,4 +210,57 @@ fn the_event_sequence_counts_up_and_survives_a_restart() {
     let mut restarted = save_and_load(&engine, CACHE_CAPACITY);
 
     assert_eq!(restarted.next_sequence(), 3);
+}
+
+/// The consumer gets the whole history again on every connect, so a restart must keep it.
+#[test]
+fn the_event_history_survives_a_restart() {
+    let mut engine = engine();
+    assert_accepted(&engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)));
+    assert_eq!(engine.event_history().len(), 1);
+
+    let restarted = save_and_load(&engine, CACHE_CAPACITY);
+
+    assert_eq!(restarted.event_history(), engine.event_history());
+}
+
+#[test]
+fn the_event_history_keeps_only_the_newest_events() {
+    let mut engine = engine();
+    let extra = 5;
+    for n in 1..=(EVENT_HISTORY_CAPACITY + extra) as u128 {
+        assert_accepted(&engine.place_order(limit(n, Side::Buy, PRICE_29_000, HALF_BTC)));
+    }
+
+    let history = engine.event_history();
+    assert_eq!(history.len(), EVENT_HISTORY_CAPACITY);
+    let oldest = history.front().expect("history").sequence;
+    let newest = history.back().expect("history").sequence;
+    assert_eq!(oldest, extra as u64 + 1);
+    assert_eq!(newest, (EVENT_HISTORY_CAPACITY + extra) as u64);
+}
+
+/// A save from before the history existed has no `event_history`. It must still load.
+#[test]
+fn a_save_from_before_the_event_history_still_loads() {
+    #[derive(Serialize)]
+    struct OldEngineState {
+        markets: Vec<MarketState>,
+        sequence: u64,
+        command_cache: Vec<(CommandId, Command, Answer)>,
+    }
+    let mut engine = engine();
+    assert_accepted(&engine.place_order(limit(1, Side::Buy, PRICE_29_000, HALF_BTC)));
+    let state = engine.get_engine_state();
+    let old = OldEngineState {
+        markets: state.markets,
+        sequence: state.sequence,
+        command_cache: state.command_cache,
+    };
+    let bytes = rmp_serde::to_vec_named(&old).expect("saving to bytes");
+
+    let loaded = EngineState::from_bytes(&bytes).expect("an old save loads");
+
+    assert!(loaded.event_history.is_empty());
+    assert_eq!(loaded.sequence, 1);
 }

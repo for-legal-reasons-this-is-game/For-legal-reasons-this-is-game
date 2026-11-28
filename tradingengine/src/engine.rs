@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::SystemTime;
 
 use proto::event_item::Body;
@@ -57,7 +57,16 @@ pub struct Engine {
     command_cache: CommandCache,
     /// the `sequence` of the last event. 0 means no event yet
     sequence: u64,
+    /// the last [`EVENT_HISTORY_CAPACITY`] events, oldest first. the consumer gets
+    /// all of them again on every connect
+    event_history: VecDeque<EventItem>,
 }
+
+/// how many events the engine keeps for the consumer. this is the retention window
+/// of `how_to_use.md`: a consumer that is down for longer than it takes the engine
+/// to make this many events misses the oldest ones. the whole history is saved to
+/// redis with every command, so a bigger number makes every save bigger
+pub const EVENT_HISTORY_CAPACITY: usize = 10_000;
 
 impl Engine {
     // Engine starts without any books this might change for recovery
@@ -78,11 +87,14 @@ impl Engine {
             .collect::<Result<HashMap<_, _>>>()?;
 
         let command_cache = CommandCache::load_cache(cache_capacity, engine_state.command_cache);
-        Ok(Engine {
+        let mut engine = Engine {
             markets,
             command_cache,
             sequence: engine_state.sequence,
-        })
+            event_history: VecDeque::new(),
+        };
+        engine.keep_events(engine_state.event_history);
+        Ok(engine)
     }
 
     pub fn get_engine_state(&self) -> EngineState {
@@ -96,6 +108,7 @@ impl Engine {
                 })
                 .collect(),
             sequence: self.sequence,
+            event_history: self.event_history.iter().cloned().collect(),
             command_cache: self.command_cache.get_cache(),
         }
     }
@@ -106,6 +119,21 @@ impl Engine {
     pub fn next_sequence(&mut self) -> u64 {
         self.sequence += 1;
         self.sequence
+    }
+
+    /// the events kept for the consumer, oldest first
+    pub fn event_history(&self) -> &VecDeque<EventItem> {
+        &self.event_history
+    }
+
+    /// adds the events to the history and drops the oldest ones past the capacity
+    fn keep_events(&mut self, events: Vec<EventItem>) {
+        self.event_history.extend(events);
+        let extra = self
+            .event_history
+            .len()
+            .saturating_sub(EVENT_HISTORY_CAPACITY);
+        self.event_history.drain(..extra);
     }
 
     pub fn with_cache_capacity(n: usize) -> Self {
@@ -228,9 +256,10 @@ impl Engine {
     }
 
     /// gives every event of one command the next `sequence`, and `time`
+    /// and keeps them in the history for the consumer
     fn set_unique_sequence(&mut self, symbol: &str, bodies: Vec<Body>) -> Vec<EventItem> {
         let engine_time = Timestamp::from(SystemTime::now());
-        bodies
+        let events: Vec<EventItem> = bodies
             .into_iter()
             .map(|body| EventItem {
                 sequence: self.next_sequence(),
@@ -238,7 +267,9 @@ impl Engine {
                 market_symbol: symbol.to_string(),
                 body: Some(body),
             })
-            .collect()
+            .collect();
+        self.keep_events(events.clone());
+        events
     }
 
     fn reject_place_order(

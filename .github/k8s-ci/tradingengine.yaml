@@ -34,6 +34,8 @@ spec:
               value: redis://tradingengine-redis:6379
             - name: ENGINE_INSTANCE
               value: tradingengine-0
+            - name: CONSUMER_URL
+              value: http://consumer:50052
           ports:
             - name: grpc
               containerPort: 50051

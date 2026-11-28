@@ -4,6 +4,7 @@ pub mod command_cache;
 pub mod engine;
 pub mod engine_state;
 pub mod error;
+pub mod event_sender;
 pub mod events;
 pub mod fee;
 pub mod ids;
