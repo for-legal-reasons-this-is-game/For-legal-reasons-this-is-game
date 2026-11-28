@@ -9,7 +9,7 @@ use redis::{
 
 use crate::{engine::Engine, engine::State, event_sender::NewEvents, redis_store::RedisStore};
 
-const POP_TIMEOUT: f64 = 5.0;
+const POP_TIMEOUT: f64 = 2.5;
 /// This time-to-live is how long an answer (that reached redis, but
 /// the router hasn't read yet) stays in redis before it gets deleted,
 /// and in that case it's a timeout in backend so it retries. the
@@ -17,6 +17,10 @@ const POP_TIMEOUT: f64 = 5.0;
 /// likely be 5-10 secs), because if it didn't, the answer could be
 /// deleted before the router reads it.
 const ANSWER_TTL_SECONDS: i64 = 60;
+
+const ACTIVE_PODS: &str = "task:active";
+const PENDING_EVENTS: &str = "task:pending";
+const TO_BE_CREATED_PODS: &str = "task:to_be_created";
 
 pub struct RouterConsumer {
     connection: ConnectionManager,
@@ -32,12 +36,19 @@ impl RouterConsumer {
     async fn connect(url: &str, instance: &str) -> redis::RedisResult<(ConnectionManager, String)> {
         let client = redis::Client::open(url)?;
         let config = ConnectionManagerConfig::new()
-            .set_response_timeout(Some(Duration::from_secs_f64(POP_TIMEOUT + 5.0)));
+            .set_response_timeout(Some(Duration::from_secs_f64(POP_TIMEOUT + 2.5)));
         let mut connection = ConnectionManager::new_with_config(client, config).await?;
 
         let _: String = redis::cmd("PING").query_async(&mut connection).await?;
-        // tODO remove myself from to be created in redis and push it to active pods
-        Ok((connection, format!("task:pending:{instance}")))
+        let _: redis::RedisResult<()> = redis::pipe()
+            .atomic()
+            .sadd(ACTIVE_PODS, instance)
+            .ignore()
+            .lrem(TO_BE_CREATED_PODS, 0, instance)
+            .ignore()
+            .query_async(&mut connection)
+            .await?;
+        Ok((connection, format!("{PENDING_EVENTS}:{instance}")))
     }
 
     pub async fn new(
