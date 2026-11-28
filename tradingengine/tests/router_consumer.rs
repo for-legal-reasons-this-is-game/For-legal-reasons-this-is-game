@@ -19,7 +19,6 @@ use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use tradingengine::command_cache::DEFAULT_CACHE_CAPACITY;
 use tradingengine::engine::Engine;
-use tradingengine::engine_state::EngineState;
 use tradingengine::redis_store::RedisStore;
 use tradingengine::router_consumer::RouterConsumer;
 
@@ -89,13 +88,9 @@ async fn start(instance: &str) -> (Router, RouterConsumer) {
     let mut store = RedisStore::connect(&redis_url(), instance)
         .await
         .expect("connect");
-    // Replace what an earlier run saved with an empty engine. Otherwise an engine that
-    // never saves would still pass, because a restart would load the earlier run's state.
-    let empty = Engine::default()
-        .get_engine_state()
-        .to_bytes()
-        .expect("an empty state");
-    store.save_state(&empty).await.expect("save");
+    // Delete what an earlier run saved. Otherwise an engine that never saves would still
+    // pass, because a restart would load the earlier run's state.
+    store.clear().await.expect("clear");
     let consumer = RouterConsumer::new(Engine::default(), Some(store), &redis_url(), instance)
         .await
         .expect("connect");
@@ -114,12 +109,7 @@ async fn restarted(instance: &str) -> Engine {
     let mut store = RedisStore::connect(&redis_url(), instance)
         .await
         .expect("connect");
-    let bytes = store
-        .load_state()
-        .await
-        .expect("load")
-        .expect("the engine saved");
-    let state = EngineState::from_bytes(&bytes).expect("a saved state");
+    let state = store.load_engine_state().await.expect("load");
     Engine::new_from_state(state, DEFAULT_CACHE_CAPACITY).expect("it loads")
 }
 

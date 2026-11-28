@@ -3,7 +3,7 @@ use std::time::SystemTime;
 
 use proto::event_item::Body;
 use proto::{
-    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, EventItem, ExecType, Id,
+    CancelOrderRequest, CancelOrderResponse, ConfigRejectReason, EventItem, ExecType, Id, Market,
     PlaceOrderRequest, PlaceOrderResponse, RejectReason, SetMarketRequest, SetMarketResponse,
     Timestamp, Uint128,
 };
@@ -14,13 +14,34 @@ use crate::command_cache::{Answer, Command, CommandCache};
 use crate::engine_state::{EngineState, MarketState};
 use crate::error::{EngineError, Result};
 use crate::events::{execution_report, trade_settlement};
-use crate::ids::{CommandId, TradeId};
+use crate::ids::{CommandId, OrderId, TradeId};
 use crate::market::{MarketInfo, Placed};
 use crate::order::Side;
 use crate::place::parse_place_order;
 use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
 use crate::wire::{order_status, required};
+
+/// One thing a command changed in the [`Engine`]. The engine collects them while it runs
+/// a command, and [`State::save_engine_changes`] writes them to Redis.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Change {
+    MarketSet(Market),
+    /// A new order rests at the back of its price level.
+    OrderAdded(RestingOrder),
+    /// A resting order was partly filled. It keeps its place in the queue.
+    OrderUpdated(RestingOrder),
+    /// An order left the book: it was filled or cancelled.
+    OrderRemoved(OrderId),
+    CacheAdded {
+        id: CommandId,
+        command: Command,
+        answer: Answer,
+    },
+    CacheRemoved(CommandId),
+    /// The events of one command, each with its `sequence`.
+    EventsAdded(Vec<EventItem>),
+}
 
 #[derive(Default)]
 pub struct State {
@@ -29,20 +50,19 @@ pub struct State {
 }
 
 impl State {
-    /// Saves `engine`'s state to redis' `store`
-    pub async fn save(&mut self) {
-        let Some(store) = &mut self.store else {
+    /// Saves what the last command changed. Without a store the changes are dropped, so
+    /// they don't pile up.
+    pub async fn save_engine_changes(&mut self) {
+        let changes = std::mem::take(&mut self.engine.changes);
+        let Some(store) = &mut self.store else { return };
+        if changes.is_empty() {
+            // a cache hit or a rejected SetMarket changes nothing
             return;
-        };
-        let state_bytes = self
-            .engine
-            .get_engine_state()
-            .to_bytes()
-            .expect("error converting `EngineState` to bytes");
-        match store.save_state(&state_bytes).await {
-            Ok(_) => {}
-            Err(error) => panic!("error saving in `RedisStore`: {error}"),
-        };
+        }
+        store
+            .save_engine_changes(&changes)
+            .await
+            .expect("error while saving changes");
     }
 }
 
@@ -55,6 +75,7 @@ pub struct Engine {
     // The cache lives here, so an [`EngineService`] messege handler that will lock
     // the [`Engine`] mutex will guarantee no two requests race on the cache
     command_cache: CommandCache,
+    changes: Vec<Change>,
     /// the `sequence` of the last event. 0 means no event yet
     sequence: u64,
     /// the last [`EVENT_HISTORY_CAPACITY`] events, oldest first. the consumer gets
@@ -64,8 +85,9 @@ pub struct Engine {
 
 /// how many events the engine keeps for the consumer. this is the retention window
 /// of `how_to_use.md`: a consumer that is down for longer than it takes the engine
-/// to make this many events misses the oldest ones. the whole history is saved to
-/// redis with every command, so a bigger number makes every save bigger
+/// to make this many events misses the oldest ones. a command saves only its own
+/// events, and redis keeps the same last ones, so a bigger number only makes the load
+/// at startup bigger
 pub const EVENT_HISTORY_CAPACITY: usize = 10_000;
 
 impl Engine {
@@ -86,10 +108,15 @@ impl Engine {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        let command_cache = CommandCache::load_cache(cache_capacity, engine_state.command_cache);
+        let (command_cache, removed) =
+            CommandCache::load_cache(cache_capacity, engine_state.command_cache);
+        // only when the capacity is lower than when the cache was saved: the oldest
+        // entries didn't fit, and the first save deletes them from redis too
+        let changes = removed.into_iter().map(Change::CacheRemoved).collect();
         let mut engine = Engine {
             markets,
             command_cache,
+            changes,
             sequence: engine_state.sequence,
             event_history: VecDeque::new(),
         };
@@ -97,6 +124,7 @@ impl Engine {
         Ok(engine)
     }
 
+    /// This function will be used in tests only
     pub fn get_engine_state(&self) -> EngineState {
         EngineState {
             markets: self
@@ -148,8 +176,13 @@ impl Engine {
     /// It can also reconfigure an existing market's scale or values, but only if the
     /// market's book is empty.
     pub fn set_market(&mut self, request: SetMarketRequest) -> SetMarketResponse {
-        match self.try_set_market(request) {
-            Ok(()) => SetMarketResponse::default(),
+        match self.try_set_market(&request) {
+            Ok(()) => {
+                let response = SetMarketResponse::default();
+                self.changes
+                    .push(Change::MarketSet(request.market.unwrap()));
+                response
+            }
             Err(error) => {
                 let mut response = SetMarketResponse {
                     reject_detail: error.to_string(),
@@ -161,8 +194,8 @@ impl Engine {
         }
     }
 
-    fn try_set_market(&mut self, request: SetMarketRequest) -> Result<()> {
-        let market = required(request.market)?;
+    fn try_set_market(&mut self, request: &SetMarketRequest) -> Result<()> {
+        let market = required(request.market.clone())?;
         match self.markets.get_mut(&market.symbol) {
             Some(state) => state.reconfigure(market),
             None => {
@@ -214,8 +247,20 @@ impl Engine {
             Err(error) => self.reject_place_order(Some(command_id), &error),
         };
 
-        self.command_cache
-            .add_entry(command_id, command, Answer::Place(response.clone()));
+        match self.command_cache.add_entry(
+            command_id,
+            command.clone(),
+            Answer::Place(response.clone()),
+        ) {
+            None => {}
+            Some(removed_id) => self.changes.push(Change::CacheRemoved(removed_id)),
+        }
+        self.changes.push(Change::CacheAdded {
+            id: command_id,
+            command,
+            answer: Answer::Place(response.clone()),
+        });
+
         (response, events)
     }
 
@@ -229,7 +274,7 @@ impl Engine {
 
         let order = parse_place_order(request)?;
         let new_order = order.clone();
-        let placed = market.place(order)?;
+        let placed = market.place(&mut self.changes, order)?;
         let fee_account = market.fee_account();
 
         let events = self.place_events(&symbol, &new_order, &placed.fills, fee_account);
@@ -256,7 +301,7 @@ impl Engine {
     }
 
     /// gives every event of one command the next `sequence`, and `time`
-    /// and keeps them in the history for the consumer
+    /// and keeps them in the history for the consumer, and in redis
     fn set_unique_sequence(&mut self, symbol: &str, bodies: Vec<Body>) -> Vec<EventItem> {
         let engine_time = Timestamp::from(SystemTime::now());
         let events: Vec<EventItem> = bodies
@@ -269,6 +314,11 @@ impl Engine {
             })
             .collect();
         self.keep_events(events.clone());
+        // here and not in `keep_events`: loading calls that too, and must not save
+        // the loaded events again. never empty: an RPUSH of nothing fails the whole save
+        if !events.is_empty() {
+            self.changes.push(Change::EventsAdded(events.clone()));
+        }
         events
     }
 
@@ -315,13 +365,26 @@ impl Engine {
 
         let (response, events) = match self.try_cancel_order(&request) {
             Ok((cancelled_order, events)) => {
+                self.changes
+                    .push(Change::OrderRemoved(cancelled_order.id()));
                 (accept_cancel_order(command_id, &cancelled_order), events)
             }
             Err(error) => self.reject_cancel_order(Some(command_id), &error),
         };
 
-        self.command_cache
-            .add_entry(command_id, command, Answer::Cancel(response.clone()));
+        match self.command_cache.add_entry(
+            command_id,
+            command.clone(),
+            Answer::Cancel(response.clone()),
+        ) {
+            None => {}
+            Some(removed_id) => self.changes.push(Change::CacheRemoved(removed_id)),
+        }
+        self.changes.push(Change::CacheAdded {
+            id: command_id,
+            command,
+            answer: Answer::Cancel(response.clone()),
+        });
         (response, events)
     }
 

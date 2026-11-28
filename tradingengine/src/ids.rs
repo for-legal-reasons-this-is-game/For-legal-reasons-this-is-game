@@ -1,4 +1,5 @@
 use proto::Id;
+use redis::{RedisWrite, ToRedisArgs, ToSingleRedisArg};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -7,6 +8,13 @@ use uuid::Uuid;
 /// It is unique per resting order. The [`Book`](crate::book::Book) rejects a duplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrderId(u128);
+
+impl ToRedisArgs for OrderId {
+    fn write_redis_args<W: ?Sized + RedisWrite>(&self, out: &mut W) {
+        self.0.write_redis_args(out);
+    }
+}
+impl ToSingleRedisArg for OrderId {}
 
 impl From<OrderId> for Id {
     fn from(id: OrderId) -> Self {
@@ -103,6 +111,13 @@ impl From<Id> for CommandId {
         Self(u128::from(id))
     }
 }
+impl ToRedisArgs for CommandId {
+    fn write_redis_args<W: ?Sized + RedisWrite>(&self, out: &mut W) {
+        self.0.write_redis_args(out);
+    }
+}
+impl ToSingleRedisArg for CommandId {}
+
 impl From<CommandId> for Id {
     fn from(id: CommandId) -> Self {
         Id::from(id.value())

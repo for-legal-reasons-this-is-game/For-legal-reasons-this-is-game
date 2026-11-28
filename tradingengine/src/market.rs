@@ -1,6 +1,7 @@
 use proto::{Id, Market};
 
-use crate::book::{Book, Fill};
+use crate::book::{Book, Execution, Fill};
+use crate::engine::Change;
 use crate::error::{EngineError, Result};
 use crate::ids::OrderId;
 use crate::order::{OrderStatus, Side};
@@ -87,10 +88,15 @@ impl MarketInfo {
 
     /// matches the order against the book and rests whats left
     /// the matched and rest are returned as data in placed
-    pub fn place(&mut self, order: RestingOrder) -> Result<Placed> {
+    ///
+    /// What it changed in the book goes to `changes`, see [`MarketInfo::book_changes`].
+    pub fn place(&mut self, changes: &mut Vec<Change>, order: RestingOrder) -> Result<Placed> {
         self.check_quote_fits(&order)?;
 
         let execution = self.book.insert(order, self.scale)?;
+        // right after the insert, before anything below can fail, so the saved book is
+        // always the book in memory
+        self.book_changes(&execution, changes);
 
         // round down per fill same as each TradeSettlement. the sum can come
         // out lower then one quote_for on the total
@@ -125,6 +131,28 @@ impl MarketInfo {
         order.cancel()?;
         self.book.remove(order_id)?;
         Ok(order)
+    }
+
+    /// What an insert did to the book, for Redis. It asks the book itself, because the
+    /// copies in the fills don't say whether an order is still in the book:
+    /// - each maker the new order matched is still resting (partly filled) or gone (filled)
+    /// - what's left of the new order rests at the back of its price level. If nothing is
+    ///   left, it was never in the book, so there's nothing to save for it.
+    fn book_changes(&self, execution: &Execution, changes: &mut Vec<Change>) {
+        for fill in execution.fills() {
+            let id = fill.maker.id();
+            match self.book.get_by_id(id) {
+                Some(maker) => changes.push(Change::OrderUpdated(maker.clone())),
+                None => changes.push(Change::OrderRemoved(id)),
+            }
+        }
+        if let Some(id) = execution.resting_order_id() {
+            let resting = self
+                .book
+                .get_by_id(id)
+                .expect("the insert just put this order in the book");
+            changes.push(Change::OrderAdded(resting.clone()));
+        }
     }
 
     /// make sure the quote does not over flow

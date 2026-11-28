@@ -58,12 +58,18 @@ impl CommandCache {
         }
     }
 
-    pub fn load_cache(n: usize, oldest_first: Vec<(CommandId, Command, Answer)>) -> Self {
+    /// Returns the cache, and the ids of the oldest entries that didn't fit in `n`. Those
+    /// are only there when `n` is lower than when the entries were saved.
+    pub fn load_cache(
+        n: usize,
+        oldest_first: Vec<(CommandId, Command, Answer)>,
+    ) -> (Self, Vec<CommandId>) {
         let mut command_cache = CommandCache::with_capacity(n);
+        let mut removed = Vec::new();
         for (command_id, command, answer) in oldest_first {
-            command_cache.add_entry(command_id, command, answer);
+            removed.extend(command_cache.add_entry(command_id, command, answer));
         }
-        command_cache
+        (command_cache, removed)
     }
 
     pub fn get_cache(&self) -> Vec<(CommandId, Command, Answer)> {
@@ -81,20 +87,29 @@ impl CommandCache {
     /// - Inserts the key `command_id` and the value (`request`, `response`)
     ///   to the cache hashmap [`CommandCache::by_id`].
     /// - Pushes the `command_id` to the VecDeque [`CommandCache::oldest_first`].
-    pub fn add_entry(&mut self, command_id: CommandId, request: Command, response: Answer) {
+    /// - Returns `None` if nothing was removed from the cache, otherwise returns the removed [`CommandId`]
+    pub fn add_entry(
+        &mut self,
+        command_id: CommandId,
+        request: Command,
+        response: Answer,
+    ) -> Option<CommandId> {
+        let mut removed: Option<CommandId> = None;
         if self.by_id.len() == self.capacity {
-            let removed = self
-                .oldest_first
-                .pop_front()
-                .expect("error on adding entry to cache: `CommandCache::add_entry`");
+            removed = Some(
+                self.oldest_first
+                    .pop_front()
+                    .expect("error on adding entry to cache: `CommandCache::add_entry`"),
+            );
             self.by_id
-                .remove(&removed)
+                .remove(&removed.unwrap())
                 .expect("error on adding entry to cache: `CommandCache::add_entry`");
         }
         if self.by_id.insert(command_id, (request, response)).is_some() {
             panic!("error in `CommandCache`, found identical `command_id` on inserting an entry")
         }
         self.oldest_first.push_back(command_id);
+        removed
     }
 
     /// - Returns `Ok(Some(response))` for a found `command_id` that has identical

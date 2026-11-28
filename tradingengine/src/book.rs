@@ -91,7 +91,9 @@ impl Book {
         Ok(Execution { fills, resting })
     }
 
-    /// Orders must come in their queue order within each price level, front first. [Book::save] returns them that way.
+    /// Orders must come in their queue order within each price level, front first.
+    /// [`Book::get_orders`] returns them that way, and so does
+    /// [`RedisStore::load_engine_state`](crate::redis_store::RedisStore::load_engine_state).
     pub fn load_order(&mut self, order: RestingOrder) -> Result<()> {
         let id = order.id();
         if self.all_orders.contains_key(&id) {

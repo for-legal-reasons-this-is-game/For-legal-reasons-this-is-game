@@ -36,6 +36,7 @@ impl RouterConsumer {
         let mut connection = ConnectionManager::new_with_config(client, config).await?;
 
         let _: String = redis::cmd("PING").query_async(&mut connection).await?;
+        // tODO remove myself from to be created in redis and push it to active pods
         Ok((connection, format!("task:pending:{instance}")))
     }
 
@@ -128,7 +129,7 @@ impl RouterConsumer {
             return Ok(());
         };
         // saved first so an event that went out is never lost in a restart
-        self.state.save().await;
+        self.state.save_engine_changes().await;
         if let Some(new_events) = &self.new_events
             && !events.is_empty()
         {

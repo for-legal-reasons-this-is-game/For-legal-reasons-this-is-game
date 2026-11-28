@@ -1,6 +1,5 @@
 use tradingengine::command_cache::DEFAULT_CACHE_CAPACITY;
 use tradingengine::engine::Engine;
-use tradingengine::engine_state::EngineState;
 use tradingengine::event_sender::{EventSender, NewEvents};
 use tradingengine::redis_store::RedisStore;
 use tradingengine::router_consumer::RouterConsumer;
@@ -49,16 +48,10 @@ async fn create_consumer() -> Result<RouterConsumer, Box<dyn std::error::Error>>
         .filter(|store_url| !store_url.is_empty())
         .ok_or("REDIS_URL is not set or empty!")?;
     let mut store = RedisStore::connect(&store_url, &instance).await?;
-    let engine = match store.load_state().await? {
-        // `store.load()` loads from redis and either returns the bytes of the
-        // state or `None` if it's first start, and in that case we construct
-        // `Engine` with default (fresh start without a saved state)
-        None => Engine::default(),
-        Some(state_bytes) => Engine::new_from_state(
-            EngineState::from_bytes(&state_bytes)?,
-            DEFAULT_CACHE_CAPACITY,
-        )?,
-    };
+    // everything the engine saved before it stopped. on the first start redis has
+    // nothing, and that loads as an empty engine
+    let state = store.load_engine_state().await?;
+    let engine = Engine::new_from_state(state, DEFAULT_CACHE_CAPACITY)?;
     let new_events = spawn_event_sender(&engine)?;
     let mut consumer = RouterConsumer::new(engine, Some(store), &router_url, &instance).await?;
     consumer.send_events_to(new_events);
