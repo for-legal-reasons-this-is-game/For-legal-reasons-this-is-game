@@ -5,7 +5,7 @@
 //! Every test seeds its own ledgers, users and orders with fresh ids.
 
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use backend::domain::Submission;
 use backend::service::EngineClient;
 use backend::v1::{self, AppState, advance_order};
@@ -330,11 +330,24 @@ enum MarketScript {
 
 type MarketCalls = Arc<Mutex<Vec<proto::SetMarketRequest>>>;
 
+/// What the fake engine does with the next [`CancelOrder`](EngineClient::cancel_order) it gets.
+/// With nothing scripted, it's accepted.
+enum CancelScript {
+    Reply(i32), // the reject_reason to answer with
+    Fail(Status),
+    Hang,
+}
+
+type CancelCalls = Arc<Mutex<Vec<proto::CancelOrderRequest>>>;
+
+#[derive(Default)]
 struct FakeEngine {
     scripts: Mutex<VecDeque<Script>>,
     calls: Calls,
     market_scripts: Mutex<VecDeque<MarketScript>>,
     market_calls: MarketCalls,
+    cancel_scripts: Mutex<VecDeque<CancelScript>>,
+    cancel_calls: CancelCalls,
 }
 
 #[tonic::async_trait]
@@ -383,9 +396,24 @@ impl TradingEngine for FakeEngine {
     }
     async fn cancel_order(
         &self,
-        _: Request<proto::CancelOrderRequest>,
+        request: Request<proto::CancelOrderRequest>,
     ) -> Result<Response<proto::CancelOrderResponse>, Status> {
-        Err(Status::unimplemented("fake"))
+        self.cancel_calls.lock().unwrap().push(request.into_inner());
+        let script = self.cancel_scripts.lock().unwrap().pop_front();
+        match script {
+            None => Ok(Response::new(proto::CancelOrderResponse::default())),
+            Some(CancelScript::Reply(reject_reason)) => {
+                Ok(Response::new(proto::CancelOrderResponse {
+                    reject_reason,
+                    ..Default::default()
+                }))
+            }
+            Some(CancelScript::Fail(status)) => Err(status),
+            Some(CancelScript::Hang) => {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Err(Status::unavailable("gave up waiting"))
+            }
+        }
     }
     async fn cancel_orders(
         &self,
@@ -430,20 +458,29 @@ async fn engine(scripts: Vec<Script>) -> (EngineClient, Calls) {
     let fake = FakeEngine {
         scripts: Mutex::new(scripts.into()),
         calls: calls.clone(),
-        market_scripts: Mutex::new(VecDeque::new()),
-        market_calls: Arc::new(Mutex::new(Vec::new())),
+        ..Default::default()
     };
     (serve(fake).await, calls)
+}
+
+/// The same as [`engine`], for the `CancelOrder` that the cancel endpoint sends.
+async fn cancel_engine(scripts: Vec<CancelScript>) -> (EngineClient, CancelCalls) {
+    let cancel_calls: CancelCalls = Arc::new(Mutex::new(Vec::new()));
+    let fake = FakeEngine {
+        cancel_scripts: Mutex::new(scripts.into()),
+        cancel_calls: cancel_calls.clone(),
+        ..Default::default()
+    };
+    (serve(fake).await, cancel_calls)
 }
 
 /// The same as [`engine`], for the `SetMarket` that the market endpoint sends.
 async fn market_engine(scripts: Vec<MarketScript>) -> (EngineClient, MarketCalls) {
     let market_calls: MarketCalls = Arc::new(Mutex::new(Vec::new()));
     let fake = FakeEngine {
-        scripts: Mutex::new(VecDeque::new()),
-        calls: Arc::new(Mutex::new(Vec::new())),
         market_scripts: Mutex::new(scripts.into()),
         market_calls: market_calls.clone(),
+        ..Default::default()
     };
     (serve(fake).await, market_calls)
 }
@@ -1449,6 +1486,7 @@ async fn market_env(scripts: Vec<MarketScript>) -> MarketEnv {
     let state = app(&pool, &c, eng).await;
     let router = Router::new()
         .route("/markets", post(v1::create_market))
+        .route("/markets/{symbol}", patch(v1::update_market))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1879,4 +1917,327 @@ async fn create_market_rejects_decimals_that_cannot_price_an_order() {
     assert_eq!(status, 400);
     assert_eq!(count_where(&e.pool, MARKETS_WITH_SYMBOL, &symbol).await, 0);
     assert!(e.calls.lock().unwrap().is_empty());
+}
+
+// --- DELETE /users/{user_id}/orders/{order_id} ---------------------------------------
+
+/// A seeded user with an order, a fake engine that answers `CancelOrder` as scripted, and the
+/// handler served on a local port.
+struct CancelEnv {
+    pool: PgPool,
+    c: Arc<tb::Client>,
+    w: World,
+    p: Party,
+    url: String,
+    calls: CancelCalls,
+}
+
+async fn cancel_env(scripts: Vec<CancelScript>) -> CancelEnv {
+    let (pool, c) = (pool().await, tb_client());
+    let w = world(&pool, &c).await;
+    let p = party(&pool, &c, &w).await;
+    let (eng, calls) = cancel_engine(scripts).await;
+    let state = app(&pool, &c, eng).await;
+    let router = Router::new()
+        .route(
+            "/users/{user_id}/orders/{order_id}",
+            delete(v1::cancel_order),
+        )
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    CancelEnv {
+        pool,
+        c,
+        w,
+        p,
+        url,
+        calls,
+    }
+}
+
+/// An order the engine already accepted.
+async fn accepted_order(e: &CancelEnv) -> Uuid {
+    let order = insert_order(&e.pool, &e.w, &e.p, true, RESERVED_BUY).await;
+    set_order(&e.pool, order, "accepted", None).await;
+    order
+}
+
+async fn set_order(pool: &PgPool, order: Uuid, submission: &'static str, status: Option<i16>) {
+    sqlx::query(
+        "UPDATE orders SET submission = $2::order_submission, status = $3 WHERE order_id = $1",
+    )
+    .bind(order)
+    .bind(submission)
+    .bind(status)
+    .execute(pool)
+    .await
+    .expect("set the order state");
+}
+
+async fn delete_order(e: &CancelEnv, user: Uuid, order: Uuid) -> u16 {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap()
+        .delete(format!("{}/users/{user}/orders/{order}", e.url))
+        .send()
+        .await
+        .expect("send cancel")
+        .status()
+        .as_u16()
+}
+
+#[tokio::test]
+async fn cancelling_an_accepted_order_returns_202_and_sends_the_cancel() {
+    let e = cancel_env(vec![]).await;
+    let order = accepted_order(&e).await;
+
+    assert_eq!(delete_order(&e, e.p.user, order).await, 202);
+
+    let calls = e.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].market_symbol, e.w.symbol);
+    assert_eq!(calls[0].order_id, Some(order.as_u128().into()));
+    assert_eq!(calls[0].account_holder, Some(e.p.user.as_u128().into()));
+    assert!(calls[0].command_id.is_some());
+}
+
+#[tokio::test]
+async fn a_cancel_changes_neither_the_order_nor_the_money() {
+    let e = cancel_env(vec![]).await;
+    let order = accepted_order(&e).await;
+    let before = balance(&e.c, e.p.quote.as_u128()).await;
+
+    assert_eq!(delete_order(&e, e.p.user, order).await, 202);
+
+    // the status and the refund come from the consumer, when the engine's report arrives
+    assert_eq!(order_state(&e.pool, order).await.0, "accepted");
+    assert_eq!(order_state(&e.pool, order).await.3, None);
+    assert_eq!(balance(&e.c, e.p.quote.as_u128()).await, before);
+}
+
+#[tokio::test]
+async fn a_cancel_works_in_every_market_status() {
+    for status in ["cancel_only", "halted"] {
+        let e = cancel_env(vec![]).await;
+        let order = accepted_order(&e).await;
+        sqlx::query("UPDATE markets SET status = $2::market_status WHERE market_id = $1")
+            .bind(e.w.market_id)
+            .bind(status)
+            .execute(&e.pool)
+            .await
+            .expect("set the market status");
+
+        assert_eq!(delete_order(&e, e.p.user, order).await, 202, "{status}");
+    }
+}
+
+#[tokio::test]
+async fn an_order_that_is_not_working_is_a_conflict_and_never_reaches_the_engine() {
+    let e = cancel_env(vec![]).await;
+    // not accepted by the engine (yet), or ended
+    let cases = [
+        ("reserving", None),
+        ("sent", None),
+        ("rejected", None),
+        ("accepted", Some(3)), // filled
+        ("accepted", Some(4)), // cancelled
+        ("accepted", Some(5)), // expired
+    ];
+    for (submission, status) in cases {
+        let order = insert_order(&e.pool, &e.w, &e.p, true, RESERVED_BUY).await;
+        set_order(&e.pool, order, submission, status).await;
+        let code = delete_order(&e, e.p.user, order).await;
+        assert_eq!(code, 409, "{submission} {status:?}");
+    }
+    assert!(e.calls.lock().unwrap().is_empty(), "the engine was called");
+}
+
+#[tokio::test]
+async fn a_working_order_with_every_working_status_can_be_cancelled() {
+    let e = cancel_env(vec![]).await;
+    for status in [None, Some(1), Some(2), Some(6)] {
+        let order = insert_order(&e.pool, &e.w, &e.p, true, RESERVED_BUY).await;
+        set_order(&e.pool, order, "accepted", status).await;
+        assert_eq!(delete_order(&e, e.p.user, order).await, 202, "{status:?}");
+    }
+}
+
+#[tokio::test]
+async fn cancelling_someone_elses_or_an_unknown_order_is_refused() {
+    let e = cancel_env(vec![]).await;
+    let order = accepted_order(&e).await;
+    let other = party(&e.pool, &e.c, &e.w).await;
+
+    assert_eq!(delete_order(&e, other.user, order).await, 403);
+    assert_eq!(delete_order(&e, e.p.user, Uuid::new_v4()).await, 404);
+    assert!(e.calls.lock().unwrap().is_empty(), "the engine was called");
+}
+
+#[tokio::test]
+async fn the_engines_rejections_of_a_cancel_map_to_statuses() {
+    let cases = [
+        (proto::RejectReason::UnknownOrder as i32, 409),
+        (proto::RejectReason::OrderNotWorking as i32, 409),
+        (proto::RejectReason::NotOrderOwner as i32, 403),
+        (proto::RejectReason::UnknownMarket as i32, 404),
+        (proto::RejectReason::InternalError as i32, 503),
+    ];
+    for (reason, expected) in cases {
+        let e = cancel_env(vec![CancelScript::Reply(reason)]).await;
+        let order = accepted_order(&e).await;
+        assert_eq!(
+            delete_order(&e, e.p.user, order).await,
+            expected,
+            "{reason}"
+        );
+        assert_eq!(order_state(&e.pool, order).await.0, "accepted");
+    }
+}
+
+#[tokio::test]
+async fn a_cancel_the_engine_cannot_take_returns_an_error_status() {
+    let e = cancel_env(vec![CancelScript::Fail(Status::unavailable("down"))]).await;
+    let order = accepted_order(&e).await;
+    assert_eq!(delete_order(&e, e.p.user, order).await, 502);
+
+    let e = cancel_env(vec![CancelScript::Hang]).await;
+    let order = accepted_order(&e).await;
+    assert_eq!(delete_order(&e, e.p.user, order).await, 504);
+}
+
+// --- PATCH /markets/{symbol} -------------------------------------------------------------
+
+async fn patch_market(e: &MarketEnv, symbol: &str, body: &Value) -> (u16, Value) {
+    let res = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap()
+        .patch(format!("{}/markets/{symbol}", e.url))
+        .json(body)
+        .send()
+        .await
+        .expect("send patch");
+    let status = res.status().as_u16();
+    (status, res.json().await.unwrap_or(Value::Null))
+}
+
+/// A market the engine accepted, so it's trading.
+async fn trading_market(e: &MarketEnv) -> String {
+    let symbol = unique_symbol("M");
+    assert_eq!(post_market(e, &market_body(e, &symbol)).await.0, 201);
+    symbol
+}
+
+#[tokio::test]
+async fn patching_a_market_changes_what_is_sent_and_returns_it() {
+    let e = market_env(vec![]).await;
+    let symbol = trading_market(&e).await;
+
+    let (status, body) = patch_market(
+        &e,
+        &symbol,
+        &json!({
+            "status": "cancel_only",
+            "min_base_quantity": "0.010",
+            "min_quote_quantity": "2.50",
+            "quantity_step": "0.010",
+            "price_step": "0.0010",
+            "maker_fee_bps": 5,
+            "taker_fee_bps": 25,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body["symbol"], symbol);
+    assert_eq!(body["status"], "cancel_only");
+    assert_eq!(body["maker_fee_bps"], 5);
+    assert_eq!(body["taker_fee_bps"], 25);
+    let row = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT status::text, min_base_quantity::text, min_quote_quantity::text, \
+                quantity_step::text, price_step::text FROM markets WHERE symbol = $1",
+    )
+    .bind(&symbol)
+    .fetch_one(&e.pool)
+    .await
+    .expect("read market");
+    // base has 3 decimals and quote 2, and the price has 4
+    let expected = ["cancel_only", "10", "250", "10", "10"].map(String::from);
+    assert_eq!(row, expected.into());
+    // the engine isn't told: it was only sent the SetMarket of the creation
+    assert_eq!(e.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn patching_one_field_leaves_the_others_alone() {
+    let e = market_env(vec![]).await;
+    let symbol = trading_market(&e).await;
+
+    let (status, body) = patch_market(&e, &symbol, &json!({ "taker_fee_bps": 40 })).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body["status"], "trading");
+    assert_eq!(body["maker_fee_bps"], 10);
+    assert_eq!(body["taker_fee_bps"], 40);
+    assert_eq!(body["min_base_quantity"], "0.005");
+    assert_eq!(body["price_step"], "0.0005");
+}
+
+#[tokio::test]
+async fn patching_a_market_rejects_bad_requests_with_the_right_status() {
+    let e = market_env(vec![]).await;
+    let symbol = trading_market(&e).await;
+    let cases = [
+        (json!({}), 400),
+        (json!({ "min_base_quantity": "0" }), 400),
+        (json!({ "min_base_quantity": "-1" }), 400),
+        (json!({ "min_base_quantity": "0.0005" }), 400), // finer than the 3 decimals of base
+        (json!({ "min_quote_quantity": "0" }), 400),
+        (json!({ "quantity_step": "0" }), 400),
+        (json!({ "price_step": "0" }), 400),
+        (json!({ "maker_fee_bps": -1 }), 400),
+        (json!({ "taker_fee_bps": 10001 }), 400),
+        // the fields that can't change
+        (json!({ "price_decimals": 5 }), 422),
+        (json!({ "symbol": "OTHER" }), 422),
+        (json!({ "base_ledger_symbol": "X" }), 422),
+        (json!({ "status": "closed" }), 422),
+    ];
+    for (body, expected) in cases {
+        let (status, _) = patch_market(&e, &symbol, &body).await;
+        assert_eq!(status, expected, "body: {body}");
+    }
+    let (status, _) = patch_market(&e, "NOPE", &json!({ "taker_fee_bps": 40 })).await;
+    assert_eq!(status, 404);
+
+    // nothing changed
+    let (status, body) = patch_market(&e, &symbol, &json!({ "maker_fee_bps": 10 })).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["taker_fee_bps"], 30);
+    assert_eq!(body["status"], "trading");
+}
+
+#[tokio::test]
+async fn the_status_of_a_market_the_engine_has_not_confirmed_cannot_change() {
+    let e = market_env(vec![MarketScript::Fail(Status::unavailable("down"))]).await;
+    let symbol = unique_symbol("M");
+    assert_eq!(post_market(&e, &market_body(&e, &symbol)).await.0, 202);
+
+    for status in ["trading", "cancel_only", "halted"] {
+        let (code, _) = patch_market(&e, &symbol, &json!({ "status": status })).await;
+        assert_eq!(code, 409, "{status}");
+    }
+    assert_eq!(
+        market_state(&e, &symbol).await,
+        ("halted".to_string(), false)
+    );
+
+    // the rest of the settings can still change
+    let (code, body) = patch_market(&e, &symbol, &json!({ "taker_fee_bps": 40 })).await;
+    assert_eq!(code, 200);
+    assert_eq!(body["taker_fee_bps"], 40);
+    assert_eq!(body["status"], "halted");
 }

@@ -6,7 +6,9 @@ use axum::{
 use num_traits::FromPrimitive;
 use num_traits::ToPrimitive;
 use primitive_types::U256;
-use proto::{CancelOrdersRequest, PlaceOrderRequest, PlaceOrderResponse, RejectReason};
+use proto::{
+    CancelOrderRequest, CancelOrdersRequest, PlaceOrderRequest, PlaceOrderResponse, RejectReason,
+};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{Duration, timeout};
@@ -263,6 +265,25 @@ pub struct MarketPayload {
     price_step: Option<Decimal>, // same
     maker_fee_bps: i32,
     taker_fee_bps: i32,
+}
+
+/// What `PATCH /markets/{symbol}` can change. Only the fields that are sent change, if its none then nothing gets changed.
+/// The symbol/ledgers/price_decimals cant be changed
+#[derive(Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct MarketUpdatePayload {
+    status: Option<MarketStatus>,
+    #[ts(type = "string | null")]
+    min_base_quantity: Option<Decimal>,
+    #[ts(type = "string | null")]
+    min_quote_quantity: Option<Decimal>,
+    #[ts(type = "string | null")]
+    quantity_step: Option<Decimal>,
+    #[ts(type = "string | null")]
+    price_step: Option<Decimal>,
+    maker_fee_bps: Option<i32>,
+    taker_fee_bps: Option<i32>,
 }
 
 #[derive(Deserialize, TS)]
@@ -1928,6 +1949,99 @@ pub async fn activate_market(
     Ok(())
 }
 
+/// Changes a market's status, minimums, steps or fee rates. Only the fields sent change.
+pub async fn update_market(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+    Json(payload): Json<MarketUpdatePayload>,
+) -> Result<Json<Market>, StatusCode> {
+    let nothing_to_change = payload.status.is_none()
+        && payload.min_base_quantity.is_none()
+        && payload.min_quote_quantity.is_none()
+        && payload.quantity_step.is_none()
+        && payload.price_step.is_none()
+        && payload.maker_fee_bps.is_none()
+        && payload.taker_fee_bps.is_none();
+    let bad_fee = [payload.maker_fee_bps, payload.taker_fee_bps]
+        .into_iter()
+        .flatten()
+        .any(|bps| !(0..=10_000).contains(&bps));
+    if nothing_to_change || bad_fee {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let market = fetch_market_by_symbol(&state.pg_connections, &symbol)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let (base, quote) = fetch_market_ledgers(&state.pg_connections, &market).await?;
+
+    let units = |amount: Option<Decimal>, decimals: u32| {
+        amount
+            .map(|a| to_units(a, decimals).map(|u| u.to_string()))
+            .transpose()
+    };
+    let min_base = units(payload.min_base_quantity, base.decimals as u32)?;
+    let min_quote = units(payload.min_quote_quantity, quote.decimals as u32)?;
+    let quantity_step = units(payload.quantity_step, base.decimals as u32)?;
+    let price_step = units(payload.price_step, market.price_decimals as u32)?;
+
+    let mut tx = state
+        .pg_connections
+        .begin()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // the lock keeps the relay from activating the market between the check and the update
+    let unconfirmed = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM market_outbox \
+                        WHERE market_id = $1 AND processed_at IS NULL) \
+         FROM markets WHERE market_id = $1 FOR UPDATE",
+    )
+    .bind(market.market_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
+    if unconfirmed && payload.status.is_some() {
+        return Err(StatusCode::CONFLICT);
+    }
+    sqlx::query(
+        "UPDATE markets SET status = COALESCE($2, status), \
+                min_base_quantity = COALESCE($3::numeric, min_base_quantity), \
+                min_quote_quantity = COALESCE($4::numeric, min_quote_quantity), \
+                quantity_step = COALESCE($5::numeric, quantity_step), \
+                price_step = COALESCE($6::numeric, price_step), \
+                maker_fee_bps = COALESCE($7, maker_fee_bps), \
+                taker_fee_bps = COALESCE($8, taker_fee_bps) \
+         WHERE market_id = $1",
+    )
+    .bind(market.market_id)
+    .bind(payload.status)
+    .bind(min_base)
+    .bind(min_quote)
+    .bind(quantity_step)
+    .bind(price_step)
+    .bind(payload.maker_fee_bps)
+    .bind(payload.taker_fee_bps)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(db) if db.is_check_violation() => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let row = fetch_market_by_id(&state.pg_connections, market.market_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(Market::from_row(row, base, quote)?))
+}
+
 /// Lists all markets.
 pub async fn list_markets(State(state): State<AppState>) -> Result<Json<Vec<Market>>, StatusCode> {
     let market_rows = load_markets(&state.pg_connections)
@@ -2342,6 +2456,60 @@ pub async fn create_order(
     }
 
     order_outcome(order.submission, order.reject_reason, fresh).map(|code| (code, Json(order)))
+}
+
+/// Asks the engine to cancel an order of this user.
+/// 202: the cancel was sent, and the result comes later
+/// through the consumer. Only an order the engine accepted that hasn't ended can be cancelled
+pub async fn cancel_order(
+    State(state): State<AppState>,
+    Path((user_id, order_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, StatusCode> {
+    let (owner, market_symbol, submission, status) =
+        sqlx::query_as::<_, (Uuid, String, Submission, Option<i16>)>(
+            "SELECT o.user_id, m.symbol, o.submission, o.status \
+             FROM orders o JOIN markets m ON m.market_id = o.market_id \
+             WHERE o.order_id = $1",
+        )
+        .bind(order_id)
+        .fetch_optional(&state.pg_connections)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if owner != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let ended = [
+        OrderStatus::Filled,
+        OrderStatus::Cancelled,
+        OrderStatus::Expired,
+    ]
+    .iter()
+    .any(|s| Some(*s as i16) == status);
+    if submission != Submission::Accepted || ended {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let request = CancelOrderRequest {
+        command_id: Some(tb::id().into()),
+        order_id: Some(order_id.as_u128().into()),
+        account_holder: Some(user_id.as_u128().into()),
+        market_symbol,
+    };
+    let answer = timeout(
+        ORDER_STEP_TIMEOUT,
+        state.engine_client.cancel_order(request),
+    )
+    .await
+    .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?
+    .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    match answer.reject_reason() {
+        RejectReason::Unspecified => Ok(StatusCode::ACCEPTED),
+        RejectReason::UnknownOrder | RejectReason::OrderNotWorking => Err(StatusCode::CONFLICT),
+        RejectReason::NotOrderOwner => Err(StatusCode::FORBIDDEN),
+        RejectReason::UnknownMarket => Err(StatusCode::NOT_FOUND),
+        _ => Err(StatusCode::SERVICE_UNAVAILABLE),
+    }
 }
 
 /// Returns an order by id. The submission comes from the backend's side, and the status from

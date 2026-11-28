@@ -45,7 +45,7 @@ pub enum AccountStatus {
     Processing,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, sqlx::Type, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, sqlx::Type, TS)]
 #[sqlx(type_name = "market_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
