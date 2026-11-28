@@ -16,6 +16,7 @@ use crate::error::{EngineError, Result};
 use crate::events::{execution_report, trade_settlement};
 use crate::ids::{CommandId, TradeId};
 use crate::market::{MarketInfo, Placed};
+use crate::order::Side;
 use crate::place::parse_place_order;
 use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
@@ -351,7 +352,10 @@ fn accept_cancel_order(
 /// the events of one match on tradesettlement and 2 execution for 2 sides
 fn fill_events(fill: &Fill, fee_account: Id) -> [Body; 3] {
     let trade_id = TradeId::generate();
-    let (buyer, seller) = fill.buyer_and_seller();
+    let (buyer, seller) = match fill.taker.side() {
+        Side::Buy => (&fill.taker, &fill.maker),
+        Side::Sell => (&fill.maker, &fill.taker),
+    };
     [
         Body::TradeSettlement(trade_settlement(fill, trade_id, fee_account)),
         Body::ExecutionReport(execution_report(buyer, ExecType::Trade, Some(trade_id))),
