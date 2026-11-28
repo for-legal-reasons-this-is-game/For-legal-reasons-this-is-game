@@ -241,6 +241,48 @@ async fn waiting_on_an_empty_list_is_not_an_error() {
         .expect("an empty list is not an error");
 }
 
+// ---- the engine tells the router it runs ----
+
+/// The router asked for two engines. The one that starts moves from `task:to_be_created`
+/// to `task:active`; the other one is still waiting.
+#[tokio::test]
+#[ignore = "needs a running Redis at REDIS_URL"]
+async fn a_started_engine_is_active_and_no_longer_waiting() {
+    let instance = "test-consumer-registers";
+    let other = "test-consumer-registers-other";
+    let mut redis = Router::new(instance).await.connection;
+    // what an earlier run of the test left
+    let _: usize = redis.srem("task:active", instance).await.expect("srem");
+    for name in [instance, other] {
+        let _: usize = redis
+            .lrem("task:to_be_created", 0, name)
+            .await
+            .expect("lrem");
+    }
+    let _: usize = redis
+        .rpush("task:to_be_created", &[other, instance])
+        .await
+        .expect("rpush");
+
+    let _started = start(instance).await;
+
+    let active: bool = redis
+        .sismember("task:active", instance)
+        .await
+        .expect("sismember");
+    let waiting: Vec<String> = redis
+        .lrange("task:to_be_created", 0, -1)
+        .await
+        .expect("lrange");
+    assert!(active, "the engine is in task:active");
+    assert!(!waiting.iter().any(|name| name == instance), "{waiting:?}");
+    assert!(waiting.iter().any(|name| name == other), "{waiting:?}");
+    let _: usize = redis
+        .lrem("task:to_be_created", 0, other)
+        .await
+        .expect("lrem");
+}
+
 // ---- the engine saves before it answers ----
 
 /// The contract: nothing leaves the engine until the state it depends on is in Redis. So
