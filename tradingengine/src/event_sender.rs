@@ -6,7 +6,7 @@
 //! sends everything again. the consumer skips what it already has
 
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use proto::event_consumer_client::EventConsumerClient;
 use proto::{EventItem, PublishEventsResponse};
