@@ -22,10 +22,16 @@ use crate::redis_store::RedisStore;
 use crate::resting_order::RestingOrder;
 use crate::wire::{order_status, required};
 
+/// One thing a command changed in the [`Engine`]. The engine collects them while it runs
+/// a command, and [`State::save_engine_changes`] writes them to Redis.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     MarketSet(Market),
-    OrderSaved(RestingOrder),
+    /// A new order rests at the back of its price level.
+    OrderAdded(RestingOrder),
+    /// A resting order was partly filled. It keeps its place in the queue.
+    OrderUpdated(RestingOrder),
+    /// An order left the book: it was filled or cancelled.
     OrderRemoved(OrderId),
     CacheAdded {
         id: CommandId,
@@ -33,6 +39,8 @@ pub enum Change {
         answer: Answer,
     },
     CacheRemoved(CommandId),
+    /// The events of one command, each with its `sequence`.
+    EventsAdded(Vec<EventItem>),
 }
 
 #[derive(Default)]
@@ -42,14 +50,19 @@ pub struct State {
 }
 
 impl State {
+    /// Saves what the last command changed. Without a store the changes are dropped, so
+    /// they don't pile up.
     pub async fn save_engine_changes(&mut self) {
+        let changes = std::mem::take(&mut self.engine.changes);
         let Some(store) = &mut self.store else { return };
-        let changes = &mut self.engine.changes;
+        if changes.is_empty() {
+            // a cache hit or a rejected SetMarket changes nothing
+            return;
+        }
         store
-            .save_engine_changes(changes)
+            .save_engine_changes(&changes)
             .await
-            .expect("error while saving state");
-        self.engine.changes.clear();
+            .expect("error while saving changes");
     }
 }
 
@@ -72,8 +85,9 @@ pub struct Engine {
 
 /// how many events the engine keeps for the consumer. this is the retention window
 /// of `how_to_use.md`: a consumer that is down for longer than it takes the engine
-/// to make this many events misses the oldest ones. the whole history is saved to
-/// redis with every command, so a bigger number makes every save bigger
+/// to make this many events misses the oldest ones. a command saves only its own
+/// events, and redis keeps the same last ones, so a bigger number only makes the load
+/// at startup bigger
 pub const EVENT_HISTORY_CAPACITY: usize = 10_000;
 
 impl Engine {
@@ -94,8 +108,11 @@ impl Engine {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        let command_cache = CommandCache::load_cache(cache_capacity, engine_state.command_cache);
-        let changes = Vec::new();
+        let (command_cache, removed) =
+            CommandCache::load_cache(cache_capacity, engine_state.command_cache);
+        // only when the capacity is lower than when the cache was saved: the oldest
+        // entries didn't fit, and the first save deletes them from redis too
+        let changes = removed.into_iter().map(Change::CacheRemoved).collect();
         let mut engine = Engine {
             markets,
             command_cache,
@@ -225,7 +242,6 @@ impl Engine {
             _ => {}
         }
 
-        // TODO unimplemented `Change` saving in this path. need to save all changed orders. do it with the stream with Mehres
         let (response, events) = match self.try_place_order(request) {
             Ok((placed, events)) => (accept_place_order(command_id, &placed), events),
             Err(error) => self.reject_place_order(Some(command_id), &error),
@@ -258,10 +274,11 @@ impl Engine {
 
         let order = parse_place_order(request)?;
         let new_order = order.clone();
-        let placed = market.place(order)?;
+        let placed = market.place(&mut self.changes, order)?;
         let fee_account = market.fee_account();
 
-        let events = self.place_events(&symbol, &new_order, &placed.fills, fee_account);
+        let events: Vec<EventItem> =
+            self.place_events(&symbol, &new_order, &placed.fills, fee_account);
         Ok((placed, events))
     }
 
@@ -285,7 +302,7 @@ impl Engine {
     }
 
     /// gives every event of one command the next `sequence`, and `time`
-    /// and keeps them in the history for the consumer
+    /// and keeps them in the history for the consumer, and in redis
     fn set_unique_sequence(&mut self, symbol: &str, bodies: Vec<Body>) -> Vec<EventItem> {
         let engine_time = Timestamp::from(SystemTime::now());
         let events: Vec<EventItem> = bodies
@@ -298,6 +315,11 @@ impl Engine {
             })
             .collect();
         self.keep_events(events.clone());
+        // here and not in `keep_events`: loading calls that too, and must not save
+        // the loaded events again. never empty: an RPUSH of nothing fails the whole save
+        if !events.is_empty() {
+            self.changes.push(Change::EventsAdded(events.clone()));
+        }
         events
     }
 

@@ -88,7 +88,9 @@ fn a_loaded_engine_equals_the_saved_one() {
 
     let loaded = save_and_load(&engine, CACHE_CAPACITY);
 
-    assert_eq!(loaded, engine);
+    // not `loaded == engine`: `engine` still holds the changes it would save to redis,
+    // and a loaded engine starts with none
+    assert_eq!(loaded.get_engine_state(), engine.get_engine_state());
 }
 
 #[test]
