@@ -7,7 +7,6 @@ use proto::execution_report::{OrderAmount, RemainingAmount};
 use proto::{ExecType, ExecutionReport, Id, OrderType, TimeInForce, TradeSettlement, Uint128};
 
 use crate::book::Fill;
-use crate::error::Result;
 use crate::ids::TradeId;
 use crate::order::Side;
 use crate::resting_order::RestingOrder;
@@ -58,9 +57,7 @@ pub fn execution_report(
     order: &RestingOrder,
     exec_type: ExecType,
     trade_id: Option<TradeId>,
-) -> Result<ExecutionReport> {
-    let filled_base = order.qty_total().checked_sub(order.qty_remaining())?;
-
+) -> ExecutionReport {
     let mut report = ExecutionReport {
         order_id: Some(order.id().into()),
         command_id: Some(order.command_id().into()),
@@ -69,7 +66,7 @@ pub fn execution_report(
         remaining_amount: Some(RemainingAmount::RemainingBaseQuantity(
             order.qty_remaining().into(),
         )),
-        filled_base_quantity: Some(filled_base.into()),
+        filled_base_quantity: Some(order.filled_base().into()),
         filled_quote_quantity: Some(order.filled_quote().into()),
         limit_price: Some(order.price().into()),
         trade_id: trade_id.map(Id::from),
@@ -83,5 +80,5 @@ pub fn execution_report(
     if exec_type == ExecType::Cancelled {
         report.set_cancel_reason(proto::CancelReason::UserRequest);
     }
-    Ok(report)
+    report
 }

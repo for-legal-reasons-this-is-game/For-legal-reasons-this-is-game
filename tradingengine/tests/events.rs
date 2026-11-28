@@ -103,7 +103,7 @@ fn fees_are_zero_until_fees_are_added() {
 fn a_new_order_reports_new_with_nothing_filled() {
     let order = order(1, Side::Buy, 100, 10);
 
-    let report = execution_report(&order, ExecType::New, None).expect("report");
+    let report = execution_report(&order, ExecType::New, None);
 
     assert_eq!(report.exec_type(), ExecType::New);
     assert_eq!(report.status(), OrderStatus::New);
@@ -131,10 +131,8 @@ fn a_new_order_reports_new_with_nothing_filled() {
 fn a_trade_report_has_the_order_right_after_the_match_and_its_trade_id() {
     let fill = one_fill(order(1, Side::Sell, 100, 4), order(2, Side::Buy, 100, 10));
 
-    let maker =
-        execution_report(&fill.maker, ExecType::Trade, Some(TradeId::new(77))).expect("report");
-    let taker =
-        execution_report(&fill.taker, ExecType::Trade, Some(TradeId::new(77))).expect("report");
+    let maker = execution_report(&fill.maker, ExecType::Trade, Some(TradeId::new(77)));
+    let taker = execution_report(&fill.taker, ExecType::Trade, Some(TradeId::new(77)));
 
     // the maker traded out completely
     assert_eq!(maker.status(), OrderStatus::Filled);
@@ -161,7 +159,7 @@ fn a_cancel_report_says_the_user_asked_for_it() {
     let mut order = order(1, Side::Buy, 100, 10);
     order.cancel().expect("an open order cancels");
 
-    let report = execution_report(&order, ExecType::Cancelled, None).expect("report");
+    let report = execution_report(&order, ExecType::Cancelled, None);
 
     assert_eq!(report.exec_type(), ExecType::Cancelled);
     assert_eq!(report.status(), OrderStatus::Cancelled);
@@ -172,7 +170,7 @@ fn a_cancel_report_says_the_user_asked_for_it() {
 fn only_a_cancel_report_has_a_cancel_reason() {
     let order = order(1, Side::Buy, 100, 10);
 
-    let report = execution_report(&order, ExecType::New, None).expect("report");
+    let report = execution_report(&order, ExecType::New, None);
 
     assert_eq!(report.cancel_reason(), CancelReason::Unspecified);
 }

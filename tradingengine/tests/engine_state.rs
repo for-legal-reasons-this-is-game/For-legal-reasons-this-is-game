@@ -199,10 +199,10 @@ fn a_save_still_loads_after_a_field_is_added() {
 #[test]
 fn the_event_sequence_counts_up_and_survives_a_restart() {
     let mut engine = engine();
-    assert_eq!(engine.next_sequence(), Ok(1));
-    assert_eq!(engine.next_sequence(), Ok(2));
+    assert_eq!(engine.next_sequence(), 1);
+    assert_eq!(engine.next_sequence(), 2);
 
     let mut restarted = save_and_load(&engine, CACHE_CAPACITY);
 
-    assert_eq!(restarted.next_sequence(), Ok(3));
+    assert_eq!(restarted.next_sequence(), 3);
 }
