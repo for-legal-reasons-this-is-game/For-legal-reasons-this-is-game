@@ -87,7 +87,7 @@ impl EventSender {
                 Err(error) => eprintln!("can't connect to the consumer, trying again: {error}"),
             }
 
-            if !self.wait(with_jitter(retry_wait)).await {
+            if !self.wait(retry_wait).await {
                 return;
             }
             retry_wait = (retry_wait * 2).min(MAX_RETRY_WAIT);
@@ -163,10 +163,10 @@ fn why_it_ended(
 }
 
 /// adds up to half of `wait` on top, so engines that lost the consumer at the same
-/// time don't all connect again at the same moment
-fn with_jitter(wait: Duration) -> Duration {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |time| time.subsec_nanos());
-    wait + wait.mul_f64(f64::from(nanos % 1000) / 2000.0)
-}
+/// time don't all connect again at the same moment (not used currently)
+//fn with_jitter(wait: Duration) -> Duration {
+//    let nanos = SystemTime::now()
+//        .duration_since(UNIX_EPOCH)
+//        .map_or(0, |time| time.subsec_nanos());
+//    wait + wait.mul_f64(f64::from(nanos % 1000) / 2000.0)
+//}
