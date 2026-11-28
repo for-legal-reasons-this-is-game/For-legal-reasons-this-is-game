@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use prost::Message;
-use proto::{EngineCommand, engine_command::Body};
+use proto::{EngineCommand, EventItem, engine_command::Body};
 use redis::{
     AsyncCommands,
     aio::{ConnectionManager, ConnectionManagerConfig},
 };
 
-use crate::{engine::Engine, engine::State, redis_store::RedisStore};
+use crate::{engine::Engine, engine::State, event_sender::NewEvents, redis_store::RedisStore};
 
 const POP_TIMEOUT: f64 = 5.0;
 /// This time-to-live is how long an answer (that reached redis, but
@@ -22,6 +22,8 @@ pub struct RouterConsumer {
     connection: ConnectionManager,
     commands_key: String,
     state: State,
+    /// where the events of each command go after the state is saved. `None` drops them
+    new_events: Option<NewEvents>,
 }
 
 impl RouterConsumer {
@@ -48,7 +50,14 @@ impl RouterConsumer {
             connection,
             commands_key,
             state: State { engine, store },
+            new_events: None,
         })
+    }
+
+    /// sends the events of every command to `new_events`, see
+    /// [`EventSender`](crate::event_sender::EventSender)
+    pub fn send_events_to(&mut self, new_events: NewEvents) {
+        self.new_events = Some(new_events);
     }
 
     /// Pops next encoded [`EngineCommand`] from `redis`.
@@ -75,17 +84,23 @@ impl RouterConsumer {
     }
 
     /// Runs the command.
-    /// Returns the encoded answer
-    fn run(&mut self, body: Option<Body>) -> Option<Vec<u8>> {
+    /// Returns the encoded answer and the events the command made
+    fn run(&mut self, body: Option<Body>) -> Option<(Vec<u8>, Vec<EventItem>)> {
         let Some(body) = body else {
             eprintln!("error in router consumer: empty body, continuing...");
             return None;
         };
         let engine = &mut self.state.engine;
         let answer = match body {
-            Body::SetMarket(request) => engine.set_market(request).encode_to_vec(),
-            Body::PlaceOrder(request) => engine.place_order(request).encode_to_vec(),
-            Body::CancelOrder(request) => engine.cancel_order(request).encode_to_vec(),
+            Body::SetMarket(request) => (engine.set_market(request).encode_to_vec(), Vec::new()),
+            Body::PlaceOrder(request) => {
+                let (response, events) = engine.place_order_with_events(request);
+                (response.encode_to_vec(), events)
+            }
+            Body::CancelOrder(request) => {
+                let (response, events) = engine.cancel_order_with_events(request);
+                (response.encode_to_vec(), events)
+            }
         };
         Some(answer)
     }
@@ -109,10 +124,18 @@ impl RouterConsumer {
         let Some(EngineCommand { body, reply_to }) = RouterConsumer::decode(bytes) else {
             return Ok(());
         };
-        let Some(answer) = self.run(body) else {
+        let Some((answer, events)) = self.run(body) else {
             return Ok(());
         };
+        // saved first so an event that went out is never lost in a restart
         self.state.save().await;
+        if let Some(new_events) = &self.new_events
+            && !events.is_empty()
+        {
+            // only fails when the sender is gone. the events are in the saved
+            // history, so they go out after a restart
+            let _ = new_events.send(events);
+        }
         self.answer(reply_to, answer).await
     }
 }
